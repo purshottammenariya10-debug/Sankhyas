@@ -40,6 +40,7 @@
     return ans >= 0 ? c.prices[ans] : null;
   }
   function historicPE(c) {
+    if (!c.years || !c.prices || !c.dates) return null;
     const out = [];
     c.years.slice(-6).forEach((lab, j, arr) => {
       const i = c.years.length - arr.length + j;
@@ -399,25 +400,27 @@
   }
 
   /* ---------- market questions (Ask AI page) ---------- */
+  // each entry lists the sector names used by the sample data and by Yahoo Finance
   const SECTOR_WORDS = [
-    [/\b(it|tech|technology|software|information technology)\b/, 'Information Technology'],
-    [/\b(banks?|banking|financials?|finance|nbfcs?|lenders?)\b/, 'Financials'],
-    [/\b(fmcg|consumer staples|staples)\b/, 'FMCG'],
-    [/\b(pharma|pharmaceuticals?|healthcare|hospitals?|health)\b/, 'Healthcare'],
-    [/\b(autos?|automobiles?|automotive|cars|two[- ]wheelers?)\b/, 'Automobile'],
-    [/\b(energy|oil|gas|coal|refiners?)\b/, 'Energy'],
-    [/\b(metals?|steel|cement|materials|chemicals?)\b/, 'Materials'],
-    [/\b(power|utilities|utility|electricity)\b/, 'Utilities'],
-    [/\b(telecom|telecommunications?)\b/, 'Telecom'],
-    [/\b(retail|retailers?)\b/, 'Retail'],
-    [/\b(industrials?|infra|infrastructure|capital goods|engineering|defen[cs]e)\b/, 'Industrials'],
-    [/\b(consumer durables?|durables|paints?|jewell?ery)\b/, 'Consumer Durables'],
-    [/\b(textiles?|apparel)\b/, 'Textiles'],
-    [/\b(consumer services|travel|tourism)\b/, 'Consumer Services']
+    [/\b(it|tech|technology|software|information technology)\b/, ['Information Technology', 'Technology']],
+    [/\b(banks?|banking|financials?|finance|financial services|nbfcs?|lenders?|insurance)\b/, ['Financials', 'Financial Services']],
+    [/\b(fmcg|consumer staples|staples|consumer defensive)\b/, ['FMCG', 'Consumer Defensive']],
+    [/\b(pharma|pharmaceuticals?|healthcare|hospitals?|health)\b/, ['Healthcare']],
+    [/\b(autos?|automobiles?|automotive|cars|two[- ]wheelers?|consumer cyclical)\b/, ['Automobile', 'Consumer Cyclical']],
+    [/\b(energy|oil|gas|coal|refiners?)\b/, ['Energy']],
+    [/\b(metals?|steel|cement|materials|basic materials|chemicals?)\b/, ['Materials', 'Basic Materials']],
+    [/\b(power|utilities|utility|electricity)\b/, ['Utilities']],
+    [/\b(telecom|telecommunications?|communication services|media)\b/, ['Telecom', 'Communication Services']],
+    [/\b(real estate|realty|property|reits?)\b/, ['Real Estate']],
+    [/\b(retail|retailers?)\b/, ['Retail', 'Consumer Cyclical']],
+    [/\b(industrials?|infra|infrastructure|capital goods|engineering|defen[cs]e)\b/, ['Industrials']],
+    [/\b(consumer durables?|durables|paints?|jewell?ery)\b/, ['Consumer Durables', 'Consumer Cyclical']],
+    [/\b(textiles?|apparel)\b/, ['Textiles', 'Consumer Cyclical']],
+    [/\b(consumer services|travel|tourism)\b/, ['Consumer Services', 'Consumer Cyclical']]
   ];
   function findSector(t, all) {
     const have = new Set(all.map(c => c.sector));
-    for (const [re, s] of SECTOR_WORDS) if (re.test(t) && have.has(s)) return s;
+    for (const [re, names] of SECTOR_WORDS) if (re.test(t)) { const hit = names.find(s => have.has(s)); if (hit) return hit; }
     for (const s of have) if (t.indexOf(s.toLowerCase()) >= 0) return s;
     return null;
   }

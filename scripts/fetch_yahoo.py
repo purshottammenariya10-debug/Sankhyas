@@ -10,6 +10,8 @@ Usage:
     python scripts/fetch_yahoo.py                 # all symbols in scripts/symbols.txt
     python scripts/fetch_yahoo.py TCS INFY        # only these NSE symbols
     python scripts/fetch_yahoo.py --live-only     # site hides companies without Yahoo data
+    python scripts/fetch_yahoo.py --universe      # every Indian company in data/universe.json
+                                                  # (400 full refreshes per run + bulk daily prices)
 """
 import argparse
 import datetime as dt
@@ -160,8 +162,13 @@ def quote_block(info):
     }
 
 
-def build_company(symbol, t):
-    """Build the JSON document for one NSE symbol from a yfinance Ticker-like object."""
+def build_company(symbol, t, yahoo=None, meta=None):
+    """Build the JSON document for one company from a yfinance Ticker-like object.
+
+    symbol: the Sankhyas symbol (NSE symbol, or BSE code for BSE-only companies)
+    yahoo:  the Yahoo ticker (default SYMBOL.NS); meta: universe entry (name, bse, isin, industry)
+    """
+    meta = meta or {}
     hist = t.history(period="10y", interval="1d", auto_adjust=False)
     if hist is None or hist.empty:
         raise ValueError("no price history")
@@ -172,10 +179,12 @@ def build_company(symbol, t):
         info = {}
     return {
         "symbol": symbol,
-        "yahoo": symbol + ".NS",
-        "name": info.get("longName") or info.get("shortName") or symbol,
+        "yahoo": yahoo or symbol + ".NS",
+        "bse": meta.get("bse") or None,
+        "isin": meta.get("isin") or None,
+        "name": info.get("longName") or info.get("shortName") or meta.get("name") or symbol,
         "sector": info.get("sector"),
-        "industry": info.get("industry"),
+        "industry": info.get("industry") or meta.get("industry") or None,
         "website": info.get("website"),
         "about": info.get("longBusinessSummary"),
         "updated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
@@ -190,48 +199,136 @@ def build_company(symbol, t):
     }
 
 
+def load_universe():
+    path = ROOT / "data" / "universe.json"
+    if not path.exists():
+        raise SystemExit("data/universe.json not found; run scripts/fetch_universe.py first")
+    return json.loads(path.read_text())["companies"]
+
+
+def file_age(sym):
+    """Seconds since the company file was last fully refreshed (infinite if missing)."""
+    f = OUT / f"{sym}.json"
+    if not f.exists():
+        return float("inf")
+    try:
+        updated = json.loads(f.read_text()).get("updated")
+        return (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(updated)).total_seconds()
+    except Exception:  # noqa: BLE001
+        return float("inf")
+
+
+def update_prices(yf, entries, chunk=200):
+    """Append the latest daily closes to existing company files in bulk (one request per chunk)."""
+    have = {e["symbol"]: e for e in entries if (OUT / f"{e['symbol']}.json").exists()}
+    tickers = {e["yahoo"]: sym for sym, e in have.items()}
+    updated = 0
+    names = list(tickers)
+    for i in range(0, len(names), chunk):
+        batch = names[i:i + chunk]
+        try:
+            df = yf.download(batch, period="5d", interval="1d", auto_adjust=False, group_by="ticker",
+                             progress=False, threads=True)
+        except Exception as e:  # noqa: BLE001
+            print("bulk price download failed:", e, file=sys.stderr)
+            continue
+        for tk in batch:
+            try:
+                sub = df[tk] if len(batch) > 1 else df
+                sub = sub.dropna(subset=["Close"])
+            except Exception:  # noqa: BLE001
+                continue
+            if sub.empty:
+                continue
+            sym = tickers[tk]
+            f = OUT / f"{sym}.json"
+            doc = json.loads(f.read_text())
+            px = doc["prices"]
+            last = px["dates"][-1] if px["dates"] else ""
+            added = False
+            for d, row in sub.iterrows():
+                ds = d.strftime("%Y-%m-%d")
+                if ds <= last:
+                    continue
+                px["dates"].append(ds)
+                px["close"].append(clean(row["Close"]))
+                px["volume"].append(int(row["Volume"]) if row["Volume"] == row["Volume"] else 0)
+                added = True
+            if added:
+                q = doc.setdefault("quote", {})
+                q["prevClose"] = px["close"][-2] if len(px["close"]) > 1 else q.get("prevClose")
+                q["price"] = px["close"][-1]
+                if q.get("shares"):
+                    q["marketCap"] = round(q["price"] * q["shares"], 2)
+                f.write_text(json.dumps(doc, separators=(",", ":")))
+                updated += 1
+    print(f"Bulk prices: updated {updated} of {len(have)} companies")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("symbols", nargs="*", help="NSE symbols (default: scripts/symbols.txt)")
+    ap.add_argument("symbols", nargs="*", help="Sankhyas symbols (default: scripts/symbols.txt)")
+    ap.add_argument("--universe", action="store_true", help="cover every company in data/universe.json")
+    ap.add_argument("--max-full", type=int, default=400,
+                    help="with --universe: full refreshes per run, oldest first (default 400)")
     ap.add_argument("--live-only", action="store_true", help="site shows only companies with Yahoo data")
     ap.add_argument("--delay", type=float, default=1.0, help="seconds to wait between symbols")
     args = ap.parse_args(argv)
 
     import yfinance as yf
 
-    symbols = args.symbols or [s.strip() for s in (ROOT / "scripts" / "symbols.txt").read_text().split() if s.strip()]
-    symbols = [s.upper() for s in symbols]
     OUT.mkdir(parents=True, exist_ok=True)
+    if args.universe:
+        universe = load_universe()
+        entries = universe
+        if args.symbols:
+            wanted = {s.upper() for s in args.symbols}
+            entries = [e for e in universe if e["symbol"].upper() in wanted]
+        # refresh the stalest companies fully; everyone else gets today's price in bulk
+        ranked = sorted(entries, key=lambda e: -file_age(e["symbol"]))
+        todo = [e for e in ranked if file_age(e["symbol"]) > 20 * 3600][:args.max_full]
+        live_only = True
+    else:
+        syms = args.symbols or [s.strip() for s in (ROOT / "scripts" / "symbols.txt").read_text().split() if s.strip()]
+        todo = [{"symbol": s.upper(), "yahoo": s.upper() + ".NS"} for s in syms]
+        entries = todo
+        live_only = args.live_only
+
     ok, failed = [], []
-    for i, sym in enumerate(symbols):
+    for i, e in enumerate(todo):
+        sym = e["symbol"]
         for attempt in range(3):
             try:
-                doc = build_company(sym, yf.Ticker(sym + ".NS"))
+                doc = build_company(sym, yf.Ticker(e["yahoo"]), yahoo=e["yahoo"], meta=e)
                 (OUT / f"{sym}.json").write_text(json.dumps(doc, separators=(",", ":")))
                 ok.append(sym)
-                print(f"[{i + 1}/{len(symbols)}] {sym}: {len(doc['prices']['close'])} prices, "
+                print(f"[{i + 1}/{len(todo)}] {sym}: {len(doc['prices']['close'])} prices, "
                       f"{len(doc['annual']['periods'])} years, {len(doc['quarterly']['periods'])} quarters")
                 break
-            except Exception as e:  # network errors, delisted symbols, rate limits
+            except Exception as ex:  # network errors, delisted symbols, rate limits
                 if attempt == 2:
                     failed.append(sym)
-                    print(f"[{i + 1}/{len(symbols)}] {sym}: FAILED ({e})", file=sys.stderr)
+                    print(f"[{i + 1}/{len(todo)}] {sym}: FAILED ({ex})", file=sys.stderr)
                 else:
                     time.sleep(2 ** (attempt + 1))
         time.sleep(args.delay)
 
+    if args.universe:
+        refreshed = set(ok)
+        update_prices(yf, [e for e in entries if e["symbol"] not in refreshed])
+
     # keep previously fetched files for symbols that failed this run
-    existing = sorted(p.stem for p in OUT.glob("*.json") if p.stem != "index")
+    existing = sorted(p.stem for p in OUT.glob("*.json") if p.stem not in ("index", "metrics"))
     index = {
         "source": "Yahoo Finance",
         "updated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
-        "liveOnly": args.live_only,
+        "liveOnly": live_only,
         "symbols": sorted(set(existing) | set(ok)),
         "failed": failed,
     }
     (OUT / "index.json").write_text(json.dumps(index, indent=1))
-    print(f"Done: {len(ok)} ok, {len(failed)} failed -> {OUT}")
-    return 0 if ok or not symbols else 1
+    print(f"Done: {len(ok)} refreshed, {len(failed)} failed, {len(index['symbols'])} companies on disk -> {OUT}")
+    return 0 if ok or not todo or index["symbols"] else 1
 
 
 if __name__ == "__main__":

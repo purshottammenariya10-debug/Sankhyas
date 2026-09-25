@@ -1,2 +1,7 @@
 __pycache__/
 *.pyc
+# fetched data lives in the Actions cache and the Pages deployment, not in git
+data/universe.json
+data/yahoo/*.json
+data/filings/
+_site/

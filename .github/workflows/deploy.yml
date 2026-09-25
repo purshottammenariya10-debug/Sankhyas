@@ -1,0 +1,108 @@
+name: Update data and deploy
+
+# Fetches every Indian listed company from Yahoo Finance, plus NSE/BSE filings, then
+# publishes the site with that data to GitHub Pages. Data is kept between runs in the
+# Actions cache (not committed to git), so each run only refreshes what is stale.
+#
+# One-time setup: Settings -> Pages -> Source: "GitHub Actions".
+
+on:
+  schedule:
+    # 11:30 UTC = 5:00 pm IST, after market close, Monday to Friday
+    - cron: "30 11 * * 1-5"
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      max_full:
+        description: "Companies to fully refresh from Yahoo this run (the rest get today's price)"
+        required: false
+        default: "400"
+      max_backfill:
+        description: "Companies whose filing history to backfill this run"
+        required: false
+        default: "150"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore data cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: sankhyas-data-${{ github.run_id }}
+          restore-keys: sankhyas-data-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Python packages
+        run: pip install yfinance requests
+
+      - name: Company list (NSE + BSE)
+        if: github.event_name != 'push'
+        continue-on-error: true
+        run: python scripts/fetch_universe.py
+
+      - name: Yahoo Finance data
+        if: github.event_name != 'push'
+        continue-on-error: true
+        run: python scripts/fetch_yahoo.py --universe --max-full "${{ github.event.inputs.max_full || '400' }}" --delay 0.5
+
+      - name: NSE/BSE filings
+        if: github.event_name != 'push'
+        continue-on-error: true
+        run: python scripts/fetch_filings.py --max-backfill "${{ github.event.inputs.max_backfill || '150' }}"
+
+      - name: Build company index
+        run: |
+          if ls data/yahoo/*.json >/dev/null 2>&1; then node scripts/build_index.mjs; else echo "No Yahoo data yet; the site will use sample data"; fi
+
+      - name: Save data cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: sankhyas-data-${{ github.run_id }}
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp -r index.html css js assets _site/
+          mkdir -p _site/data
+          [ -d data/yahoo ] && cp -r data/yahoo _site/data/ || true
+          [ -d data/filings ] && cp -r data/filings _site/data/ || true
+          du -sh _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

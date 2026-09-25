@@ -398,6 +398,7 @@
       pledged: extra.pledged != null ? extra.pledged : null,
       qtrSales: at(quarters.sales, qN),
       qtrProfit: at(quarters.np, qN),
+      qtrOp: at(quarters.op, qN), qtrOpm: at(quarters.opm, qN), qtrEps: at(quarters.eps, qN),
       qtrSalesVar: pctVar(at(quarters.sales, qN), at(quarters.sales, qN - 4)),
       qtrProfitVar: pctVar(at(quarters.np, qN), at(quarters.np, qN - 4)),
       salesGrowth3: growth(R.sales, 3), salesGrowth5: growth(R.sales, 5), salesGrowth10: growth(R.sales, 10),
@@ -472,9 +473,10 @@
     const px = j.prices || { dates: [], close: [], volume: [] };
     const out = {
       symbol: j.symbol, name: j.name || known.name || j.symbol,
-      sector: known.sector || j.sector || 'Others', industry: known.industry || j.industry || '',
+      // with Yahoo data, prefer Yahoo's classification so every company uses the same sector names
+      sector: j.sector || known.sector || 'Others', industry: j.industry || known.industry || '',
       website: (j.website || known.website || '').replace(/^https?:\/\//, '').replace(/\/$/, ''),
-      bseCode: known.bseCode || '', faceValue: known.faceValue != null ? known.faceValue : null,
+      bseCode: j.bse || known.bseCode || '', isin: j.isin || '', faceValue: known.faceValue != null ? known.faceValue : null,
       psu: !!known.psu, promoter: ins || 0, shares, about: j.about || '',
       standalone: false, live: true, updated: j.updated,
       years: a.periods, quarters: qq.periods, shQuarters: ['Latest'],
@@ -484,47 +486,102 @@
     };
     out.ttm = computeTTM(out);
     out.metrics = computeMetrics(out, { quote: qt });
+    out.lastQuarter = out.quarters[out.quarters.length - 1] || '';
     return out;
+  }
+
+  /*
+   * Data modes, picked by init():
+   *   summary: data/yahoo/metrics.json lists every company with precomputed metrics (built by
+   *            scripts/build_index.mjs); a company's full file loads when its page opens.
+   *   live:    data/yahoo/index.json only (small symbol lists): every company file loads at startup.
+   *   sample:  no data files; generated sample data for the built-in list.
+   */
+  let mode = 'sample';
+  const summaries = {};
+  async function getJSON(url) {
+    const r = await fetch(url, { cache: 'no-cache' });
+    if (!r.ok) throw new Error(url + ' ' + r.status);
+    return r.json();
   }
 
   async function init() {
     try {
-      const res = await fetch('data/yahoo/index.json', { cache: 'no-cache' });
-      if (!res.ok) return;
-      liveMeta = await res.json();
+      const idx = await getJSON('data/yahoo/metrics.json');
+      liveMeta = { updated: idx.updated, liveOnly: idx.liveOnly !== false, source: idx.source };
+      if (liveMeta.liveOnly) { base.length = 0; Object.keys(bySymbol).forEach(k => delete bySymbol[k]); }
+      (idx.companies || []).forEach(e => {
+        const c = {
+          symbol: e.s, name: e.n || e.s, sector: e.sec || 'Others', industry: e.ind || '', bseCode: e.bse || '', isin: e.isin || '',
+          live: true, summary: true, lastQuarter: e.q || '', updated: idx.updated, metrics: e.m || {}
+        };
+        summaries[c.symbol] = c;
+        if (!bySymbol[c.symbol]) base.push(c);
+        bySymbol[c.symbol] = c;
+      });
+      mode = 'summary';
+      return;
+    } catch (e) { /* fall through */ }
+    try {
+      liveMeta = await getJSON('data/yahoo/index.json');
       const syms = liveMeta.symbols || [];
-      const files = await Promise.all(syms.map(s => fetch('data/yahoo/' + encodeURIComponent(s) + '.json', { cache: 'no-cache' })
-        .then(r => (r.ok ? r.json() : null)).catch(() => null)));
+      const files = await Promise.all(syms.map(s => getJSON('data/yahoo/' + encodeURIComponent(s) + '.json').catch(() => null)));
       files.forEach(j => {
         if (!j || !j.prices || !j.prices.close || j.prices.close.length < 2) return;
         live[j.symbol] = j;
         if (!bySymbol[j.symbol]) {
-          const meta = { symbol: j.symbol, name: j.name || j.symbol, sector: j.sector || 'Others', industry: j.industry || '', bseCode: '' };
+          const meta = { symbol: j.symbol, name: j.name || j.symbol, sector: j.sector || 'Others', industry: j.industry || '', bseCode: j.bse || '' };
           base.push(meta);
           bySymbol[j.symbol] = meta;
         }
       });
-    } catch (e) { /* no live data: sample mode */ }
+      mode = 'live';
+    } catch (e) { liveMeta = null; mode = 'sample'; }
   }
 
   function getAny(sym, standalone) {
     sym = String(sym || '').toUpperCase();
-    if (live[sym]) {
-      if (!cache[sym + ':live']) cache[sym + ':live'] = buildLive(live[sym]);
-      return cache[sym + ':live'];
-    }
+    if (cache[sym + ':live']) return cache[sym + ':live'];
+    if (live[sym]) return (cache[sym + ':live'] = buildLive(live[sym]));
+    if (summaries[sym]) return summaries[sym];
     if (liveMeta && liveMeta.liveOnly) return null;
     return getCompany(sym, standalone);
+  }
+
+  /** Full company data (statements, prices). Resolves null when the company is unknown. */
+  async function loadCompany(sym, standalone) {
+    sym = String(sym || '').toUpperCase();
+    if (summaries[sym] && !cache[sym + ':live']) {
+      const j = await getJSON('data/yahoo/' + encodeURIComponent(sym) + '.json');
+      const full = buildLive(j);
+      full.metrics.industryPE = summaries[sym].metrics.industryPE;
+      cache[sym + ':live'] = full;
+    }
+    return getAny(sym, standalone);
+  }
+
+  /** Exchange filings for one company, or null when none have been fetched. */
+  function loadFilings(sym) {
+    if (mode === 'sample') return Promise.resolve(null);
+    return getJSON('data/filings/' + encodeURIComponent(String(sym).toUpperCase()) + '.json').catch(() => null);
+  }
+  function latestFilings() {
+    if (mode === 'sample') return Promise.resolve(null);
+    return getJSON('data/filings/latest.json').catch(() => null);
   }
 
   let _all = null;
   function listCompanies() {
     if (_all) return _all;
     _all = base.map(c => getAny(c.symbol)).filter(Boolean);
-    // industry P/E (median of sector)
-    const sectors = {};
-    _all.forEach(c => { (sectors[c.sector] = sectors[c.sector] || []).push(c.metrics.pe); });
-    _all.forEach(c => { c.metrics.industryPE = median(sectors[c.sector]); });
+    // industry P/E: median of the industry when it has 5+ companies, else of the sector
+    const groups = {};
+    const add = (k, v) => { (groups[k] = groups[k] || []).push(v); };
+    _all.forEach(c => { add('i:' + c.industry, c.metrics.pe); add('s:' + c.sector, c.metrics.pe); });
+    _all.forEach(c => {
+      const ind = groups['i:' + c.industry];
+      c.metrics.industryPE = median(c.industry && ind && ind.length >= 5 ? ind : groups['s:' + c.sector]);
+    });
     return _all;
   }
 
@@ -533,7 +590,7 @@
     if (!q) return [];
     const scored = [];
     base.forEach(c => {
-      if (liveMeta && liveMeta.liveOnly && !live[c.symbol]) return;
+      if (liveMeta && liveMeta.liveOnly && !live[c.symbol] && !summaries[c.symbol]) return;
       const s = c.symbol.toLowerCase(), n = c.name.toLowerCase();
       let score = -1;
       if (s === q) score = 100;
@@ -544,19 +601,28 @@
       else if (String(c.bseCode).startsWith(q)) score = 20;
       if (score >= 0) scored.push({ c, score });
     });
-    scored.sort((a, b) => b.score - a.score || a.c.name.localeCompare(b.c.name));
+    scored.sort((a, b) => b.score - a.score || (b.c.metrics && b.c.metrics.marketCap || 0) - (a.c.metrics && a.c.metrics.marketCap || 0) || a.c.name.localeCompare(b.c.name));
     return scored.slice(0, limit || 8).map(x => x.c);
   }
 
   window.Data = {
     TODAY, YEARS, QUARTERS: QUARTERS.map(q => q.label), SH_QUARTERS,
-    init, getCompany: getAny, listCompanies, search, median, cagr,
-    liveInfo: () => ({ count: Object.keys(live).length, total: listCompanies().length, updated: liveMeta && liveMeta.updated }),
+    init, getCompany: getAny, loadCompany, loadFilings, latestFilings, listCompanies, search, median, cagr,
+    mode: () => mode,
+    liveInfo: () => ({
+      count: mode === 'summary' ? Object.keys(summaries).length : Object.keys(live).length,
+      total: listCompanies().length, updated: liveMeta && liveMeta.updated
+    }),
     sectors: () => {
       const m = {};
       listCompanies().forEach(c => { (m[c.sector] = m[c.sector] || []).push(c.symbol); });
       return m;
     },
-    exists: sym => { sym = String(sym || '').toUpperCase(); return !!live[sym] || (!!bySymbol[sym] && !(liveMeta && liveMeta.liveOnly)); }
+    exists: sym => {
+      sym = String(sym || '').toUpperCase();
+      return !!live[sym] || !!summaries[sym] || (!!bySymbol[sym] && !(liveMeta && liveMeta.liveOnly));
+    },
+    // used by scripts/build_index.mjs to compute metrics with exactly the site's logic
+    _buildLive: j => buildLive(j)
   };
 })();

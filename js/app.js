@@ -168,7 +168,10 @@
     });
     return { parts: path.split('/').filter(Boolean).map(decodeURIComponent), params };
   }
+  let navToken = 0;
+  const LOADING = '<div class="container page muted">Loading…</div>';
   function route() {
+    navToken++;
     cleanup.forEach(fn => { try { fn(); } catch (e) { /* ignore */ } });
     cleanup = [];
     $('#nav-links').classList.remove('open');
@@ -245,10 +248,26 @@
     const standalone = parts[1] === 'standalone';
     if (!Data.exists(sym)) return pageNotFound();
     Data.listCompanies();
-    const c = Data.getCompany(sym, standalone);
+    const ready = Data.getCompany(sym, standalone);
+    if (ready && !ready.summary) return renderCompany(ready, sym, standalone);
+    setTitle(ready ? ready.name + ' share price' : sym);
+    app.innerHTML = LOADING;
+    const token = navToken;
+    Data.loadCompany(sym, standalone).then(c => {
+      if (token !== navToken) return;
+      if (!c) return pageNotFound();
+      renderCompany(c, sym, standalone);
+    }).catch(() => {
+      if (token === navToken) app.innerHTML = '<div class="container page"><div class="error-box">Could not load data for ' + esc(sym) + '. Please try again later.</div></div>';
+    });
+  }
+
+  function renderCompany(c, sym, standalone) {
+    const token = navToken;
     if (standalone) c.metrics.industryPE = Data.getCompany(sym).metrics.industryPE;
     const m = c.metrics;
     setTitle(c.name + ' share price');
+    document.title = c.name + ' share price | Sankhyas';
     const followed = inWatchlist(sym);
 
     app.innerHTML =
@@ -311,6 +330,15 @@
     bindStatements();
     bindShareholding(c);
     bindDocuments();
+    if (c.live) {
+      Data.loadFilings(sym).then(f => {
+        if (token !== navToken || !$('#documents')) return;
+        const tmp = document.createElement('div');
+        tmp.innerHTML = filingsSection(c, f);
+        $('#documents').replaceWith(tmp.firstChild);
+        bindDocuments();
+      });
+    }
     bindNotes(c);
     bindAI(c);
   }
@@ -520,10 +548,16 @@
   /* peers */
   const PEER_COLS = ['price', 'pe', 'marketCap', 'divYield', 'qtrProfit', 'qtrProfitVar', 'qtrSales', 'qtrSalesVar', 'roce'];
   function peersSection(c) {
-    const peers = Data.listCompanies().filter(x => x.sector === c.sector).sort((a, b) => b.metrics.marketCap - a.metrics.marketCap);
+    const all = Data.listCompanies();
+    let group = c.industry ? all.filter(x => x.industry === c.industry) : [];
+    if (group.length < 4) group = all.filter(x => x.sector === c.sector);
+    group = group.slice().sort((a, b) => (b.metrics.marketCap || 0) - (a.metrics.marketCap || 0));
+    const peers = group.slice(0, 10);
+    if (!peers.some(p => p.symbol === c.symbol)) peers.push(Data.getCompany(c.symbol) || c);
     return '<section class="section card" id="peers"><div class="section-head"><div><h2>Peer comparison</h2><p>Sector: <a href="#/market/' + encodeURIComponent(c.sector) + '">' + esc(c.sector) +
       '</a> &nbsp; Industry: ' + esc(c.industry) + '</p></div><a class="btn btn-small" href="#/compare?c=' + peers.slice(0, 4).map(p => p.symbol).join(',') + '">Compare peers</a></div>' +
-      listTableHtml(peers, PEER_COLS, { highlight: c.symbol, median: true }) + '</section>';
+      listTableHtml(peers, PEER_COLS, { highlight: c.symbol, median: true, medianOf: group }) +
+      (group.length > 10 ? '<p class="table-note">Showing the 10 largest of ' + group.length + ' peers' + (peers.length > 10 ? ' plus this company' : '') + '. Median is across all of them.</p>' : '') + '</section>';
   }
 
   /* statement tables */
@@ -685,12 +719,7 @@
   function documentsSection(c) {
     const d = c.docs;
     if (c.live) {
-      const nse = 'https://www.nseindia.com/get-quotes/equity?symbol=' + encodeURIComponent(c.symbol);
-      const yahoo = 'https://finance.yahoo.com/quote/' + encodeURIComponent(c.symbol) + '.NS/';
-      return '<section class="section card" id="documents"><h2>Documents</h2><p class="muted" style="font-size:14px">Yahoo Finance does not provide filings. Open the company\'s filings on the exchange:</p>' +
-        '<div class="flex flex-wrap"><a class="btn" target="_blank" rel="noopener" href="' + nse + '">Announcements &amp; reports on NSE</a>' +
-        (c.bseCode ? '<a class="btn" target="_blank" rel="noopener" href="https://www.bseindia.com/stock-share-price/x/' + encodeURIComponent(c.symbol) + '/' + encodeURIComponent(c.bseCode) + '/corp-announcements/">Announcements on BSE</a>' : '') +
-        '<a class="btn" target="_blank" rel="noopener" href="' + yahoo + '">Yahoo Finance page</a></div></section>';
+      return '<section class="section card" id="documents"><h2>Documents</h2><p class="muted">Loading exchange filings…</p>' + exchangeLinks(c) + '</section>';
     }
     const fake = 'href="" data-doc';
     return '<section class="section card" id="documents"><h2>Documents</h2><div class="docs-grid">' +
@@ -702,6 +731,49 @@
         (k.transcript ? '<a class="btn btn-small" ' + fake + '>Transcript</a>' : '') + (k.notes ? '<a class="btn btn-small" ' + fake + '>Notes</a>' : '') +
         (k.ppt ? '<a class="btn btn-small" ' + fake + '>PPT</a>' : '') + (k.rec ? '<a class="btn btn-small" ' + fake + '>REC</a>' : '') + '</div>').join('') + '</div>' +
       '</div></section>';
+  }
+  function exchangeLinks(c) {
+    const nseSym = /^\d+$/.test(c.symbol) ? null : c.symbol;
+    return '<div class="flex flex-wrap" style="margin-top:12px">' +
+      (nseSym ? '<a class="btn btn-small" target="_blank" rel="noopener noreferrer" href="https://www.nseindia.com/get-quotes/equity?symbol=' + encodeURIComponent(nseSym) + '">View on NSE</a>' : '') +
+      (c.bseCode ? '<a class="btn btn-small" target="_blank" rel="noopener noreferrer" href="https://www.bseindia.com/stock-share-price/x/' + encodeURIComponent(nseSym || c.symbol) + '/' + encodeURIComponent(c.bseCode) + '/corp-announcements/">View on BSE</a>' : '') +
+      '</div>';
+  }
+  const IMPORTANT_FILING = /financial result|outcome of board|dividend|bonus|split|sub-division|buy ?back|acquisition|amalgamation|merger|demerger|resignation|appointment of (managing|chief|ceo|cfo|md)|credit rating|rights issue|preferential|qip|fund ?rais/i;
+  function filingsSection(c, f) {
+    const A = (f && f.announcements) || [], R = (f && f.annualReports) || [];
+    if (!A.length && !R.length) {
+      return '<section class="section card" id="documents"><h2>Documents</h2><p class="muted">Exchange filings for ' + esc(c.name) +
+        ' have not been fetched yet. They are added gradually by the daily data update.</p>' + exchangeLinks(c) + '</section>';
+    }
+    const day = d => new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    const ext = (u, label, cls) => '<a class="' + (cls || '') + '" target="_blank" rel="noopener noreferrer" href="' + esc(u) + '">' + label + '</a>';
+    const src = x => '<span class="src-badge">' + esc((x || '').toUpperCase()) + '</span>';
+    const ratings = A.filter(a => a.k === 'rating').slice(0, 12);
+    const calls = A.filter(a => /transcript|ppt|audio|concall/.test(a.k));
+    const groups = [], byMonth = {};
+    calls.forEach(a => {
+      const key = new Date(a.d).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+      if (!byMonth[key]) { byMonth[key] = []; groups.push(key); }
+      byMonth[key].push(a);
+    });
+    const KIND = { transcript: 'Transcript', ppt: 'PPT', audio: 'REC', concall: 'Notice' };
+    const ORDER = ['transcript', 'ppt', 'audio', 'concall'];
+    return '<section class="section card" id="documents"><div class="section-head"><div><h2>Documents</h2><p>Filings from ' +
+      (A.some(a => a.x === 'nse') && A.some(a => a.x === 'bse') ? 'NSE and BSE' : A.some(a => a.x === 'nse') ? 'NSE' : 'BSE') +
+      (f.updated ? ' &middot; updated ' + day(f.updated) : '') + '</p></div></div><div class="docs-grid">' +
+      '<div><div class="flex space-between"><h3>Announcements</h3><span class="tabs"><button class="btn btn-small active" data-ann="recent">Recent</button><button class="btn btn-small" data-ann="important">Important</button></span></div>' +
+      '<ul class="doc-list" id="ann-list">' + A.slice(0, 80).map(a => '<li data-imp="' + (IMPORTANT_FILING.test(a.t + ' ' + a.c) ? 1 : 0) + '"><span>' + ext(a.u, esc(a.t)) +
+        (a.c ? '<br><span class="sub">' + esc(a.c) + '</span>' : '') + '</span><span class="date">' + day(a.d) + ' ' + src(a.x) + '</span></li>').join('') + '</ul></div>' +
+      '<div><h3>Annual reports</h3>' + (R.length ? '<ul class="doc-list">' + R.map(r => '<li>' + ext(r.u, 'Financial Year ' + esc(r.y || '')) + '<span class="date">' + src(r.x) + '</span></li>').join('') + '</ul>'
+        : '<p class="muted">No annual reports found yet.</p>') + '</div>' +
+      '<div><h3>Credit ratings</h3>' + (ratings.length ? '<ul class="doc-list">' + ratings.map(a => '<li>' + ext(a.u, esc(a.t)) + '<span class="date">' + day(a.d) + '</span></li>').join('') + '</ul>'
+        : '<p class="muted">No credit rating filings found.</p>') + '</div>' +
+      '<div><h3>Concalls &amp; presentations</h3>' + (groups.length ? groups.slice(0, 12).map(g => {
+        const items = byMonth[g].slice().sort((a, b) => ORDER.indexOf(a.k) - ORDER.indexOf(b.k));
+        return '<div class="concall-row"><span class="period">' + esc(g) + '</span>' + items.slice(0, 6).map(a => ext(a.u, KIND[a.k], 'btn btn-small" title="' + esc(a.t))).join('') + '</div>';
+      }).join('') : '<p class="muted">No concall transcripts or investor presentations found.</p>') + '</div>' +
+      '</div>' + exchangeLinks(c) + '</section>';
   }
   function bindDocuments() {
     $$('[data-doc]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); toast('Document links are available once a live data source is connected.'); }));
@@ -930,7 +1002,7 @@
   /* ---------- Feed ---------- */
   // Result filing date is not in the data feed: estimate it as ~35 days after quarter end.
   function resultDate(c) {
-    const lab = c.quarters[c.quarters.length - 1];
+    const lab = c.lastQuarter || (c.quarters && c.quarters[c.quarters.length - 1]);
     if (!lab) return new Date(0);
     const d = new Date(lab.replace(' ', ' 1, '));
     d.setMonth(d.getMonth() + 1);
@@ -948,7 +1020,7 @@
     const src = mine.length ? mine : all;
     const results = src.slice().sort((a, b) => resultDate(b) - resultDate(a));
     const anns = [];
-    src.forEach(c => c.docs.announcements.slice(0, 3).forEach(a => anns.push({ c, a, t: new Date(a.date).getTime() || 0 })));
+    src.forEach(c => (c.docs ? c.docs.announcements : []).slice(0, 3).forEach(a => anns.push({ c, a, t: new Date(a.date).getTime() || 0 })));
     anns.sort((x, y) => y.t - x.t);
     app.innerHTML = '<div class="container page"><div class="section-head"><div><h1>Feed</h1><p>' +
       (mine.length ? 'Updates from the ' + mine.length + ' companies you follow' : 'Follow companies to personalise your feed. Showing all companies.') + '</p></div>' +
@@ -958,11 +1030,24 @@
         const m = c.metrics;
         return '<div class="stat-mini" style="display:block"><div class="flex space-between"><a href="#/company/' + esc(c.symbol) + '"><b>' + esc(c.name) + '</b></a><span class="sub">' +
           resultDate(c).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + '</span></div>' +
-          '<div class="sub">' + esc(c.quarters[c.quarters.length - 1] || '') + ' quarter &middot; Sales ₹ ' + num(m.qtrSales, 0) + ' Cr. <span class="' + signCls(m.qtrSalesVar) + '">(' + num(m.qtrSalesVar, 1) + '% YoY)</span> &middot; Net profit ₹ ' +
+          '<div class="sub">' + esc(c.lastQuarter || (c.quarters && c.quarters[c.quarters.length - 1]) || '') + ' quarter &middot; Sales ₹ ' + num(m.qtrSales, 0) + ' Cr. <span class="' + signCls(m.qtrSalesVar) + '">(' + num(m.qtrSalesVar, 1) + '% YoY)</span> &middot; Net profit ₹ ' +
           num(m.qtrProfit, 0) + ' Cr. <span class="' + signCls(m.qtrProfitVar) + '">(' + num(m.qtrProfitVar, 1) + '% YoY)</span></div></div>';
       }).join('') + '<a class="btn btn-small" style="margin-top:12px" href="#/results/latest">All results</a></div>' +
-      '<div class="card"><h2>Announcements</h2><ul class="doc-list" style="max-height:none">' + anns.slice(0, 25).map(x => '<li><span><a href="#/company/' + esc(x.c.symbol) + '">' + esc(x.c.symbol) + '</a> &middot; ' +
+      '<div class="card"><h2>Announcements</h2><ul class="doc-list" id="feed-anns" style="max-height:none">' + anns.slice(0, 25).map(x => '<li><span><a href="#/company/' + esc(x.c.symbol) + '">' + esc(x.c.symbol) + '</a> &middot; ' +
         esc(x.a.title) + '</span><span class="date">' + esc(x.a.date) + '</span></li>').join('') + '</ul></div></div></div>';
+    if (Data.mode() !== 'sample') {
+      const token = navToken;
+      $('#feed-anns').innerHTML = '<li class="muted">Loading exchange announcements…</li>';
+      Data.latestFilings().then(f => {
+        if (token !== navToken || !$('#feed-anns')) return;
+        const mineSet = new Set(mine.map(c => c.symbol));
+        const items = ((f && f.items) || []).filter(it => !mineSet.size || mineSet.has(it.s)).slice(0, 40);
+        $('#feed-anns').innerHTML = items.length ? items.map(it => '<li><span><a href="#/company/' + encodeURIComponent(it.s) + '">' + esc(it.s) + '</a> &middot; ' +
+          '<a target="_blank" rel="noopener noreferrer" href="' + esc(it.u) + '">' + esc(it.t) + '</a></span><span class="date">' +
+          new Date(it.d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + '</span></li>').join('')
+          : '<li class="muted">No recent exchange announcements' + (mineSet.size ? ' for the companies you follow' : '') + '.</li>';
+      });
+    }
   }
 
   /* ---------- Tools ---------- */
@@ -1007,14 +1092,14 @@
   /* ---------- Results ---------- */
   function pageResults() {
     setTitle('Latest results');
-    const all = Data.listCompanies().slice().sort((a, b) => resultDate(b) - resultDate(a));
+    const all = Data.listCompanies().slice().sort((a, b) => resultDate(b) - resultDate(a) || (b.metrics.marketCap || 0) - (a.metrics.marketCap || 0)).slice(0, 300);
     app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Latest Results</h1><p>Latest reported quarter &middot; figures in Rs. Cr.' + (Data.liveInfo().count ? ' &middot; result dates are estimated' : '') + '</p></div></div>' +
       '<div class="table-wrap"><table class="data list"><thead><tr><th>S.No.</th><th>Name</th><th>Result date</th><th>Sales</th><th>YoY %</th><th>Operating Profit</th><th>OPM %</th><th>Net Profit</th><th>YoY %</th><th>EPS</th></tr></thead><tbody>' +
       all.map((c, i) => {
-        const n = c.q.sales.length - 1, m = c.metrics;
+        const m = c.metrics;
         return '<tr><td>' + (i + 1) + '.</td><td><a href="#/company/' + esc(c.symbol) + '">' + esc(c.name) + '</a></td><td>' + resultDate(c).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) +
-          '</td><td>' + num(c.q.sales[n], 0) + '</td><td class="' + signCls(m.qtrSalesVar) + '">' + num(m.qtrSalesVar, 1) + '</td><td>' + num(c.q.op[n], 0) + '</td><td>' + num(c.q.opm[n], 0) +
-          '</td><td>' + num(c.q.np[n], 0) + '</td><td class="' + signCls(m.qtrProfitVar) + '">' + num(m.qtrProfitVar, 1) + '</td><td>' + num(c.q.eps[n], 2) + '</td></tr>';
+          '</td><td>' + num(m.qtrSales, 0) + '</td><td class="' + signCls(m.qtrSalesVar) + '">' + num(m.qtrSalesVar, 1) + '</td><td>' + num(m.qtrOp, 0) + '</td><td>' + num(m.qtrOpm, 0) +
+          '</td><td>' + num(m.qtrProfit, 0) + '</td><td class="' + signCls(m.qtrProfitVar) + '">' + num(m.qtrProfitVar, 1) + '</td><td>' + num(m.qtrEps, 2) + '</td></tr>';
       }).join('') + '</tbody></table></div></div></div>';
   }
 
@@ -1023,7 +1108,12 @@
     setTitle('Compare companies');
     Data.listCompanies();
     const syms = (params.c || '').split(',').map(s => s.trim().toUpperCase()).filter(s => Data.exists(s)).slice(0, 5);
-    const comps = syms.map(s => Data.getCompany(s));
+    app.innerHTML = LOADING;
+    const token = navToken;
+    Promise.all(syms.map(s => Data.loadCompany(s).catch(() => null))).then(list => {
+      if (token === navToken) renderCompare(list.filter(Boolean));
+    });
+    function renderCompare(comps) {
     const rows = ['price', 'marketCap', 'pe', 'industryPE', 'pb', 'divYield', 'roce', 'roe', 'de', 'sales', 'np', 'opm', 'salesGrowth5', 'profitGrowth5', 'qtrSalesVar', 'qtrProfitVar', 'promoter', 'fii', 'dii', 'ret1y', 'ret3y', 'ret5y'];
     const setSyms = list => { location.hash = '#/compare' + (list.length ? '?c=' + list.join(',') : ''); };
     app.innerHTML = '<div class="container page"><div class="card"><h1>Compare companies</h1><p class="muted">Add up to 5 companies.</p>' +
@@ -1048,18 +1138,23 @@
     if ($('#cmp-search')) attachSearch($('#cmp-search'), c => { if (syms.indexOf(c.symbol) < 0) setSyms(syms.concat([c.symbol])); });
     if (comps.length && typeof Chart !== 'undefined') {
       const colors = ['#6056ff', '#e8a33d', '#11813d', '#d33a3a', '#0ea5b7'];
-      const n = comps[0].prices.length, start = n - 252, step = 2;
-      const idx = [];
-      for (let i = start; i < n; i += step) idx.push(i);
+      // align every series on its most recent trading days (histories differ in length)
+      const span = Math.min(252, Math.min.apply(null, comps.map(c => c.prices.length)) - 1), step = 2;
+      const back = [];
+      for (let k = span; k >= 0; k -= step) back.push(k);
+      if (back[back.length - 1] !== 0) back.push(0);
+      const at = (c, k) => c.prices[c.prices.length - 1 - k];
+      const ref = comps[0];
       const ch = new Chart($('#cmp-chart'), {
         type: 'line',
-        data: { labels: idx.map(i => comps[0].dates[i].toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })),
-          datasets: comps.map((c, j) => ({ label: c.symbol, data: idx.map(i => c.prices[i] / c.prices[start] * 100), borderColor: colors[j], borderWidth: 1.6, pointRadius: 0 })) },
+        data: { labels: back.map(k => ref.dates[ref.dates.length - 1 - k].toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })),
+          datasets: comps.map((c, j) => ({ label: c.symbol, data: back.map(k => at(c, k) / at(c, span) * 100), borderColor: colors[j], borderWidth: 1.6, pointRadius: 0 })) },
         options: { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'index', intersect: false },
           plugins: { legend: { labels: { color: cssVar('--ink-2') } } },
           scales: { x: { ticks: { color: cssVar('--ink-3'), maxTicksLimit: 8, maxRotation: 0 }, grid: { display: false } }, y: { position: 'right', ticks: { color: cssVar('--ink-3') }, grid: { color: cssVar('--line-2') } } } }
       });
       onLeave(() => ch.destroy());
+    }
     }
   }
 
