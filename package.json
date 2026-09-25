@@ -1,0 +1,15 @@
+{
+  "name": "sankhyas",
+  "private": true,
+  "type": "module",
+  "description": "India's AI-Powered Financial Research Terminal",
+  "scripts": {
+    "start": "node server/server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0"
+  }
+}

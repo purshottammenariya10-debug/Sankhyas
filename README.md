@@ -6,11 +6,29 @@ It is a static single-page app: no build step and no backend.
 ## Run locally
 
 ```bash
-python3 -m http.server 8000
+npm install
+ANTHROPIC_API_KEY=sk-ant-... npm start
 # open http://localhost:8000
 ```
 
-It can be deployed to any static host (GitHub Pages, Netlify, Vercel, S3).
+The Node server serves the site and the AI endpoint, and it keeps your API key on the server.
+Without it, any static host works (`python3 -m http.server`, GitHub Pages, Netlify, S3). Everything except AI keeps working, and the AI panels explain how to turn AI on.
+
+## AI features
+
+Sankhyas AI uses Claude (`claude-opus-5`; override with `SANKHYAS_MODEL`).
+
+- **AI Analyst tab** on every company page: a chat grounded in that company's financials, with one-click prompts for a full research report, latest-quarter explanation, valuation check, bull/bear case and balance-sheet health.
+- **Plain-English screens:** describe a screen ("debt free companies with ROE above 20%") and AI writes the query. The query is checked before it runs, so you can review or edit it first.
+- **Ask AI page** (`#/ai`): questions across every company covered, like sector comparisons, screening ideas and trends.
+- **AI comparison** on the Compare page.
+
+How it works:
+- **Data sent with each question:** the browser sends a compact data snapshot of what's on screen. The server wraps it in a fixed system prompt (`server/server.mjs`) and streams Claude's answer back.
+- **Grounding rules:** the prompt tells Claude to use only the numbers provided and to say when the figures are sample data. It also stops Claude giving buy/sell calls or price targets.
+- **Server safeguards:** the server limits request size and conversation length and rate-limits each IP (`SANKHYAS_RATE_LIMIT`, default 40 per 10 minutes). It turns on Claude's server-side refusal fallback.
+- **In a claude.ai artifact:** with no server, the site uses the artifact's built-in Claude access instead, and each viewer approves usage once.
+
 
 ## Features
 
@@ -60,5 +78,7 @@ scripts/            Yahoo Finance fetcher and symbol list
 data/yahoo/         fetched JSON (created by the script / workflow)
 js/screener.js      ratio catalogue, query compiler, preset screens
 js/app.js           hash router, pages and UI components
+js/ai.js            AI client: transport, data context, chat widget, NL screens
+server/server.mjs   static server + /api/ai endpoint (Anthropic SDK)
 js/vendor/          Chart.js 4.4.1 (MIT)
 ```

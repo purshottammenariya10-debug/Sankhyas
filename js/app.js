@@ -179,7 +179,7 @@
     const routes = {
       '': pageHome, company: pageCompany, screens: pageScreens, screen: pageScreen, feed: pageFeed, tools: pageTools,
       market: pageMarket, results: pageResults, compare: pageCompare, watchlist: pageWatchlist,
-      login: pageLogin, register: pageRegister, premium: pagePremium, about: pageAbout
+      login: pageLogin, register: pageRegister, premium: pagePremium, about: pageAbout, ai: pageAI
     };
     const fn = routes[p0] || pageNotFound;
     const prevY = window.scrollY;
@@ -210,8 +210,9 @@
         '<a class="chip" href="#/company/' + s + '">' + s + '</a>').join('') + '</div>' +
       '</section>' +
       '<div class="container page">' +
+      '<a class="ai-cta" href="#/ai"><span class="ai-spark">✦</span><span><b>Ask Sankhyas AI</b><span class="sub"> &middot; "Which IT companies have the best margins?" &middot; "Explain HDFC Bank\'s latest quarter"</span></span><span class="ai-cta-go">Ask AI →</span></a>' +
       '<div class="grid grid-3">' +
-      '<div class="card feature"><h3><span class="feature-icon">⌕</span>Stock screener</h3><p class="muted">Run queries on 10 years of financial data. Filter stocks by 60+ ratios with simple English-like queries.</p><a class="btn btn-primary" href="#/screen/new">Create a stock screen</a></div>' +
+      '<div class="card feature"><h3><span class="feature-icon">⌕</span>Stock screener</h3><p class="muted">Run queries on 10 years of financial data. Filter stocks by 60+ ratios, or just describe what you want in plain English and let AI write the query.</p><a class="btn btn-primary" href="#/screen/new">Create a stock screen</a></div>' +
       '<div class="card feature"><h3><span class="feature-icon">▤</span>Company financials</h3><p class="muted">Quarterly results, profit &amp; loss, balance sheet, cash flows, ratios and shareholding in one page.</p><a class="btn" href="#/company/TCS">See an example</a></div>' +
       '<div class="card feature"><h3><span class="feature-icon">★</span>Watchlist &amp; feed</h3><p class="muted">Follow companies to get their latest results and announcements in your feed.</p><a class="btn" href="#/feed">Open feed</a></div>' +
       '</div>' +
@@ -233,7 +234,7 @@
 
   /* ---------- Company ---------- */
   const COMPANY_SECTIONS = [
-    ['top', 'Summary'], ['chart', 'Chart'], ['analysis', 'Analysis'], ['peers', 'Peers'], ['quarters', 'Quarters'],
+    ['top', 'Summary'], ['ai', 'AI Analyst'], ['chart', 'Chart'], ['analysis', 'Analysis'], ['peers', 'Peers'], ['quarters', 'Quarters'],
     ['profit-loss', 'Profit & Loss'], ['balance-sheet', 'Balance Sheet'], ['cash-flow', 'Cash Flow'], ['ratios', 'Ratios'],
     ['shareholding', 'Investors'], ['documents', 'Documents']
   ];
@@ -270,7 +271,7 @@
       COMPANY_SECTIONS.map(s => '<a href="" data-target="' + s[0] + '">' + esc(s[1]) + '</a>').join('') + '</div></div>' +
       '</div>' +
       '<div class="container page">' +
-      summarySection(c) + chartSection(c) + analysisSection(c) + peersSection(c) + quartersSection(c) +
+      summarySection(c) + aiSection(c) + chartSection(c) + analysisSection(c) + peersSection(c) + quartersSection(c) +
       plSection(c) + bsSection(c) + cfSection(c) + ratiosSection(c) + shareholdingSection(c) + documentsSection(c) + notesSection(c) +
       '</div>';
 
@@ -311,6 +312,7 @@
     bindShareholding(c);
     bindDocuments();
     bindNotes(c);
+    bindAI(c);
   }
 
   function topRatioRow(c, key) {
@@ -366,6 +368,27 @@
       $$('#summary [data-view]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); routeKeepScroll = true; location.hash = a.getAttribute('href'); }));
       bindTopRatios(c);
     }
+  }
+
+  /* AI analyst */
+  function aiSection(c) {
+    return '<section class="section card" id="ai"><div id="ai-widget"></div></section>';
+  }
+  function bindAI(c) {
+    const w = AI.mount($('#ai-widget'), {
+      title: 'AI Analyst',
+      intro: 'Ask anything about ' + c.name + '. Answers are based on the financials on this page.',
+      placeholder: 'Ask about ' + c.name + '…',
+      context: () => AI.companyContext(c),
+      suggestions: [
+        'Write a full research report: business snapshot, growth, profitability, balance sheet, cash flows, valuation, key risks and what to watch',
+        'Explain the latest quarterly results',
+        'Is the valuation reasonable versus its history and growth?',
+        'Give me the bull case and the bear case',
+        'How healthy is the balance sheet and cash flow?'
+      ]
+    });
+    onLeave(w.abort);
   }
 
   /* chart */
@@ -804,6 +827,9 @@
       esc(meta ? meta.desc : 'Custom queries use simple arithmetic and comparison operators on financial ratios.') + '</p></div>' +
       (meta ? '' : '<a class="btn btn-small" href="#/screens">View popular screens</a>') + '</div>' +
       '<div class="screen-layout"><div>' +
+      '<div class="ai-screen"><label for="nl-query"><span class="ai-spark">✦</span> Describe your screen in plain English</label>' +
+      '<div class="flex"><input type="text" id="nl-query" placeholder="e.g. debt free companies with ROE above 20% and sales growing faster than 12%">' +
+      '<button class="btn btn-primary" id="nl-run" type="button">Generate query</button></div><div id="nl-status" class="sub" style="margin-top:6px"></div></div>' +
       '<label for="query">Query</label><textarea id="query" rows="6" placeholder="' + esc(example) + '">' + esc(query.replace(/ AND /g, ' AND\n')) + '</textarea>' +
       '<div id="query-error"></div>' +
       '<div class="flex flex-wrap" style="margin-top:10px"><button class="btn btn-primary" id="run-query">▶ Run this query</button>' +
@@ -884,6 +910,30 @@
       downloadCSV('screen-results.csv', [['Name', 'NSE Code'].concat(lastCols.map(k => RBY[k].label))].concat(
         lastResults.map(c => [c.name, c.symbol].concat(lastCols.map(k => { const v = c.metrics[k]; return v == null || !isFinite(v) ? '' : Math.round(v * 100) / 100; })))));
     };
+    let nlCtl = null;
+    AI.ready.then(t => { if (!t && $('#nl-status')) $('#nl-status').innerHTML = 'AI is not connected, so plain-English screens are unavailable. See the README to enable AI.'; });
+    const nlRun = async () => {
+      const desc = $('#nl-query').value.trim();
+      if (!desc) { $('#nl-query').focus(); return; }
+      if (nlCtl) { nlCtl.abort(); return; }
+      nlCtl = new AbortController();
+      $('#nl-run').textContent = 'Stop';
+      $('#nl-status').textContent = 'Writing your query…';
+      try {
+        const q = await AI.screenQuery(desc, nlCtl.signal);
+        $('#query').value = q.replace(/ AND /g, ' AND\n');
+        try { Screener.compile(q); $('#nl-status').textContent = 'Query generated by AI. Review it below, then edit or run it.'; run(true); }
+        catch (e) { $('#nl-status').textContent = 'The AI query needs a fix: ' + e.message + ' Edit it below and run it.'; }
+      } catch (e) {
+        $('#nl-status').textContent = AI.errorCopy(e);
+      } finally {
+        nlCtl = null;
+        if ($('#nl-run')) $('#nl-run').textContent = 'Generate query';
+      }
+    };
+    $('#nl-run').onclick = nlRun;
+    $('#nl-query').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); nlRun(); } });
+    onLeave(() => nlCtl && nlCtl.abort());
     if (query) run(false);
   }
 
@@ -991,9 +1041,20 @@
       (comps.length < 5 ? '<div class="nav-search"><svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" id="cmp-search" placeholder="Add a company" autocomplete="off"></div>' : '') + '</div></div>' +
       (comps.length ? '<div class="card"><div class="table-wrap"><table class="data"><thead><tr><th>Ratio</th>' + comps.map(c => '<th><a href="#/company/' + c.symbol + '">' + esc(c.symbol) + '</a></th>').join('') + '</tr></thead><tbody>' +
         rows.map(k => '<tr><td>' + esc(RBY[k].name) + '</td>' + comps.map(c => '<td>' + fmtMetric(k, c.metrics[k]) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div></div>' +
+        '<div class="card" id="cmp-ai"></div>' +
         '<div class="card"><h2>1 year price performance</h2><p class="muted" style="font-size:14px">Rebased to 100</p><div class="chart-box"><canvas id="cmp-chart"></canvas></div></div>' : '<div class="card muted">Pick companies above to start comparing.</div>') +
       '</div>';
     $$('[data-rm]').forEach(b => b.onclick = () => setSyms(syms.filter(s => s !== b.dataset.rm)));
+    if (comps.length) {
+      const w = AI.mount($('#cmp-ai'), {
+        title: 'AI comparison',
+        intro: 'Ask AI to compare ' + comps.map(c => c.symbol).join(', ') + '.',
+        placeholder: 'Ask about these companies…',
+        context: () => AI.tableContext(comps, 'Companies being compared:') + '\n\n' + comps.map(c => AI.companyContext(c)).join('\n\n---\n\n').slice(0, 40000),
+        suggestions: ['Compare these companies on growth, profitability, balance sheet and valuation', 'Which has the strongest balance sheet?', 'Which looks most expensive relative to growth?']
+      });
+      onLeave(w.abort);
+    }
     if ($('#cmp-search')) attachSearch($('#cmp-search'), c => { if (syms.indexOf(c.symbol) < 0) setSyms(syms.concat([c.symbol])); });
     if (comps.length && typeof Chart !== 'undefined') {
       const colors = ['#6056ff', '#e8a33d', '#11813d', '#d33a3a', '#0ea5b7'];
@@ -1010,6 +1071,29 @@
       });
       onLeave(() => ch.destroy());
     }
+  }
+
+  /* ---------- Ask AI ---------- */
+  function pageAI() {
+    setTitle('Ask Sankhyas AI');
+    const all = Data.listCompanies();
+    app.innerHTML = '<div class="container page"><div class="section-head"><div><h1><span class="ai-spark">✦</span> Ask Sankhyas AI</h1>' +
+      '<p>Ask about any of the ' + all.length + ' companies Sankhyas covers: comparisons, sector trends and ideas for screens.</p></div></div>' +
+      '<div class="card" id="market-ai"></div></div>';
+    const w = AI.mount($('#market-ai'), {
+      title: 'Sankhyas AI',
+      intro: 'Try one of the suggestions below or ask your own question. For deep dives into one company, open its page and use the AI Analyst tab.',
+      placeholder: 'Ask about Indian stocks…',
+      context: () => AI.tableContext(all, 'Universe of companies covered by Sankhyas (latest metrics):'),
+      suggestions: [
+        'Which companies combine high ROCE with low debt?',
+        'Which sectors look cheapest on P/E right now?',
+        'Find companies with strong recent quarterly growth',
+        'Summarise the IT sector for me',
+        'Which large caps have the best 5-year profit growth?'
+      ]
+    });
+    onLeave(w.abort);
   }
 
   /* ---------- Watchlist ---------- */
