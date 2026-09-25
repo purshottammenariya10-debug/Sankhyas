@@ -25,6 +25,7 @@ on:
 
 permissions:
   contents: read
+  pages: read
 
 concurrency:
   group: deploy
@@ -36,6 +37,11 @@ jobs:
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
+
+      # Fails fast with a clear message if Pages is not enabled
+      # (Settings -> Pages -> Build and deployment -> Source: GitHub Actions).
+      - name: Check GitHub Pages is enabled
+        uses: actions/configure-pages@v5
 
       - name: Restore data cache
         uses: actions/cache/restore@v4
