@@ -202,7 +202,7 @@
       '</a><span class="' + signCls(c.metrics.changePct) + '">' + (c.metrics.changePct > 0 ? '+' : '') + num(c.metrics.changePct, 2) + '%</span></div>').join('');
     app.innerHTML =
       '<section class="home-hero">' +
-      '<div class="logo"><span class="logo-mark">S</span><span>Sankhyas</span></div>' +
+      '<div class="logo"><img class="logo-mark" src="assets/logo.svg" alt=""><span>Sankhyas</span></div>' +
       '<p class="tagline">Stock analysis and screening tool for investors in India.</p>' +
       '<div class="home-search"><svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>' +
       '<input type="search" id="home-search" placeholder="Search for a company" autocomplete="off" autofocus></div>' +
