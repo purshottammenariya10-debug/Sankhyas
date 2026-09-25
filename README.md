@@ -28,7 +28,7 @@ Answers are written from templates and thresholds applied to the same data the p
 The GitHub Actions workflow `.github/workflows/deploy.yml` builds the data and deploys the site to GitHub Pages. It runs every weekday at 5 pm IST, and whenever you push to `main` or start it by hand.
 
 1. **Company list** (`scripts/fetch_universe.py`): the NSE equity list plus BSE's active scrip list, matched by ISIN. NSE companies use `SYMBOL.NS` on Yahoo; BSE-only companies use `CODE.BO`, and their BSE code is the Sankhyas symbol.
-2. **Yahoo Finance** (`scripts/fetch_yahoo.py --universe`): each run fully refreshes the 400 stalest companies. That covers 10 years of prices, quote and valuation, about 4 years of statements and about 5 quarters. Every other company gets the day's price in one bulk request. The whole market is fully refreshed about every 2 weeks.
+2. **Yahoo Finance** (`scripts/fetch_yahoo.py --universe`): each run fully refreshes the 1,200 stalest companies (large caps first on the first pass). That covers 10 years of prices, quote and valuation, about 4 years of statements and about 5 quarters. Every other company gets the day's price in one bulk request. The ~2,600 NSE companies are fully covered within 3 runs and then refreshed about weekly.
 3. **Filings** (`scripts/fetch_filings.py`): a daily sweep of all BSE announcements (plus NSE when it allows access). A backfill adds 3 years of announcements and all annual reports for 150 companies per run, largest first.
    - Filings are grouped into announcements, annual reports, credit ratings, and concalls: transcripts, investor presentations (PPT), recordings (REC) and call notices.
    - Links point to the PDFs on the exchanges' own sites.
@@ -36,7 +36,7 @@ The GitHub Actions workflow `.github/workflows/deploy.yml` builds the data and d
 
 The data is kept between runs in the Actions cache, not committed to git, so the repo stays small.
 
-**One-time setup:** Settings → Pages → Source: **GitHub Actions**, then Actions → "Update data and deploy" → Run workflow. You can raise the batch sizes for the first run. The first runs fill the data gradually; companies appear as they are fetched.
+**One-time setup:** the workflow publishes to the `gh-pages` branch. In Settings → Pages, set Source to **Deploy from a branch**, branch **gh-pages**, folder **/ (root)**. Then Actions → "Update data and deploy" → Run workflow.
 
 **Local run:**
 

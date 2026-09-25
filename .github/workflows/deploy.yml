@@ -19,7 +19,7 @@ on:
       max_full:
         description: "Companies to fully refresh from Yahoo this run (the rest get today's price)"
         required: false
-        default: "400"
+        default: "1200"
       max_backfill:
         description: "Companies whose filing history to backfill this run"
         required: false
@@ -65,7 +65,7 @@ jobs:
       - name: Yahoo Finance data
         if: github.event_name != 'push'
         continue-on-error: true
-        run: python scripts/fetch_yahoo.py --universe --max-full "${{ github.event.inputs.max_full || '400' }}" --delay 0.5
+        run: python scripts/fetch_yahoo.py --universe --max-full "${{ github.event.inputs.max_full || '1200' }}" --delay 0.5
 
       - name: NSE/BSE filings
         if: github.event_name != 'push'

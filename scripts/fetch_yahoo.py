@@ -271,8 +271,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("symbols", nargs="*", help="Sankhyas symbols (default: scripts/symbols.txt)")
     ap.add_argument("--universe", action="store_true", help="cover every company in data/universe.json")
-    ap.add_argument("--max-full", type=int, default=400,
-                    help="with --universe: full refreshes per run, oldest first (default 400)")
+    ap.add_argument("--max-full", type=int, default=1200,
+                    help="with --universe: full refreshes per run, oldest first (default 1200)")
     ap.add_argument("--live-only", action="store_true", help="site shows only companies with Yahoo data")
     ap.add_argument("--delay", type=float, default=1.0, help="seconds to wait between symbols")
     args = ap.parse_args(argv)
@@ -287,7 +287,9 @@ def main(argv=None):
             wanted = {s.upper() for s in args.symbols}
             entries = [e for e in universe if e["symbol"].upper() in wanted]
         # refresh the stalest companies fully; everyone else gets today's price in bulk
-        ranked = sorted(entries, key=lambda e: -file_age(e["symbol"]))
+        # stalest first; among equally stale (e.g. never fetched), the built-in large caps go first
+        priority = {s.strip().upper() for s in (ROOT / "scripts" / "symbols.txt").read_text().split() if s.strip()}
+        ranked = sorted(entries, key=lambda e: (-file_age(e["symbol"]), e["symbol"] not in priority, e["symbol"]))
         todo = [e for e in ranked if file_age(e["symbol"]) > 20 * 3600][:args.max_full]
         live_only = True
     else:
