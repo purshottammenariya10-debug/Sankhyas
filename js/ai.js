@@ -250,15 +250,33 @@
     ['peers', /peer|competitor|rival|industry|sector|compare/, peers],
     ['dividend', /dividend|payout|yield/, valuation]
   ];
+  function latestConcall(c) {
+    const f = c._filings, notes = (f && f.notes) || {};
+    const calls = ((f && f.announcements) || []).filter(a => a.k === 'transcript' && notes[a.u] && notes[a.u].sections);
+    return calls.length ? { a: calls[0], n: notes[calls[0].u] } : null;
+  }
+  function concall(c) {
+    const lc = latestConcall(c);
+    if (!lc) {
+      return '## Latest concall\nNo summarised concall transcript is available for ' + c.name + ' yet. Transcripts are summarised automatically once the exchange filing has been fetched ' +
+        '(see the **Concalls** panel under Documents).';
+    }
+    const S = lc.n.sections;
+    return '## Latest concall (' + new Date(lc.n.d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + ')\n' +
+      'Management tone: **' + lc.n.tone + '**.\n\n' +
+      Object.keys(S).map(k => '**' + k + '**\n' + S[k].map(x => '- ' + x).join('\n')).join('\n\n') +
+      '\n\n*Key sentences from the transcript, in management\'s own words.*';
+  }
   function answerCompany(c, q) {
     const t = q.toLowerCase();
+    if (/concall|con call|conference call|earnings call|transcript|management (said|say|commentary|guidance)|what did management/.test(t)) return concall(c);
     if (/report|full|detailed|everything|overview|analy[sz]|deep dive|summar|tell me about|explain the company/.test(t)) return fullReport(c) + sourceNote(c);
     const hit = [];
     INTENTS.forEach(([id, re, fn]) => { if (re.test(t) && hit.indexOf(fn) < 0) hit.push(fn); });
     let out = hit.slice(0, 3).map(fn => fn(c)).join('\n\n');
     if (/should i|buy|sell|invest/.test(t)) out += '\n\n*Sankhyas AI does not give buy or sell recommendations. Use the evidence above with your own research.*';
     if (!out) {
-      out = '## Snapshot\n' + snapshot(c) + '\n\nI can analyse **growth, profitability, balance sheet, cash flow, valuation, the latest quarter, ownership, price performance, peers** and the **bull and bear case**, or write a **full report**. Try asking about one of those.';
+      out = '## Snapshot\n' + snapshot(c) + '\n\nI can summarise the **latest concall** and analyse **growth, profitability, balance sheet, cash flow, valuation, the latest quarter, ownership, price performance, peers** and the **bull and bear case**, or write a **full report**. Try asking about one of those.';
     }
     return out + sourceNote(c);
   }

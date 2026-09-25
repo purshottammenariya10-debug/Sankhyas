@@ -262,8 +262,10 @@
     });
   }
 
+  let currentCompany = null;
   function renderCompany(c, sym, standalone) {
     const token = navToken;
+    currentCompany = c;
     if (standalone) c.metrics.industryPE = Data.getCompany(sym).metrics.industryPE;
     const m = c.metrics;
     setTitle(c.name + ' share price');
@@ -335,6 +337,7 @@
         if (token !== navToken || !$('#documents')) return;
         const tmp = document.createElement('div');
         if (!f || (!(f.announcements || []).length && !(f.annualReports || []).length)) return;
+        c._filings = f;
         tmp.innerHTML = documentsSection(c, f);
         $('#documents').replaceWith(tmp.firstChild);
         bindDocuments();
@@ -412,6 +415,7 @@
       suggestions: [
         'Write a full research report: business snapshot, growth, profitability, balance sheet, cash flows, valuation, key risks and what to watch',
         'Explain the latest quarterly results',
+        'Summarise the latest concall',
         'Is the valuation reasonable versus its history and growth?',
         'Give me the bull case and the bear case',
         'How healthy is the balance sheet and cash flow?'
@@ -790,7 +794,10 @@
       });
       ccHtml = groups.slice(0, 12).map(g => {
         const items = by[g].slice().sort((a, b) => ORDER.indexOf(a.k) - ORDER.indexOf(b.k));
-        return '<div class="concall-row"><span class="period">' + esc(g) + '</span>' + items.slice(0, 6).map(a => ext(a.u, KIND[a.k], 'btn btn-small', a.t)).join('') + '</div>';
+        const notes = (f && f.notes) || {};
+        const noted = items.find(a => a.k === 'transcript' && notes[a.u] && notes[a.u].sections);
+        return '<div class="concall-row"><span class="period">' + esc(g) + '</span>' + items.slice(0, 6).map(a => ext(a.u, KIND[a.k], 'btn btn-small', a.t)).join('') +
+          (noted ? '<button class="btn btn-small btn-ai" data-note="' + esc(noted.u) + '">✦ AI Notes</button>' : '') + '</div>';
       }).join('');
     } else {
       const tip = 'Opens ' + c.name + '\'s filings on ' + (X.nse ? 'NSE' : 'BSE') + ' (look for "Analysts/Institutional Investor Meet")';
@@ -807,7 +814,18 @@
       '<div><h3>Concalls</h3>' + ccHtml + '</div>' +
       '</div></section>';
   }
+  function concallNoteHtml(n, url) {
+    const day = new Date(n.d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    return '<p class="sub">Call filed ' + day + ' &middot; tone: <b class="tone-' + esc(n.tone).toLowerCase() + '">' + esc(n.tone) + '</b> &middot; ' +
+      '<a target="_blank" rel="noopener noreferrer" href="' + esc(url) + '">Read full transcript</a></p>' +
+      Object.keys(n.sections).map(k => '<h4>' + esc(k) + '</h4><ul>' + n.sections[k].map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>').join('') +
+      '<p class="table-note">Free built-in AI summary: key sentences picked from the transcript by topic, in management\'s own words. It can miss context; read the transcript before acting on it.</p>';
+  }
   function bindDocuments() {
+    $$('[data-note]').forEach(b => b.onclick = () => {
+      const c = currentCompany, n = c && c._filings && c._filings.notes && c._filings.notes[b.dataset.note];
+      if (n) modal('Concall AI Notes: ' + c.name, '<div class="ai-assistant note-body">' + concallNoteHtml(n, b.dataset.note) + '</div>');
+    });
     $$('[data-ann]').forEach(b => b.onclick = () => {
       $$('[data-ann]').forEach(x => x.classList.toggle('active', x === b));
       const imp = b.dataset.ann === 'important';

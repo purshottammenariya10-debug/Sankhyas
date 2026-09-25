@@ -57,7 +57,7 @@ jobs:
           node-version: "20"
 
       - name: Install Python packages
-        run: pip install yfinance requests
+        run: pip install yfinance requests pypdf
 
       - name: Company list (NSE + BSE)
         if: github.event_name != 'push'
@@ -73,6 +73,11 @@ jobs:
         if: github.event_name != 'push'
         continue-on-error: true
         run: python scripts/fetch_filings.py --max-backfill "${{ github.event.inputs.max_backfill || '150' }}"
+
+      - name: Concall summaries (free, rule-based)
+        if: github.event_name != 'push'
+        continue-on-error: true
+        run: python scripts/summarize_concalls.py --max 80
 
       - name: Build company index
         run: |

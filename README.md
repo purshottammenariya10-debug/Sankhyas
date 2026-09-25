@@ -21,6 +21,8 @@ Sankhyas AI runs entirely in the visitor's browser (`js/ai.js`). It is a rule-ba
 - **Ask AI page** (`#/ai`): rankings ("top 5 cheapest IT stocks by P/E"), filters ("high ROCE with low debt"), sector overviews and sector comparisons across all covered companies.
 - **AI comparison** on the Compare page: which company leads on growth, returns, margins, leverage, valuation and momentum.
 
+- **Concall AI Notes:** the data update downloads each earnings-call transcript PDF (`scripts/summarize_concalls.py`) and keeps the most informative sentences management said, grouped into guidance & outlook, growth & demand, margins & costs, capex, balance sheet and risks. It also rates the call's tone. An **✦ AI Notes** button appears next to the transcript in the Concalls panel, and the AI Analyst answers "summarise the latest concall".
+
 Answers are written from templates and thresholds applied to the same data the page shows, so they can't invent numbers. They also can't handle open-ended questions outside those topics. They never give buy/sell recommendations.
 
 ## Data: every Indian listed company + NSE/BSE filings
