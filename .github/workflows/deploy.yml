@@ -34,7 +34,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Set the repository variable DATA_RUNNER to "self-hosted" to run on your own machine in India
+    # (NSE and BSE block GitHub's servers). See scripts/setup-india-runner.sh and the README.
+    runs-on: ${{ vars.DATA_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4

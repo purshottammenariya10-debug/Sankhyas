@@ -38,6 +38,20 @@ The data is kept between runs in the Actions cache, not committed to git, so the
 
 **One-time setup:** the workflow publishes to the `gh-pages` branch. In Settings → Pages, set Source to **Deploy from a branch**, branch **gh-pages**, folder **/ (root)**. Then Actions → "Update data and deploy" → Run workflow.
 
+**Running the data job from India (needed for NSE/BSE filings):** NSE and BSE block GitHub's own servers (403). To fetch filings, run the job on a machine with an Indian IP address:
+
+1. Get a machine: a small Ubuntu 22.04/24.04 VM in a Mumbai or Hyderabad region (AWS Lightsail, DigitalOcean Bangalore, Azure Central India, and similar, roughly ₹400–800 a month), or WSL on a Windows PC that stays on.
+2. Open Settings → Actions → Runners → **New self-hosted runner** and copy the token from the "Configure" step.
+3. On the machine, run:
+   ```bash
+   curl -fsSLO https://raw.githubusercontent.com/purshottammenariya10-debug/Sankhyas/claude/sankyas-website-build-f3o5tw/scripts/setup-india-runner.sh
+   bash setup-india-runner.sh <TOKEN>
+   ```
+   The script checks that NSE and BSE answer from that machine, then installs the runner as a service.
+4. Open Settings → Secrets and variables → Actions → **Variables** and add `DATA_RUNNER` = `self-hosted`.
+
+From then on, the daily job runs on that machine. Delete the variable to go back to GitHub's servers.
+
 **Local run:**
 
 ```bash
