@@ -1,0 +1,456 @@
+/*
+ * Sankhyas data layer.
+ *
+ * All figures here are SAMPLE data generated deterministically from a small set
+ * of seed parameters per company. They are shaped like real financial statements
+ * so every page works end-to-end, but they are NOT actual reported numbers.
+ * Replace `Data.getCompany()` / `Data.listCompanies()` with calls to a real
+ * market-data API to go live.
+ */
+(function () {
+  'use strict';
+
+  // sym, name, sector, industry, price, sharesCr, revenueCr(FY26), growth, opm%, promoter%, debt/equity, payout, faceValue, bseCode, psu, website
+  const SEED = [
+    ['RELIANCE', 'Reliance Industries Ltd', 'Energy', 'Refineries & Petrochemicals', 1410, 1353, 985000, 0.09, 17, 50.1, 0.40, 0.10, 10, 500325, 0, 'ril.com'],
+    ['TCS', 'Tata Consultancy Services Ltd', 'Information Technology', 'IT Services & Consulting', 3120, 361.8, 262000, 0.10, 26, 71.8, 0.05, 0.85, 1, 532540, 0, 'tcs.com'],
+    ['HDFCBANK', 'HDFC Bank Ltd', 'Financials', 'Private Sector Bank', 980, 1530, 360000, 0.17, 30, 0, 6.5, 0.22, 1, 500180, 0, 'hdfcbank.com'],
+    ['INFY', 'Infosys Ltd', 'Information Technology', 'IT Services & Consulting', 1520, 415, 168000, 0.12, 24, 14.6, 0.03, 0.85, 5, 500209, 0, 'infosys.com'],
+    ['ICICIBANK', 'ICICI Bank Ltd', 'Financials', 'Private Sector Bank', 1380, 713, 190000, 0.13, 32, 0, 5.5, 0.15, 2, 532174, 0, 'icicibank.com'],
+    ['HINDUNILVR', 'Hindustan Unilever Ltd', 'FMCG', 'Personal Care', 2450, 235, 64000, 0.09, 23.5, 61.9, 0.02, 0.95, 1, 500696, 0, 'hul.co.in'],
+    ['ITC', 'ITC Ltd', 'FMCG', 'Cigarettes & Diversified FMCG', 405, 1251, 78000, 0.08, 36, 0, 0.0, 0.85, 1, 500875, 0, 'itcportal.com'],
+    ['SBIN', 'State Bank of India', 'Financials', 'Public Sector Bank', 860, 892.5, 510000, 0.10, 25, 57.4, 12, 0.18, 1, 500112, 1, 'sbi.co.in'],
+    ['BHARTIARTL', 'Bharti Airtel Ltd', 'Telecom', 'Telecom Services', 1920, 598, 188000, 0.10, 54, 53.3, 1.3, 0.25, 5, 532454, 0, 'airtel.in'],
+    ['KOTAKBANK', 'Kotak Mahindra Bank Ltd', 'Financials', 'Private Sector Bank', 2080, 199, 68000, 0.15, 35, 25.9, 4, 0.05, 5, 500247, 0, 'kotak.com'],
+    ['LT', 'Larsen & Toubro Ltd', 'Industrials', 'Engineering & Construction', 3650, 137.5, 258000, 0.11, 13, 0, 1.1, 0.30, 2, 500510, 0, 'larsentoubro.com'],
+    ['ASIANPAINT', 'Asian Paints Ltd', 'Consumer Durables', 'Paints', 2380, 95.9, 34000, 0.10, 19, 52.6, 0.1, 0.65, 1, 500820, 0, 'asianpaints.com'],
+    ['AXISBANK', 'Axis Bank Ltd', 'Financials', 'Private Sector Bank', 1180, 310, 128000, 0.14, 30, 8.2, 6, 0.02, 2, 532215, 0, 'axisbank.com'],
+    ['MARUTI', 'Maruti Suzuki India Ltd', 'Automobile', 'Passenger Cars', 12800, 31.4, 158000, 0.11, 12, 58.2, 0.0, 0.35, 5, 532500, 0, 'marutisuzuki.com'],
+    ['SUNPHARMA', 'Sun Pharmaceutical Industries Ltd', 'Healthcare', 'Pharmaceuticals', 1640, 240, 54000, 0.10, 28, 54.5, 0.05, 0.35, 1, 524715, 0, 'sunpharma.com'],
+    ['TITAN', 'Titan Company Ltd', 'Consumer Durables', 'Jewellery & Watches', 3480, 88.8, 62000, 0.18, 11, 52.9, 0.6, 0.30, 1, 500114, 0, 'titancompany.in'],
+    ['BAJFINANCE', 'Bajaj Finance Ltd', 'Financials', 'NBFC', 980, 620, 70000, 0.25, 64, 54.7, 3.8, 0.15, 1, 500034, 0, 'bajajfinserv.in'],
+    ['WIPRO', 'Wipro Ltd', 'Information Technology', 'IT Services & Consulting', 255, 1047, 90000, 0.07, 20, 72.7, 0.2, 0.5, 2, 507685, 0, 'wipro.com'],
+    ['ULTRACEMCO', 'UltraTech Cement Ltd', 'Materials', 'Cement', 11800, 29.5, 78000, 0.11, 18, 59.2, 0.3, 0.15, 10, 532538, 0, 'ultratechcement.com'],
+    ['NESTLEIND', 'Nestle India Ltd', 'FMCG', 'Packaged Foods', 1190, 96.4, 20500, 0.09, 23, 62.8, 0.2, 0.9, 1, 500790, 0, 'nestle.in'],
+    ['HCLTECH', 'HCL Technologies Ltd', 'Information Technology', 'IT Services & Consulting', 1600, 271, 122000, 0.11, 22, 60.8, 0.05, 0.85, 2, 532281, 0, 'hcltech.com'],
+    ['TATAMOTORS', 'Tata Motors Ltd', 'Automobile', 'Commercial & Passenger Vehicles', 690, 368, 440000, 0.09, 13, 42.6, 1.0, 0.1, 2, 500570, 0, 'tatamotors.com'],
+    ['POWERGRID', 'Power Grid Corporation of India Ltd', 'Utilities', 'Power Transmission', 290, 930, 47000, 0.06, 86, 51.3, 1.4, 0.55, 10, 532898, 1, 'powergrid.in'],
+    ['NTPC', 'NTPC Ltd', 'Utilities', 'Power Generation', 335, 970, 190000, 0.09, 28, 51.1, 1.4, 0.40, 10, 532555, 1, 'ntpc.co.in'],
+    ['ONGC', 'Oil & Natural Gas Corporation Ltd', 'Energy', 'Oil Exploration & Production', 245, 1258, 660000, 0.08, 14, 58.9, 0.5, 0.35, 5, 500312, 1, 'ongcindia.com'],
+    ['TATASTEEL', 'Tata Steel Ltd', 'Materials', 'Iron & Steel', 160, 1248, 225000, 0.07, 12, 33.2, 1.0, 0.3, 1, 500470, 0, 'tatasteel.com'],
+    ['JSWSTEEL', 'JSW Steel Ltd', 'Materials', 'Iron & Steel', 1050, 244, 175000, 0.14, 14, 45.3, 1.1, 0.12, 1, 500228, 0, 'jsw.in'],
+    ['ADANIENT', 'Adani Enterprises Ltd', 'Industrials', 'Trading & Infrastructure', 2450, 115, 98000, 0.20, 14, 72.6, 1.6, 0.05, 1, 512599, 0, 'adanienterprises.com'],
+    ['COALINDIA', 'Coal India Ltd', 'Energy', 'Coal Mining', 385, 616, 143000, 0.06, 28, 63.1, 0.05, 0.60, 10, 533278, 1, 'coalindia.in'],
+    ['DRREDDY', "Dr. Reddy's Laboratories Ltd", 'Healthcare', 'Pharmaceuticals', 1260, 83.4, 34000, 0.10, 27, 26.6, 0.1, 0.2, 1, 500124, 0, 'drreddys.com'],
+    ['CIPLA', 'Cipla Ltd', 'Healthcare', 'Pharmaceuticals', 1520, 80.8, 28500, 0.09, 25, 30.9, 0.02, 0.25, 2, 500087, 0, 'cipla.com'],
+    ['DIVISLAB', "Divi's Laboratories Ltd", 'Healthcare', 'Pharmaceuticals', 6300, 26.5, 10500, 0.12, 32, 51.9, 0.0, 0.4, 2, 532488, 0, 'divislabs.com'],
+    ['BRITANNIA', 'Britannia Industries Ltd', 'FMCG', 'Packaged Foods', 5700, 24.1, 18500, 0.09, 18, 50.5, 0.5, 0.75, 1, 500825, 0, 'britannia.co.in'],
+    ['PIDILITIND', 'Pidilite Industries Ltd', 'Materials', 'Specialty Chemicals', 1480, 101.7, 13800, 0.11, 23, 69.6, 0.05, 0.5, 1, 500331, 0, 'pidilite.com'],
+    ['HAVELLS', 'Havells India Ltd', 'Consumer Durables', 'Electrical Equipment', 1560, 62.7, 22500, 0.14, 10, 59.4, 0.0, 0.45, 1, 517354, 0, 'havells.com'],
+    ['DMART', 'Avenue Supermarts Ltd', 'Retail', 'Supermarkets', 4300, 65.1, 64000, 0.22, 8, 74.6, 0.02, 0.0, 10, 540376, 0, 'dmartindia.com'],
+    ['BAJAJ-AUTO', 'Bajaj Auto Ltd', 'Automobile', 'Two & Three Wheelers', 8900, 27.9, 53000, 0.08, 20, 55.0, 0.0, 0.6, 10, 532977, 0, 'bajajauto.com'],
+    ['HEROMOTOCO', 'Hero MotoCorp Ltd', 'Automobile', 'Two & Three Wheelers', 5300, 20.0, 42000, 0.05, 14.5, 34.7, 0.0, 0.7, 2, 500182, 0, 'heromotocorp.com'],
+    ['EICHERMOT', 'Eicher Motors Ltd', 'Automobile', 'Two & Three Wheelers', 6900, 27.4, 20500, 0.13, 25, 49.1, 0.0, 0.35, 1, 505200, 0, 'eicher.in'],
+    ['TECHM', 'Tech Mahindra Ltd', 'Information Technology', 'IT Services & Consulting', 1480, 88.2, 54000, 0.07, 13, 35.0, 0.1, 0.8, 5, 532755, 0, 'techmahindra.com'],
+    ['DABUR', 'Dabur India Ltd', 'FMCG', 'Personal Care', 520, 177, 13000, 0.07, 19, 66.2, 0.1, 0.6, 1, 500096, 0, 'dabur.com'],
+    ['MARICO', 'Marico Ltd', 'FMCG', 'Personal Care', 720, 129.4, 11500, 0.07, 20, 59.0, 0.1, 0.85, 1, 531642, 0, 'marico.com'],
+    ['IRCTC', 'Indian Railway Catering & Tourism Corporation Ltd', 'Consumer Services', 'Railway Catering & Tourism', 740, 80, 4800, 0.15, 34, 62.4, 0.0, 0.45, 2, 542830, 1, 'irctc.co.in'],
+    ['PAGEIND', 'Page Industries Ltd', 'Textiles', 'Innerwear & Apparel', 45000, 1.115, 5100, 0.12, 20, 45.0, 0.0, 0.6, 10, 532827, 0, 'pageind.com'],
+    ['POLYCAB', 'Polycab India Ltd', 'Industrials', 'Cables & Wires', 7200, 15.04, 26000, 0.20, 13, 63.0, 0.0, 0.2, 10, 542652, 0, 'polycab.com'],
+    ['HAL', 'Hindustan Aeronautics Ltd', 'Industrials', 'Aerospace & Defence', 4600, 66.9, 33000, 0.09, 30, 71.6, 0.0, 0.3, 5, 541154, 1, 'hal-india.co.in'],
+    ['BEL', 'Bharat Electronics Ltd', 'Industrials', 'Aerospace & Defence', 390, 731, 24500, 0.11, 27, 51.1, 0.0, 0.4, 1, 500049, 1, 'bel-india.in'],
+    ['TRENT', 'Trent Ltd', 'Retail', 'Apparel Retail', 5200, 35.5, 20500, 0.32, 16, 37.0, 0.3, 0.15, 1, 500251, 0, 'trentlimited.com'],
+    ['APOLLOHOSP', 'Apollo Hospitals Enterprise Ltd', 'Healthcare', 'Hospitals', 7400, 14.4, 24500, 0.14, 14, 29.3, 0.6, 0.2, 5, 508869, 0, 'apollohospitals.com'],
+    ['GRASIM', 'Grasim Industries Ltd', 'Materials', 'Diversified', 2750, 68.0, 150000, 0.14, 13, 43.1, 1.5, 0.1, 2, 500300, 0, 'grasim.com']
+  ];
+
+  const TODAY = new Date(2026, 8, 25);
+  const YEARS = [];
+  for (let y = 2015; y <= 2026; y++) YEARS.push('Mar ' + y);
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  // 13 quarters: Jun 2023 .. Jun 2026
+  const QUARTERS = [];
+  (function () {
+    let m = 5, y = 2023;
+    for (let i = 0; i < 13; i++) {
+      QUARTERS.push({ label: MONTHS[m] + ' ' + y, fy: m <= 2 ? y : y + 1, q: [5, 8, 11, 2].indexOf(m) });
+      m += 3;
+      if (m > 11) { m -= 12; y++; }
+    }
+  })();
+  // Shareholding quarters: Sep 2023 .. Jun 2026 (12)
+  const SH_QUARTERS = QUARTERS.slice(1).map(q => q.label);
+
+  function hash(str) {
+    let h = 2166136261;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function rng(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function gauss(r) {
+    let u = 0, v = 0;
+    while (u === 0) u = r();
+    while (v === 0) v = r();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+  const round = (x, d = 0) => { const p = Math.pow(10, d); return Math.round(x * p) / p; };
+  const sum = a => a.reduce((s, x) => s + x, 0);
+  const median = a => {
+    const s = a.filter(x => x != null && isFinite(x)).sort((x, y) => x - y);
+    if (!s.length) return null;
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  };
+  const cagr = (a, b, n) => (a > 0 && b > 0 ? (Math.pow(b / a, 1 / n) - 1) * 100 : null);
+
+  const base = SEED.map(s => ({
+    symbol: s[0], name: s[1], sector: s[2], industry: s[3], price: s[4], shares: s[5],
+    revenue: s[6], growth: s[7], opm: s[8], promoter: s[9], de: s[10], payout: s[11],
+    faceValue: s[12], bseCode: s[13], psu: !!s[14], website: s[15]
+  }));
+  const bySymbol = {};
+  base.forEach(c => { bySymbol[c.symbol] = c; });
+
+  function buildPL(c, r, scale) {
+    const rows = { sales: [], expenses: [], op: [], opm: [], otherIncome: [], interest: [], depreciation: [], pbt: [], tax: [], np: [], eps: [], payout: [],
+      material: [], employee: [], power: [], otherExp: [] };
+    const bs = { equity: [], reserves: [], borrowings: [], otherLiab: [], total: [], fixedAssets: [], cwip: [], investments: [], otherAssets: [] };
+    let reserves = null;
+    for (let i = 0; i < YEARS.length; i++) {
+      const yrsBack = YEARS.length - 1 - i;
+      const sales = c.revenue * scale / Math.pow(1 + c.growth, yrsBack) * (1 + gauss(r) * 0.035);
+      const opm = Math.max(3, c.opm + gauss(r) * 2);
+      const op = sales * opm / 100;
+      const exp = sales - op;
+      const other = sales * (0.01 + r() * 0.025);
+      const dep = sales * (0.025 + r() * 0.02) * (c.opm > 60 ? 0.3 : 1);
+      const eq = c.shares * c.faceValue;
+      if (reserves === null) reserves = Math.max(eq * 2, sales * (0.25 + r() * 0.2));
+      const nwPrev = eq + reserves;
+      const borrow = Math.max(0, nwPrev * c.de * (0.85 + r() * 0.3));
+      const interest = borrow * (c.de > 3 ? 0.055 : 0.085) * (0.9 + r() * 0.2);
+      const pbt = op + other - interest - dep;
+      const taxPct = 24 + gauss(r) * 2.5;
+      const np = pbt * (1 - taxPct / 100);
+      const payout = Math.max(0, Math.min(1, c.payout + gauss(r) * 0.05));
+      reserves += np * (1 - payout);
+
+      rows.sales.push(sales); rows.expenses.push(exp); rows.op.push(op); rows.opm.push(opm);
+      rows.otherIncome.push(other); rows.interest.push(interest); rows.depreciation.push(dep);
+      rows.pbt.push(pbt); rows.tax.push(taxPct); rows.np.push(np); rows.eps.push(np / c.shares);
+      rows.payout.push(payout * 100);
+      const mat = 0.35 + r() * 0.3, emp = 0.15 + r() * 0.2, pow = 0.03 + r() * 0.05;
+      const tot = mat + emp + pow + 0.12;
+      rows.material.push(exp * mat / tot / sales * 100);
+      rows.employee.push(exp * emp / tot / sales * 100);
+      rows.power.push(exp * pow / tot / sales * 100);
+      rows.otherExp.push(exp * 0.12 / tot / sales * 100);
+
+      const otherLiab = sales * (0.18 + r() * 0.12) * (c.de > 3 ? 3 : 1);
+      const total = eq + reserves + borrow + otherLiab;
+      const fa = total * (c.de > 3 ? 0.03 : 0.28 + r() * 0.12);
+      const cwip = total * (c.de > 3 ? 0.002 : 0.02 + r() * 0.04);
+      const inv = total * (0.12 + r() * 0.15);
+      bs.equity.push(eq); bs.reserves.push(reserves); bs.borrowings.push(borrow);
+      bs.otherLiab.push(otherLiab); bs.total.push(total); bs.fixedAssets.push(fa);
+      bs.cwip.push(cwip); bs.investments.push(inv); bs.otherAssets.push(total - fa - cwip - inv);
+    }
+    return { rows, bs };
+  }
+
+  function buildQuarters(c, pl, r) {
+    const season = [0.96, 0.99, 1.01, 1.04];
+    const q = { sales: [], expenses: [], op: [], opm: [], otherIncome: [], interest: [], depreciation: [], pbt: [], tax: [], np: [], eps: [] };
+    QUARTERS.forEach(Q => {
+      let yi = YEARS.indexOf('Mar ' + Q.fy);
+      let annual, grow = 1;
+      if (yi < 0) { yi = YEARS.length - 1; grow = 1 + c.growth; }
+      annual = pl.rows.sales[yi] * grow;
+      const sales = annual / 4 * season[Q.q] * (1 + gauss(r) * 0.03);
+      const opm = Math.max(2, pl.rows.opm[yi] + gauss(r) * 1.8);
+      const op = sales * opm / 100;
+      const other = pl.rows.otherIncome[yi] / pl.rows.sales[yi] * sales * (0.8 + r() * 0.4);
+      const interest = pl.rows.interest[yi] / 4 * (0.9 + r() * 0.2);
+      const dep = pl.rows.depreciation[yi] / pl.rows.sales[yi] * sales;
+      const pbt = op + other - interest - dep;
+      const taxPct = pl.rows.tax[yi] + gauss(r) * 1.5;
+      const np = pbt * (1 - taxPct / 100);
+      q.sales.push(sales); q.expenses.push(sales - op); q.op.push(op); q.opm.push(opm);
+      q.otherIncome.push(other); q.interest.push(interest); q.depreciation.push(dep);
+      q.pbt.push(pbt); q.tax.push(taxPct); q.np.push(np); q.eps.push(np / c.shares);
+    });
+    return q;
+  }
+
+  function businessDays(n) {
+    const out = [];
+    const d = new Date(TODAY);
+    while (out.length < n) {
+      const wd = d.getDay();
+      if (wd !== 0 && wd !== 6) out.push(new Date(d));
+      d.setDate(d.getDate() - 1);
+    }
+    return out.reverse();
+  }
+  const PRICE_DAYS = businessDays(252 * 11);
+
+  function buildPrices(c, r) {
+    const n = PRICE_DAYS.length;
+    const drift = Math.log(1 + c.growth * 1.1) / 252;
+    const vol = 0.016 + r() * 0.008;
+    const prices = new Array(n);
+    prices[n - 1] = c.price;
+    for (let i = n - 1; i > 0; i--) {
+      const ret = drift + vol * gauss(r) + (r() < 0.002 ? gauss(r) * 0.06 : 0);
+      prices[i - 1] = Math.max(1, prices[i] / Math.exp(ret));
+    }
+    const baseVol = (c.shares * 1e7) * (0.0015 + r() * 0.003);
+    const volume = prices.map((p, i) => {
+      const chg = i ? Math.abs(p / prices[i - 1] - 1) : 0;
+      return Math.round(baseVol * (0.5 + r()) * (1 + chg * 25));
+    });
+    return { prices: prices.map(p => round(p, 2)), volume };
+  }
+
+  function buildShareholding(c, r) {
+    const n = SH_QUARTERS.length;
+    const gov = c.psu ? 0.5 : 0;
+    const prom = c.promoter, rem = 100 - prom - (c.psu ? 0.5 : 0);
+    let fii = rem * (0.3 + r() * 0.25);
+    let dii = rem * (0.2 + r() * 0.15);
+    const out = { promoters: [], fiis: [], diis: [], government: [], public: [], holders: [] };
+    let holders = Math.round((c.shares * 1e7) / (2000 + r() * 8000));
+    for (let i = 0; i < n; i++) {
+      const p = Math.max(0, prom + (i - n + 1) * (r() < 0.3 ? 0.08 : 0) * (r() < 0.5 ? -1 : 1));
+      fii = Math.max(1, fii + gauss(r) * 0.03 * rem / 10);
+      dii = Math.max(1, dii + gauss(r) * 0.03 * rem / 10 + 0.05);
+      const pub = Math.max(0.5, 100 - p - fii - dii - gov);
+      holders = Math.round(holders * (1.01 + r() * 0.05));
+      out.promoters.push(p); out.fiis.push(fii); out.diis.push(dii); out.government.push(gov);
+      out.public.push(pub); out.holders.push(holders);
+    }
+    // normalise to 100
+    for (let i = 0; i < n; i++) {
+      const t = out.promoters[i] + out.fiis[i] + out.diis[i] + out.government[i] + out.public[i];
+      ['promoters', 'fiis', 'diis', 'government', 'public'].forEach(k => { out[k][i] = round(out[k][i] * 100 / t, 2); });
+    }
+    return out;
+  }
+
+  function buildDocuments(c, r) {
+    const ann = [
+      'Board Meeting Intimation for approval of quarterly results',
+      'Outcome of Board Meeting - financial results for the quarter ended June 30, 2026',
+      'Analysts/Institutional Investor Meet/Con. Call Updates',
+      'Disclosure under Regulation 30 of SEBI (LODR)',
+      'Closure of Trading Window',
+      'Intimation of record date for dividend',
+      'Newspaper publication of financial results',
+      'Shareholding pattern for the quarter ended June 30, 2026',
+      'Compliance certificate under Regulation 74(5) of SEBI (DP) Regulations',
+      'Press release on business update',
+      'Allotment of equity shares under ESOP scheme',
+      'Notice of Annual General Meeting'
+    ];
+    const d = new Date(TODAY);
+    const announcements = ann.map((t, i) => {
+      d.setDate(d.getDate() - (1 + Math.floor(r() * 9)));
+      return { title: t, date: d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) };
+    });
+    const reports = [];
+    for (let y = 2026; y >= 2016; y--) reports.push({ title: 'Financial Year ' + y, source: r() < 0.5 ? 'from bse' : 'from nse' });
+    const agencies = ['CRISIL', 'ICRA', 'CARE', 'India Ratings'];
+    const ratings = [];
+    const rd = new Date(TODAY);
+    for (let i = 0; i < 6; i++) {
+      rd.setMonth(rd.getMonth() - (2 + Math.floor(r() * 5)));
+      ratings.push({ title: 'Rating update', agency: agencies[Math.floor(r() * agencies.length)], date: rd.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) });
+    }
+    const concalls = QUARTERS.slice(-8).reverse().map(q => ({ period: q.label, transcript: true, ppt: r() < 0.9, rec: r() < 0.5, notes: r() < 0.4 }));
+    return { announcements, reports, ratings, concalls };
+  }
+
+  const cache = {};
+  function getCompany(sym, standalone) {
+    sym = String(sym || '').toUpperCase();
+    const c = bySymbol[sym];
+    if (!c) return null;
+    const key = sym + (standalone ? ':s' : ':c');
+    if (cache[key]) return cache[key];
+    const r = rng(hash(sym));
+    const scale = standalone ? 0.82 : 1;
+    const pl = buildPL(c, r, scale);
+    const quarters = buildQuarters(c, pl, r);
+    const px = buildPrices(c, rng(hash(sym + 'px')));
+    const sh = buildShareholding(c, rng(hash(sym + 'sh')));
+    const docs = buildDocuments(c, rng(hash(sym + 'doc')));
+    const R = pl.rows, B = pl.bs;
+
+    // Cash flows
+    const cf = { cfo: [], cfi: [], cff: [], net: [] };
+    for (let i = 0; i < YEARS.length; i++) {
+      const cfo = R.np[i] + R.depreciation[i] + gauss(r) * 0.18 * Math.abs(R.np[i]);
+      const cfi = -(R.depreciation[i] * (1.1 + r() * 0.8) + Math.abs(gauss(r)) * 0.1 * R.np[i]);
+      const cff = -(R.np[i] * R.payout[i] / 100) - R.interest[i] + (i ? B.borrowings[i] - B.borrowings[i - 1] : 0);
+      cf.cfo.push(cfo); cf.cfi.push(cfi); cf.cff.push(cff); cf.net.push(cfo + cfi + cff);
+    }
+    // Ratios
+    const ratios = { debtor: [], inventory: [], payable: [], ccc: [], wc: [], roce: [], roe: [] };
+    const dBase = 20 + r() * 60, iBase = 20 + r() * 80, pBase = 30 + r() * 60;
+    for (let i = 0; i < YEARS.length; i++) {
+      const d = Math.max(1, dBase + gauss(r) * 6), inv = Math.max(0, iBase + gauss(r) * 8), p = Math.max(5, pBase + gauss(r) * 8);
+      ratios.debtor.push(d); ratios.inventory.push(inv); ratios.payable.push(p); ratios.ccc.push(d + inv - p);
+      ratios.wc.push(d + inv - p * 0.6 + gauss(r) * 5);
+      const ce = (i ? (B.equity[i - 1] + B.reserves[i - 1] + B.borrowings[i - 1] + B.equity[i] + B.reserves[i] + B.borrowings[i]) / 2 : B.equity[i] + B.reserves[i] + B.borrowings[i]);
+      ratios.roce.push((R.pbt[i] + R.interest[i]) / ce * 100);
+      const nw = i ? (B.equity[i - 1] + B.reserves[i - 1] + B.equity[i] + B.reserves[i]) / 2 : B.equity[i] + B.reserves[i];
+      ratios.roe.push(R.np[i] / nw * 100);
+    }
+
+    const last4 = k => sum(quarters[k].slice(-4));
+    const ttm = {
+      sales: last4('sales'), expenses: last4('expenses'), op: last4('op'), otherIncome: last4('otherIncome'),
+      interest: last4('interest'), depreciation: last4('depreciation'), pbt: last4('pbt'), np: last4('np')
+    };
+    ttm.opm = ttm.op / ttm.sales * 100;
+    ttm.tax = (1 - ttm.np / ttm.pbt) * 100;
+    ttm.eps = ttm.np / c.shares;
+
+    const n = px.prices.length;
+    const last = px.prices[n - 1], prev = px.prices[n - 2];
+    const yr = px.prices.slice(-252);
+    const L = YEARS.length - 1;
+    const nwLast = B.equity[L] + B.reserves[L];
+    const bookValue = nwLast / c.shares;
+    const marketCap = last * c.shares;
+    const pe = ttm.eps > 0 ? last / ttm.eps : null;
+    const dps = R.eps[L] * R.payout[L] / 100;
+    const qN = quarters.sales.length - 1;
+    const ret = days => (n > days ? (last / px.prices[n - 1 - days] - 1) * 100 : null);
+    const retCagr = (years) => { const d = 252 * years; return n > d ? (Math.pow(last / px.prices[n - 1 - d], 1 / years) - 1) * 100 : null; };
+
+    const metrics = {
+      price: last,
+      change: last - prev,
+      changePct: (last / prev - 1) * 100,
+      marketCap,
+      high52: Math.max.apply(null, yr),
+      low52: Math.min.apply(null, yr),
+      pe,
+      bookValue,
+      pb: last / bookValue,
+      divYield: dps / last * 100,
+      dps,
+      roce: ratios.roce[L],
+      roe: ratios.roe[L],
+      faceValue: c.faceValue,
+      sales: ttm.sales,
+      np: ttm.np,
+      op: ttm.op,
+      opm: ttm.opm,
+      eps: ttm.eps,
+      de: B.borrowings[L] / nwLast,
+      debt: B.borrowings[L],
+      promoter: sh.promoters[sh.promoters.length - 1],
+      fii: sh.fiis[sh.fiis.length - 1],
+      dii: sh.diis[sh.diis.length - 1],
+      public: sh.public[sh.public.length - 1],
+      promoterChange3y: sh.promoters[sh.promoters.length - 1] - sh.promoters[0],
+      shareholders: sh.holders[sh.holders.length - 1],
+      pledged: c.promoter > 0 ? round(Math.max(0, gauss(rng(hash(sym + 'pl'))) * 2), 2) : 0,
+      qtrSales: quarters.sales[qN],
+      qtrProfit: quarters.np[qN],
+      qtrSalesVar: (quarters.sales[qN] / quarters.sales[qN - 4] - 1) * 100,
+      qtrProfitVar: (quarters.np[qN] / quarters.np[qN - 4] - 1) * 100,
+      salesGrowth3: cagr(R.sales[L - 3], R.sales[L], 3),
+      salesGrowth5: cagr(R.sales[L - 5], R.sales[L], 5),
+      salesGrowth10: cagr(R.sales[L - 10], R.sales[L], 10),
+      profitGrowth3: cagr(R.np[L - 3], R.np[L], 3),
+      profitGrowth5: cagr(R.np[L - 5], R.np[L], 5),
+      profitGrowth10: cagr(R.np[L - 10], R.np[L], 10),
+      salesGrowthTTM: (ttm.sales / R.sales[L] - 1) * 100 + c.growth * 25,
+      profitGrowthTTM: (ttm.np / R.np[L] - 1) * 100 + c.growth * 25,
+      avgRoe3: sum(ratios.roe.slice(-3)) / 3,
+      avgRoe5: sum(ratios.roe.slice(-5)) / 5,
+      avgRoe10: sum(ratios.roe.slice(-10)) / 10,
+      avgRoce5: sum(ratios.roce.slice(-5)) / 5,
+      ret1m: ret(21), ret3m: ret(63), ret6m: ret(126), ret1y: ret(252),
+      ret3y: retCagr(3), ret5y: retCagr(5), ret10y: retCagr(10),
+      interestCoverage: R.interest[L] > 0 ? (R.pbt[L] + R.interest[L]) / R.interest[L] : 999,
+      fcf: cf.cfo[L] + cf.cfi[L],
+      cfo: cf.cfo[L],
+      debtorDays: ratios.debtor[L],
+      wcDays: ratios.wc[L],
+      volume: px.volume[n - 1],
+      avgVolume: sum(px.volume.slice(-21)) / 21,
+      dma50: sum(px.prices.slice(-50)) / 50,
+      dma200: sum(px.prices.slice(-200)) / 200,
+      evEbitda: (marketCap + B.borrowings[L] - B.investments[L] * 0.3) / ttm.op,
+      earningsYield: ttm.eps > 0 ? ttm.eps / last * 100 : 0,
+      shares: c.shares,
+      reserves: B.reserves[L],
+      totalAssets: B.total[L]
+    };
+    metrics.peg = pe && metrics.profitGrowth5 > 0 ? pe / metrics.profitGrowth5 : null;
+    metrics.priceToSales = marketCap / ttm.sales;
+
+    const out = Object.assign({}, c, {
+      standalone: !!standalone,
+      years: YEARS, quarters: QUARTERS.map(q => q.label), shQuarters: SH_QUARTERS,
+      pl: R, bs: B, cf, ratios, q: quarters, ttm, sh, docs,
+      prices: px.prices, volume: px.volume, dates: PRICE_DAYS,
+      metrics
+    });
+    cache[key] = out;
+    return out;
+  }
+
+  let _all = null;
+  function listCompanies() {
+    if (_all) return _all;
+    _all = base.map(c => getCompany(c.symbol));
+    // industry P/E (median of sector)
+    const sectors = {};
+    _all.forEach(c => { (sectors[c.sector] = sectors[c.sector] || []).push(c.metrics.pe); });
+    _all.forEach(c => { c.metrics.industryPE = median(sectors[c.sector]); });
+    return _all;
+  }
+
+  function search(q, limit) {
+    q = String(q || '').trim().toLowerCase();
+    if (!q) return [];
+    const scored = [];
+    base.forEach(c => {
+      const s = c.symbol.toLowerCase(), n = c.name.toLowerCase();
+      let score = -1;
+      if (s === q) score = 100;
+      else if (s.startsWith(q)) score = 80;
+      else if (n.startsWith(q)) score = 70;
+      else if (n.split(/\s+/).some(w => w.startsWith(q))) score = 50;
+      else if (n.includes(q) || s.includes(q)) score = 30;
+      else if (String(c.bseCode).startsWith(q)) score = 20;
+      if (score >= 0) scored.push({ c, score });
+    });
+    scored.sort((a, b) => b.score - a.score || a.c.name.localeCompare(b.c.name));
+    return scored.slice(0, limit || 8).map(x => x.c);
+  }
+
+  window.Data = {
+    TODAY, YEARS, QUARTERS: QUARTERS.map(q => q.label), SH_QUARTERS,
+    getCompany, listCompanies, search, median, cagr,
+    sectors: () => {
+      const m = {};
+      base.forEach(c => { (m[c.sector] = m[c.sector] || []).push(c.symbol); });
+      return m;
+    },
+    exists: sym => !!bySymbol[String(sym || '').toUpperCase()]
+  };
+})();
