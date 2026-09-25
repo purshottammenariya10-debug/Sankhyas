@@ -21,7 +21,9 @@ import re
 import sys
 from pathlib import Path
 
-from exchange import BSE_API, bse_session, nse_session
+import xml.etree.ElementTree as ET
+
+from exchange import BSE_API, bse_session, fetch_text, nse_session
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "data" / "filings"
@@ -158,6 +160,72 @@ def nse_annual_reports(nse, symbol):
     return out
 
 
+# ---------- NSE archive RSS (served from nsearchives, which answers cloud servers) ----------
+NSE_RSS = [
+    "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml",
+    "https://nsearchives.nseindia.com/content/RSS/Financial_Results.xml",
+    "https://nsearchives.nseindia.com/content/RSS/Board_Meetings.xml",
+    "https://nsearchives.nseindia.com/content/RSS/Corporate_action.xml",
+    "https://nsearchives.nseindia.com/content/RSS/Annual_Reports.xml",
+]
+
+
+def norm_name(n):
+    n = re.sub(r"[^a-z0-9 ]", " ", (n or "").lower())
+    n = re.sub(r"\b(limited|ltd|the|india|co|company|corporation|corp)\b", " ", n)
+    return re.sub(r"\s+", " ", n).strip()
+
+
+def parse_rss(text, source="nse"):
+    """Parse an RSS 2.0 feed into announcement dicts carrying the company hint in 'who'."""
+    root = ET.fromstring(text.lstrip("\ufeff").strip())
+    out = []
+    for it in root.iter("item"):
+        g = lambda tag: (it.findtext(tag) or "").strip()
+        title, link, desc = g("title"), g("link"), re.sub(r"<[^>]+>", " ", g("description"))
+        d = None
+        for fmt in ("%a, %d %b %Y %H:%M:%S %z", "%a, %d %b %Y %H:%M:%S %Z", "%d-%b-%Y %H:%M:%S", "%d-%b-%Y"):
+            try:
+                d = dt.datetime.strptime(g("pubDate"), fmt).replace(tzinfo=None)
+                break
+            except ValueError:
+                continue
+        if not link or not d:
+            continue
+        subject = desc if len(desc) > 3 else title
+        a = ann(d, subject, "", link, source)
+        a["who"] = title
+        out.append(a)
+    return out
+
+
+def nse_rss_sweep():
+    items = []
+    for url in NSE_RSS:
+        try:
+            got = parse_rss(fetch_text(url))
+            print(f"NSE RSS {url.rsplit('/', 1)[-1]}: {len(got)} items" + (f" | e.g. {got[0]['who'][:40]!r} -> {got[0]['t'][:60]!r} {got[0]['u']}" if got else ""))
+            if "Annual_Reports" in url:
+                for a in got:
+                    a["annual"] = True
+            items += got
+        except Exception as e:  # noqa: BLE001
+            print(f"NSE RSS {url.rsplit('/', 1)[-1]} failed: {e}", file=sys.stderr)
+    return items
+
+
+def match_company(a, by_nse, by_name):
+    """Find the company for an RSS item: symbol in the attachment name, else the company name."""
+    fname = a["u"].rsplit("/", 1)[-1].upper()
+    m = re.match(r"([A-Z0-9&\-]+?)_", fname)
+    if m and m.group(1) in by_nse:
+        return by_nse[m.group(1)]
+    who = a.get("who", "")
+    if who.upper() in by_nse:
+        return by_nse[who.upper()]
+    return by_name.get(norm_name(who))
+
+
 # ---------- storage ----------
 def fiscal_label(y):
     """Normalise '2025-2026', '2025-26' or '2026' to '2025-26' so NSE and BSE copies of a report match."""
@@ -248,12 +316,26 @@ def main(argv=None):
             sweep += nse_announcements(nse, None, start, today)
         except Exception as e:  # noqa: BLE001
             print("NSE sweep failed:", e, file=sys.stderr)
+    rss = nse_rss_sweep()
+    by_name = {norm_name(c["name"]): c for c in universe}
+    matched = 0
+    for a in rss:
+        c = match_company(a, by_nse, by_name)
+        if c:
+            a["nse"] = c["symbol"] if c["yahoo"].endswith(".NS") else None
+            a["_c"] = c
+            matched += 1
+    print(f"NSE RSS: {len(rss)} items, {matched} matched to companies")
+    sweep += [a for a in rss if a.get("_c")]
     for a in sweep:
-        c = by_bse.get(a.get("bse")) or by_nse.get(a.get("nse"))
+        c = a.pop("_c", None) or by_bse.get(a.get("bse")) or by_nse.get(a.get("nse"))
         if not c:
             continue
         doc = touched.get(c["symbol"]) or load(c["symbol"])
-        merge_into(doc, [a])
+        if a.get("annual"):
+            merge_into(doc, [], [{"y": fiscal_label(a["d"][:4]), "u": a["u"], "x": "nse"}])
+        else:
+            merge_into(doc, [a])
         touched[c["symbol"]] = doc
         latest.append({"s": c["symbol"], "n": c["name"], **{k: a[k] for k in ("d", "t", "u", "k")}})
     print(f"Sweep: {len(sweep)} announcements, {len(touched)} companies")
