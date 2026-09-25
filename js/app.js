@@ -334,7 +334,8 @@
       Data.loadFilings(sym).then(f => {
         if (token !== navToken || !$('#documents')) return;
         const tmp = document.createElement('div');
-        tmp.innerHTML = filingsSection(c, f);
+        if (!f || (!(f.announcements || []).length && !(f.annualReports || []).length)) return;
+        tmp.innerHTML = documentsSection(c, f);
         $('#documents').replaceWith(tmp.firstChild);
         bindDocuments();
       });
@@ -716,67 +717,97 @@
     });
   }
 
-  function documentsSection(c) {
-    const d = c.docs;
-    if (c.live) {
-      return '<section class="section card" id="documents"><h2>Documents</h2><p class="muted">Loading exchange filings…</p>' + exchangeLinks(c) + '</section>';
-    }
-    const fake = 'href="" data-doc';
-    return '<section class="section card" id="documents"><h2>Documents</h2><div class="docs-grid">' +
-      '<div><div class="flex space-between"><h3>Announcements</h3><span class="tabs"><button class="btn btn-small active" data-ann="recent">Recent</button><button class="btn btn-small" data-ann="important">Important</button></span></div>' +
-      '<ul class="doc-list" id="ann-list">' + d.announcements.map((a, i) => '<li data-imp="' + (i % 3 === 1 ? 1 : 0) + '"><a ' + fake + '>' + esc(a.title) + '</a><span class="date">' + esc(a.date) + '</span></li>').join('') + '</ul></div>' +
-      '<div><h3>Annual reports</h3><ul class="doc-list">' + d.reports.map(r => '<li><a ' + fake + '>' + esc(r.title) + '</a><span class="date">' + esc(r.source) + '</span></li>').join('') + '</ul></div>' +
-      '<div><h3>Credit ratings</h3><ul class="doc-list">' + d.ratings.map(r => '<li><a ' + fake + '>' + esc(r.title) + '</a><span class="date">' + esc(r.date) + ' from ' + esc(r.agency) + '</span></li>').join('') + '</ul></div>' +
-      '<div><h3>Concalls</h3>' + d.concalls.map(k => '<div class="concall-row"><span class="period">' + esc(k.period) + '</span>' +
-        (k.transcript ? '<a class="btn btn-small" ' + fake + '>Transcript</a>' : '') + (k.notes ? '<a class="btn btn-small" ' + fake + '>Notes</a>' : '') +
-        (k.ppt ? '<a class="btn btn-small" ' + fake + '>PPT</a>' : '') + (k.rec ? '<a class="btn btn-small" ' + fake + '>REC</a>' : '') + '</div>').join('') + '</div>' +
-      '</div></section>';
-  }
-  function exchangeLinks(c) {
+  /* Documents: exact filing PDFs when the data pipeline has fetched them, otherwise the company's
+     own filing pages on NSE / BSE (every panel always links somewhere useful). */
+  function exchangePages(c) {
     const nseSym = /^\d+$/.test(c.symbol) ? null : c.symbol;
+    const n = nseSym ? encodeURIComponent(nseSym) : null;
+    const nl = page => 'https://www.nseindia.com/companies-listing/corporate-filings-' + page + '?symbol=' + n;
+    const bseBase = c.bseCode ? 'https://www.bseindia.com/stock-share-price/' + encodeURIComponent((c.name || 'company').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')) +
+      '/' + encodeURIComponent(nseSym || c.symbol) + '/' + encodeURIComponent(c.bseCode) + '/' : null;
+    return {
+      nse: n ? { ann: nl('announcements'), ar: nl('annual-reports'), res: nl('financial-results'), bm: nl('board-meetings'), quote: 'https://www.nseindia.com/get-quotes/equity?symbol=' + n } : null,
+      bse: bseBase ? { ann: bseBase + 'corp-announcements/', ar: bseBase + 'financials-annual-reports/', res: bseBase + 'financials-results/', quote: bseBase } : null
+    };
+  }
+  const ext = (u, label, cls, title) => '<a class="' + (cls || '') + '" target="_blank" rel="noopener noreferrer" href="' + esc(u) + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + label + '</a>';
+  const srcBadge = (x, u) => (u ? ext(u, esc(x.toUpperCase()), 'src-badge', 'Open on ' + x.toUpperCase()) : '<span class="src-badge">' + esc((x || '').toUpperCase()) + '</span>');
+  function exchangeLinks(c) {
+    const X = exchangePages(c);
     return '<div class="flex flex-wrap" style="margin-top:12px">' +
-      (nseSym ? '<a class="btn btn-small" target="_blank" rel="noopener noreferrer" href="https://www.nseindia.com/get-quotes/equity?symbol=' + encodeURIComponent(nseSym) + '">View on NSE</a>' : '') +
-      (c.bseCode ? '<a class="btn btn-small" target="_blank" rel="noopener noreferrer" href="https://www.bseindia.com/stock-share-price/x/' + encodeURIComponent(nseSym || c.symbol) + '/' + encodeURIComponent(c.bseCode) + '/corp-announcements/">View on BSE</a>' : '') +
-      '</div>';
+      (X.nse ? ext(X.nse.quote, 'View on NSE', 'btn btn-small') : '') + (X.bse ? ext(X.bse.quote, 'View on BSE', 'btn btn-small') : '') + '</div>';
+  }
+  function recentQuarters(k) {
+    const out = [], d = new Date();
+    let m = d.getMonth() - (d.getMonth() % 3) - 1, y = d.getFullYear(); // last completed quarter end
+    if (m < 0) { m += 12; y--; }
+    for (let i = 0; i < k; i++) {
+      out.push(new Date(y, m, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }));
+      m -= 3; if (m < 0) { m += 12; y--; }
+    }
+    return out;
   }
   const IMPORTANT_FILING = /financial result|outcome of board|dividend|bonus|split|sub-division|buy ?back|acquisition|amalgamation|merger|demerger|resignation|appointment of (managing|chief|ceo|cfo|md)|credit rating|rights issue|preferential|qip|fund ?rais/i;
-  function filingsSection(c, f) {
+  function documentsSection(c, f) {
+    const X = exchangePages(c), P = X.nse || X.bse;
     const A = (f && f.announcements) || [], R = (f && f.annualReports) || [];
-    if (!A.length && !R.length) {
-      return '<section class="section card" id="documents"><h2>Documents</h2><p class="muted">Exchange filings for ' + esc(c.name) +
-        ' have not been fetched yet. They are added gradually by the daily data update.</p>' + exchangeLinks(c) + '</section>';
-    }
     const day = d => new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-    const ext = (u, label, cls) => '<a class="' + (cls || '') + '" target="_blank" rel="noopener noreferrer" href="' + esc(u) + '">' + label + '</a>';
-    const src = x => '<span class="src-badge">' + esc((x || '').toUpperCase()) + '</span>';
+    const both = key => (X.nse ? srcBadge('nse', X.nse[key]) : '') + (X.bse ? ' ' + srcBadge('bse', X.bse[key] || X.bse.ann) : '');
+    if (!P) return '<section class="section card" id="documents"><h2>Documents</h2><p class="muted">No exchange listing found for this company.</p></section>';
+
+    // Announcements
+    const annHtml = A.length
+      ? '<ul class="doc-list" id="ann-list">' + A.slice(0, 80).map(a => '<li data-imp="' + (IMPORTANT_FILING.test(a.t + ' ' + a.c) ? 1 : 0) + '"><span>' + ext(a.u, esc(a.t)) +
+          (a.c ? '<br><span class="sub">' + esc(a.c) + '</span>' : '') + '</span><span class="date">' + day(a.d) + ' ' + srcBadge(a.x) + '</span></li>').join('') + '</ul>'
+      : '<ul class="doc-list" id="ann-list">' + [
+          ['Latest announcements', 'ann', 0], ['Financial results', 'res', 1], ['Board meetings &amp; outcomes', 'bm', 1],
+          ['Dividends, bonus &amp; corporate actions', 'ann', 1], ['Shareholding &amp; insider disclosures', 'ann', 0]
+        ].map(([label, key, imp]) => '<li data-imp="' + imp + '"><span>' + ext(P[key] || P.ann, label) + '</span><span class="date">' + both(key) + '</span></li>').join('') + '</ul>';
+
+    // Annual reports
+    const arHtml = R.length
+      ? '<ul class="doc-list">' + R.map(r => '<li>' + ext(r.u, 'Financial Year ' + esc(r.y || '')) + '<span class="date">' + srcBadge(r.x) + '</span></li>').join('') + '</ul>'
+      : '<ul class="doc-list">' + Array.from({ length: 8 }, (_, i) => new Date().getFullYear() - (new Date().getMonth() < 6 ? 1 : 0) - i)
+          .map(y => '<li>' + ext(P.ar, 'Financial Year ' + y) + '<span class="date">' + both('ar') + '</span></li>').join('') + '</ul>';
+
+    // Credit ratings
     const ratings = A.filter(a => a.k === 'rating').slice(0, 12);
-    const calls = A.filter(a => /transcript|ppt|audio|concall/.test(a.k));
-    const groups = [], byMonth = {};
-    calls.forEach(a => {
-      const key = new Date(a.d).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
-      if (!byMonth[key]) { byMonth[key] = []; groups.push(key); }
-      byMonth[key].push(a);
-    });
-    const KIND = { transcript: 'Transcript', ppt: 'PPT', audio: 'REC', concall: 'Notice' };
+    const crHtml = ratings.length
+      ? '<ul class="doc-list">' + ratings.map(a => '<li>' + ext(a.u, esc(a.t)) + '<span class="date">' + day(a.d) + '</span></li>').join('') + '</ul>'
+      : '<ul class="doc-list"><li>' + ext(P.ann, 'Credit rating filings') + '<span class="date">' + both('ann') + '</span></li></ul>';
+
+    // Concalls: Transcript / PPT / REC per quarter
+    const KIND = { transcript: 'Transcript', ppt: 'PPT', audio: 'REC', concall: 'Notes' };
     const ORDER = ['transcript', 'ppt', 'audio', 'concall'];
-    return '<section class="section card" id="documents"><div class="section-head"><div><h2>Documents</h2><p>Filings from ' +
-      (A.some(a => a.x === 'nse') && A.some(a => a.x === 'bse') ? 'NSE and BSE' : A.some(a => a.x === 'nse') ? 'NSE' : 'BSE') +
-      (f.updated ? ' &middot; updated ' + day(f.updated) : '') + '</p></div></div><div class="docs-grid">' +
-      '<div><div class="flex space-between"><h3>Announcements</h3><span class="tabs"><button class="btn btn-small active" data-ann="recent">Recent</button><button class="btn btn-small" data-ann="important">Important</button></span></div>' +
-      '<ul class="doc-list" id="ann-list">' + A.slice(0, 80).map(a => '<li data-imp="' + (IMPORTANT_FILING.test(a.t + ' ' + a.c) ? 1 : 0) + '"><span>' + ext(a.u, esc(a.t)) +
-        (a.c ? '<br><span class="sub">' + esc(a.c) + '</span>' : '') + '</span><span class="date">' + day(a.d) + ' ' + src(a.x) + '</span></li>').join('') + '</ul></div>' +
-      '<div><h3>Annual reports</h3>' + (R.length ? '<ul class="doc-list">' + R.map(r => '<li>' + ext(r.u, 'Financial Year ' + esc(r.y || '')) + '<span class="date">' + src(r.x) + '</span></li>').join('') + '</ul>'
-        : '<p class="muted">No annual reports found yet.</p>') + '</div>' +
-      '<div><h3>Credit ratings</h3>' + (ratings.length ? '<ul class="doc-list">' + ratings.map(a => '<li>' + ext(a.u, esc(a.t)) + '<span class="date">' + day(a.d) + '</span></li>').join('') + '</ul>'
-        : '<p class="muted">No credit rating filings found.</p>') + '</div>' +
-      '<div><h3>Concalls &amp; presentations</h3>' + (groups.length ? groups.slice(0, 12).map(g => {
-        const items = byMonth[g].slice().sort((a, b) => ORDER.indexOf(a.k) - ORDER.indexOf(b.k));
-        return '<div class="concall-row"><span class="period">' + esc(g) + '</span>' + items.slice(0, 6).map(a => ext(a.u, KIND[a.k], 'btn btn-small" title="' + esc(a.t))).join('') + '</div>';
-      }).join('') : '<p class="muted">No concall transcripts or investor presentations found.</p>') + '</div>' +
-      '</div>' + exchangeLinks(c) + '</section>';
+    const calls = A.filter(a => /transcript|ppt|audio|concall/.test(a.k));
+    let ccHtml;
+    if (calls.length) {
+      const groups = [], by = {};
+      calls.forEach(a => {
+        const key = new Date(a.d).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+        if (!by[key]) { by[key] = []; groups.push(key); }
+        by[key].push(a);
+      });
+      ccHtml = groups.slice(0, 12).map(g => {
+        const items = by[g].slice().sort((a, b) => ORDER.indexOf(a.k) - ORDER.indexOf(b.k));
+        return '<div class="concall-row"><span class="period">' + esc(g) + '</span>' + items.slice(0, 6).map(a => ext(a.u, KIND[a.k], 'btn btn-small', a.t)).join('') + '</div>';
+      }).join('');
+    } else {
+      const tip = 'Opens ' + c.name + '\'s filings on ' + (X.nse ? 'NSE' : 'BSE') + ' (look for "Analysts/Institutional Investor Meet")';
+      ccHtml = recentQuarters(8).map(q => '<div class="concall-row"><span class="period">' + esc(q) + '</span>' +
+        ['Transcript', 'PPT', 'REC'].map(k => ext(P.ann, k, 'btn btn-small', tip)).join('') + '</div>').join('');
+    }
+
+    const from = A.length ? 'Filings from ' + (A.some(a => a.x === 'nse') && A.some(a => a.x === 'bse') ? 'NSE and BSE' : A.some(a => a.x === 'nse') ? 'NSE' : 'BSE') +
+      (f.updated ? ' &middot; updated ' + day(f.updated) : '') : 'Links open ' + esc(c.name) + '\'s filings on ' + (X.nse && X.bse ? 'NSE and BSE' : X.nse ? 'NSE' : 'BSE');
+    return '<section class="section card" id="documents"><div class="section-head"><div><h2>Documents</h2><p>' + from + '</p></div>' + exchangeLinks(c) + '</div><div class="docs-grid">' +
+      '<div><div class="flex space-between"><h3>Announcements</h3><span class="tabs"><button class="btn btn-small active" data-ann="recent">Recent</button><button class="btn btn-small" data-ann="important">Important</button></span></div>' + annHtml + '</div>' +
+      '<div><h3>Annual reports</h3>' + arHtml + '</div>' +
+      '<div><h3>Credit ratings</h3>' + crHtml + '</div>' +
+      '<div><h3>Concalls</h3>' + ccHtml + '</div>' +
+      '</div></section>';
   }
   function bindDocuments() {
-    $$('[data-doc]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); toast('Document links are available once a live data source is connected.'); }));
     $$('[data-ann]').forEach(b => b.onclick = () => {
       $$('[data-ann]').forEach(x => x.classList.toggle('active', x === b));
       const imp = b.dataset.ann === 'important';
