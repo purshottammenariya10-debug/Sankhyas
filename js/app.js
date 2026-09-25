@@ -193,7 +193,7 @@
 
   /* ---------- Home ---------- */
   function pageHome() {
-    setTitle('Stock analysis and screening tool');
+    setTitle("India's AI-Powered Financial Research Terminal");
     const all = Data.listCompanies();
     const gainers = all.slice().sort((a, b) => b.metrics.changePct - a.metrics.changePct).slice(0, 5);
     const losers = all.slice().sort((a, b) => a.metrics.changePct - b.metrics.changePct).slice(0, 5);
@@ -203,7 +203,7 @@
     app.innerHTML =
       '<section class="home-hero">' +
       '<div class="logo"><img class="logo-mark" src="assets/logo.svg" alt=""><span>Sankhyas</span></div>' +
-      '<p class="tagline">Stock analysis and screening tool for investors in India.</p>' +
+      '<p class="tagline">India\'s AI-Powered Financial Research Terminal</p>' +
       '<div class="home-search"><svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>' +
       '<input type="search" id="home-search" placeholder="Search for a company" autocomplete="off" autofocus></div>' +
       '<div class="quick-links">Or analyse: ' + ['TCS', 'RELIANCE', 'HDFCBANK', 'INFY', 'ITC', 'TITAN', 'DMART'].filter(Data.exists).map(s =>
@@ -1078,7 +1078,7 @@
   function pageAbout() {
     setTitle('About');
     app.innerHTML = '<div class="container page"><div class="card" style="max-width:820px;margin:0 auto"><h1>About Sankhyas</h1>' +
-      '<p>Sankhyas (संख्या, "numbers") is a stock analysis and screening tool for investors in India. It brings company financials, ratios, charts, peers, shareholding and documents into a single page, and lets you screen the market with plain-English queries.</p>' +
+      '<p>Sankhyas (संख्या, "numbers") is India\'s AI-Powered Financial Research Terminal. It brings company financials, ratios, charts, peers, shareholding and documents into a single page, and lets you screen the market with plain-English queries.</p>' +
       '<h3>Data</h3><p>This build ships with deterministic sample data so every feature can be explored offline. Swap <code>js/data.js</code> for a real market data source to go live.</p>' +
       '<h3>Disclaimer</h3><p class="muted">Nothing on this site is investment advice. Please consult a SEBI registered advisor before investing.</p></div></div>';
   }
