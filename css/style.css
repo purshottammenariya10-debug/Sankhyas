@@ -363,3 +363,6 @@ table.data.list tr.median td { font-weight: 600; background: var(--bg-3); }
   .ai-cta .sub { display: none; }
   .ai-screen .flex { flex-direction: column; align-items: stretch; }
 }
+.ai-assistant .table-wrap { margin: 4px 0 10px; background: var(--bg); }
+table.data.ai-table th:first-child, table.data.ai-table td:first-child { min-width: 150px; }
+table.data.ai-table th.l, table.data.ai-table td.l { text-align: left; }

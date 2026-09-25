@@ -6,48 +6,22 @@ It is a static single-page app: no build step and no backend.
 ## Run locally
 
 ```bash
-npm install
-ANTHROPIC_API_KEY=sk-ant-... npm start
+python3 -m http.server 8000
 # open http://localhost:8000
 ```
 
-The Node server serves the site and the AI endpoint, and it keeps your API key on the server.
-Without it, any static host works (`python3 -m http.server`, GitHub Pages, Netlify, S3). Everything except AI keeps working, and the AI panels explain how to turn AI on.
+It can be deployed to any static host (GitHub Pages, Netlify, Vercel, S3). No API keys and no paid services are needed.
 
-## AI features
+## AI features (free, built in)
 
-Sankhyas AI uses Claude (`claude-opus-5`; override with `SANKHYAS_MODEL`).
+Sankhyas AI runs entirely in the visitor's browser (`js/ai.js`). It is a rule-based engine, not a large language model. There's no API key, no server, no usage cost and no rate limit.
 
-- **AI Analyst tab** on every company page: a chat grounded in that company's financials, with one-click prompts for a full research report, latest-quarter explanation, valuation check, bull/bear case and balance-sheet health.
-- **Plain-English screens:** describe a screen ("debt free companies with ROE above 20%") and AI writes the query. The query is checked before it runs, so you can review or edit it first.
-- **Ask AI page** (`#/ai`): questions across every company covered, like sector comparisons, screening ideas and trends.
-- **AI comparison** on the Compare page.
+- **AI Analyst tab** on every company page: a full research report, plus answers on growth, profitability, balance sheet, cash flow, valuation (including P/E against its own history and industry), latest quarter, ownership, price trend, peers, and the bull/bear case. Questions are matched to these topics by keyword.
+- **Plain-English screens:** "debt free companies with ROE above 20%", "large caps with low debt", "between 20 and 40 PE", "near 52 week low with high ROE" are all turned into screen queries you can review and edit.
+- **Ask AI page** (`#/ai`): rankings ("top 5 cheapest IT stocks by P/E"), filters ("high ROCE with low debt"), sector overviews and sector comparisons across all covered companies.
+- **AI comparison** on the Compare page: which company leads on growth, returns, margins, leverage, valuation and momentum.
 
-How it works:
-- **Data sent with each question:** the browser sends a compact data snapshot of what's on screen. The server wraps it in a fixed system prompt (`server/server.mjs`) and streams Claude's answer back.
-- **Grounding rules:** the prompt tells Claude to use only the numbers provided and to say when the figures are sample data. It also stops Claude giving buy/sell calls or price targets.
-- **Server safeguards:** the server limits request size and conversation length and rate-limits each IP (`SANKHYAS_RATE_LIMIT`, default 40 per 10 minutes). It turns on Claude's server-side refusal fallback.
-- **In a claude.ai artifact:** with no server, the site uses the artifact's built-in Claude access instead, and each viewer approves usage once.
-
-
-## Features
-
-- **Home**: company search with autocomplete (press `/` to focus it), quick links, top gainers and losers, largest companies, popular screens
-- **Company page** with sticky section tabs: Summary · Chart · Analysis · Peers · Quarters · Profit & Loss · Balance Sheet · Cash Flow · Ratios · Investors · Documents
-  - Top ratios box with **Edit ratios** (add any of 60+ ratios)
-  - Consolidated / Standalone toggle
-  - Price chart (1m to Max) with 50/200 DMA and volume, plus PE Ratio and Sales & Margin charts
-  - Machine-generated pros and cons
-  - Peer comparison with a median row
-  - 13 quarters and 12 years of statements; expandable Expenses, Borrowings and Other Assets rows
-  - Compounded sales and profit growth, stock CAGR and ROE boxes
-  - Quarterly and yearly shareholding pattern
-  - Announcements, annual reports, credit ratings and concalls
-  - Export to Excel (CSV), Follow (watchlist), private notes
-- **Screens**: popular screens plus a query builder (`Market Capitalization > 500 AND Price to earning < 15`) with a ratio picker, sortable and paginated results, a median row, editable columns, CSV export and saved screens
-- **Feed**: latest results and announcements, personalised from your watchlist
-- **Tools**: latest results, compare companies (table plus a rebased price chart), sectors explorer, watchlist
-- Login and register (demo accounts stored in the browser), Premium page, dark mode, responsive layout
+Answers are written from templates and thresholds applied to the same data the page shows, so they can't invent numbers. They also can't handle open-ended questions outside those topics. They never give buy/sell recommendations.
 
 ## Data: Yahoo Finance
 
@@ -78,7 +52,6 @@ scripts/            Yahoo Finance fetcher and symbol list
 data/yahoo/         fetched JSON (created by the script / workflow)
 js/screener.js      ratio catalogue, query compiler, preset screens
 js/app.js           hash router, pages and UI components
-js/ai.js            AI client: transport, data context, chat widget, NL screens
-server/server.mjs   static server + /api/ai endpoint (Anthropic SDK)
+js/ai.js            free built-in AI: analysis engine, plain-English parser, chat widget
 js/vendor/          Chart.js 4.4.1 (MIT)
 ```
