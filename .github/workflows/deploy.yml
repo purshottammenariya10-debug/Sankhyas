@@ -1,10 +1,12 @@
 name: Update data and deploy
 
 # Fetches every Indian listed company from Yahoo Finance, plus NSE/BSE filings, then
-# publishes the site with that data to GitHub Pages. Data is kept between runs in the
-# Actions cache (not committed to git), so each run only refreshes what is stale.
+# publishes the site with that data to the gh-pages branch, which GitHub Pages serves.
+# Data is kept between runs in the Actions cache, and gh-pages is rewritten as a single
+# commit each time, so the repository does not grow.
 #
-# One-time setup: Settings -> Pages -> Source: "GitHub Actions".
+# GitHub turns Pages on automatically when gh-pages is first pushed; if it does not,
+# set Settings -> Pages -> Source: "Deploy from a branch", branch gh-pages, folder / (root).
 
 on:
   schedule:
@@ -24,8 +26,7 @@ on:
         default: "150"
 
 permissions:
-  contents: read
-  pages: read
+  contents: write
 
 concurrency:
   group: deploy
@@ -37,11 +38,6 @@ jobs:
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
-
-      # Fails fast with a clear message if Pages is not enabled
-      # (Settings -> Pages -> Build and deployment -> Source: GitHub Actions).
-      - name: Check GitHub Pages is enabled
-        uses: actions/configure-pages@v5
 
       - name: Restore data cache
         uses: actions/cache/restore@v4
@@ -96,19 +92,16 @@ jobs:
           [ -d data/filings ] && cp -r data/filings _site/data/ || true
           du -sh _site
 
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Publish to gh-pages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd _site
+          touch .nojekyll
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Deploy site from ${GITHUB_SHA::7}"
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
+          echo "Published to gh-pages: https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/"
