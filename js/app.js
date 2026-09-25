@@ -29,6 +29,7 @@
   function num(v, d) {
     if (v == null || !isFinite(v)) return '';
     d = d == null ? 0 : d;
+    if (Math.abs(v) < 0.5 / Math.pow(10, d)) v = 0;
     return Number(v).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
   }
   const pct = (v, d) => (v == null || !isFinite(v) ? '' : num(v, d == null ? 0 : d) + '%');
@@ -205,7 +206,7 @@
       '<p class="tagline">Stock analysis and screening tool for investors in India.</p>' +
       '<div class="home-search"><svg class="search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>' +
       '<input type="search" id="home-search" placeholder="Search for a company" autocomplete="off" autofocus></div>' +
-      '<div class="quick-links">Or analyse: ' + ['TCS', 'RELIANCE', 'HDFCBANK', 'INFY', 'ITC', 'TITAN', 'DMART'].map(s =>
+      '<div class="quick-links">Or analyse: ' + ['TCS', 'RELIANCE', 'HDFCBANK', 'INFY', 'ITC', 'TITAN', 'DMART'].filter(Data.exists).map(s =>
         '<a class="chip" href="#/company/' + s + '">' + s + '</a>').join('') + '</div>' +
       '</section>' +
       '<div class="container page">' +
@@ -260,7 +261,7 @@
       '</div>' +
       '<div class="price-line"><span class="price">₹ ' + num(m.price, 0) + '</span><span class="chg ' + signCls(m.change) + '">' +
       (m.change >= 0 ? '▲ ' : '▼ ') + num(Math.abs(m.changePct), 2) + '%</span><span class="asof">' +
-      Data.TODAY.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + ' - close price</span></div>' +
+      c.dates[c.dates.length - 1].toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + ' - close price' + (c.live ? ' &middot; Yahoo Finance' : '') + '</span></div>' +
       '</div><div class="company-actions">' +
       '<button class="btn" id="export-btn">⤓ Export to Excel</button>' +
       '<button class="btn ' + (followed ? 'active' : 'btn-primary') + '" id="follow-btn">' + (followed ? '✓ Following' : '+ Follow') + '</button>' +
@@ -332,13 +333,15 @@
         return row ? '<li><span class="name">' + esc(row[0]) + '</span><span class="value">' + esc(row[1]) + '</span></li>' : '';
       }).join('') + '</ul>' +
       '<div class="flex" style="margin-top:12px"><button class="btn btn-small" id="edit-ratios">✎ Edit ratios</button>' +
-      '<span class="sub">Showing ' + (c.standalone ? 'standalone' : 'consolidated') + ' figures. <a href="' + hrefOther + '" data-view>View ' + other + '</a></span></div>' +
-      '</div><div class="about"><h3>About</h3><p>' + esc(c.name) + ' is one of India\'s leading companies in the ' + esc(c.industry.toLowerCase()) +
-      ' space, part of the ' + esc(c.sector) + ' sector. The company is listed on BSE and NSE' + (c.psu ? ' and is a public sector undertaking under the Government of India.' : '.') + '</p>' +
+      '<span class="sub">Showing ' + (c.standalone ? 'standalone' : 'consolidated') + ' figures.' + (c.live ? '' : ' <a href="' + hrefOther + '" data-view>View ' + other + '</a>') + '</span></div>' +
+      '</div><div class="about"><h3>About</h3><p>' + (c.about ? esc(c.about.length > 600 ? c.about.slice(0, 600).replace(/\s+\S*$/, '') + '…' : c.about) :
+      esc(c.name) + ' is one of India\'s leading companies in the ' + esc(c.industry.toLowerCase()) +
+      ' space, part of the ' + esc(c.sector) + ' sector. The company is listed on BSE and NSE' + (c.psu ? ' and is a public sector undertaking under the Government of India.' : '.')) + '</p>' +
       '<h3>Key Points</h3><ul>' +
       '<li><b>Scale:</b> Trailing twelve month revenue of ₹ ' + num(m.sales, 0) + ' Cr. with an operating margin of ' + num(m.opm, 1) + '%.</li>' +
       '<li><b>Growth:</b> Sales have compounded at ' + num(m.salesGrowth5, 1) + '% over the last 5 years; profits at ' + num(m.profitGrowth5, 1) + '%.</li>' +
-      '<li><b>Ownership:</b> Promoters hold ' + num(m.promoter, 2) + '%, FIIs ' + num(m.fii, 2) + '% and DIIs ' + num(m.dii, 2) + '%.</li>' +
+      (c.live ? '<li><b>Ownership:</b> Insiders hold ' + num(m.promoter, 2) + '% and institutions ' + num(m.fii, 2) + '%.</li>'
+        : '<li><b>Ownership:</b> Promoters hold ' + num(m.promoter, 2) + '%, FIIs ' + num(m.fii, 2) + '% and DIIs ' + num(m.dii, 2) + '%.</li>') +
       '</ul></div></div></section>';
   }
   function bindTopRatios(c) {
@@ -388,11 +391,12 @@
       return out;
     }
     const dma50 = sma(c.prices, 50), dma200 = sma(c.prices, 200);
+    const lastFY = c.years.length ? +c.years[c.years.length - 1].slice(-4) : 0;
     const epsAt = d => {
       const fy = d.getMonth() >= 3 ? d.getFullYear() + 1 : d.getFullYear();
       const i = c.years.indexOf('Mar ' + (fy - 1));
-      if (fy - 1 >= 2026) return c.ttm.eps;
-      return i >= 0 ? c.pl.eps[i] : c.pl.eps[0];
+      if (i >= 0 && c.pl.eps[i] != null) return c.pl.eps[i];
+      return fy - 1 > lastFY ? c.ttm.eps : c.pl.eps.find(v => v != null);
     };
     const peSeries = c.prices.map((p, i) => { const e = epsAt(c.dates[i]); return e > 0 ? p / e : null; });
 
@@ -478,7 +482,7 @@
     if (!fin && m.interestCoverage < 3) cons.push('Company has a low interest coverage ratio.');
     if (m.promoterChange3y < -0.5) cons.push('Promoter holding has decreased over last 3 years: ' + num(m.promoterChange3y, 2) + '%');
     if (m.pe && m.industryPE && m.pe > m.industryPE * 1.4) cons.push('Stock is trading at a premium to its industry median P/E of ' + num(m.industryPE, 1) + '.');
-    if (c.promoter === 0) cons.push('The company does not have an identifiable promoter group.');
+    if (!c.live && c.promoter === 0) cons.push('The company does not have an identifiable promoter group.');
     if (!pros.length) pros.push('Company is a large, established player in the ' + c.industry + ' industry.');
     if (!cons.length) cons.push('Valuations look stretched on a price to sales basis at ' + num(m.priceToSales, 2) + 'x.');
     return { pros: pros.slice(0, 5), cons: cons.slice(0, 5) };
@@ -503,6 +507,7 @@
   function statementTable(headers, rows, opts) {
     opts = opts || {};
     const hl = opts.highlightLast ? headers.length - 1 : -1;
+    if (!headers.length) return '<div class="info-box">No data available for this section.</div>';
     let h = '<div class="table-wrap"><table class="data"><thead><tr><th></th>' + headers.map((x, i) => '<th' + (i === hl ? ' class="highlight"' : '') + '>' + esc(x) + '</th>').join('') + '</tr></thead><tbody>';
     rows.forEach(r => {
       const fmt = v => (r.type === 'pct' ? pct(v, r.dec || 0) : num(v, r.dec || 0));
@@ -522,9 +527,9 @@
   function sectionHead(id, title, desc, c) {
     const alt = c.standalone ? 'Consolidated' : 'Standalone';
     return '<section class="section card" id="' + id + '"><div class="section-head"><div><h2>' + esc(title) + '</h2><p>' + desc + '</p></div>' +
-      '<a class="btn btn-small btn-plain" href="#/company/' + c.symbol + (c.standalone ? '' : '/standalone') + '" data-view>View ' + alt + '</a></div>';
+      (c.live ? '' : '<a class="btn btn-small btn-plain" href="#/company/' + c.symbol + (c.standalone ? '' : '/standalone') + '" data-view>View ' + alt + '</a>') + '</div>';
   }
-  const figs = c => (c.standalone ? 'Standalone' : 'Consolidated') + ' Figures in Rs. Crores';
+  const figs = c => (c.standalone ? 'Standalone' : 'Consolidated') + ' Figures in Rs. Crores' + (c.live ? ' &middot; Source: Yahoo Finance' : '');
 
   function quartersSection(c) {
     const q = c.q;
@@ -550,11 +555,11 @@
     const growthBox = (title, rows) => '<div class="growth-box"><h4>' + title + '</h4>' + rows.map(r => '<div><span>' + r[0] + ':</span><b>' + (r[1] == null ? '' : num(r[1], 0) + '%') + '</b></div>').join('') + '</div>';
     return sectionHead('profit-loss', 'Profit & Loss', figs(c), c) + statementTable(heads, [
       { label: 'Sales', values: w(p.sales, t.sales), strong: true },
-      { label: 'Expenses', values: w(p.expenses, t.expenses), expand: 'exp' },
+      { label: 'Expenses', values: w(p.expenses, t.expenses), expand: p.material ? 'exp' : null }].concat(p.material ? [
       { label: 'Material Cost %', values: w(p.material, null), type: 'pct', sub: 'exp' },
       { label: 'Employee Cost %', values: w(p.employee, null), type: 'pct', sub: 'exp' },
       { label: 'Power & Fuel %', values: w(p.power, null), type: 'pct', sub: 'exp' },
-      { label: 'Other Expenses %', values: w(p.otherExp, null), type: 'pct', sub: 'exp' },
+      { label: 'Other Expenses %', values: w(p.otherExp, null), type: 'pct', sub: 'exp' }] : []).concat([
       { label: 'Operating Profit', values: w(p.op, t.op), strong: true },
       { label: 'OPM %', values: w(p.opm, t.opm), type: 'pct' },
       { label: 'Other Income', values: w(p.otherIncome, t.otherIncome) },
@@ -565,7 +570,7 @@
       { label: 'Net Profit', values: w(p.np, t.np), strong: true },
       { label: 'EPS in Rs', values: w(p.eps, t.eps), dec: 2 },
       { label: 'Dividend Payout %', values: w(p.payout, null), type: 'pct' }
-    ], { highlightLast: true }) +
+    ]), { highlightLast: true }) +
       '<div class="growth-boxes">' +
       growthBox('Compounded Sales Growth', [['10 Years', m.salesGrowth10], ['5 Years', m.salesGrowth5], ['3 Years', m.salesGrowth3], ['TTM', m.salesGrowthTTM]]) +
       growthBox('Compounded Profit Growth', [['10 Years', m.profitGrowth10], ['5 Years', m.profitGrowth5], ['3 Years', m.profitGrowth3], ['TTM', m.profitGrowthTTM]]) +
@@ -626,6 +631,13 @@
     let idx = s.promoters.map((_, i) => i);
     if (yearly) idx = idx.filter(i => /^Mar/.test(c.shQuarters[i]) || i === idx.length - 1);
     const pick = arr => idx.map(i => arr[i]);
+    if (c.live) {
+      return statementTable(['Latest'], [
+        { label: 'Insiders / Promoters', values: s.promoters, type: 'pct', dec: 2 },
+        { label: 'Institutions (FII + DII)', values: s.fiis, type: 'pct', dec: 2 },
+        { label: 'Public & others', values: s.public, type: 'pct', dec: 2 }
+      ], { highlightLast: true }) + '<p class="table-note">Yahoo Finance provides only the latest insider and institutional holding. Quarterly history needs an exchange shareholding feed.</p>';
+    }
     return statementTable(idx.map(i => c.shQuarters[i]), [
       { label: 'Promoters', values: pick(s.promoters), type: 'pct', dec: 2 },
       { label: 'FIIs', values: pick(s.fiis), type: 'pct', dec: 2 },
@@ -649,6 +661,14 @@
 
   function documentsSection(c) {
     const d = c.docs;
+    if (c.live) {
+      const nse = 'https://www.nseindia.com/get-quotes/equity?symbol=' + encodeURIComponent(c.symbol);
+      const yahoo = 'https://finance.yahoo.com/quote/' + encodeURIComponent(c.symbol) + '.NS/';
+      return '<section class="section card" id="documents"><h2>Documents</h2><p class="muted" style="font-size:14px">Yahoo Finance does not provide filings. Open the company\'s filings on the exchange:</p>' +
+        '<div class="flex flex-wrap"><a class="btn" target="_blank" rel="noopener" href="' + nse + '">Announcements &amp; reports on NSE</a>' +
+        (c.bseCode ? '<a class="btn" target="_blank" rel="noopener" href="https://www.bseindia.com/stock-share-price/x/' + encodeURIComponent(c.symbol) + '/' + encodeURIComponent(c.bseCode) + '/corp-announcements/">Announcements on BSE</a>' : '') +
+        '<a class="btn" target="_blank" rel="noopener" href="' + yahoo + '">Yahoo Finance page</a></div></section>';
+    }
     const fake = 'href="" data-doc';
     return '<section class="section card" id="documents"><h2>Documents</h2><div class="docs-grid">' +
       '<div><div class="flex space-between"><h3>Announcements</h3><span class="tabs"><button class="btn btn-small active" data-ann="recent">Recent</button><button class="btn btn-small" data-ann="important">Important</button></span></div>' +
@@ -868,9 +888,16 @@
   }
 
   /* ---------- Feed ---------- */
+  // Result filing date is not in the data feed: estimate it as ~35 days after quarter end.
   function resultDate(c) {
-    const d = new Date(2026, 6, 10);
-    d.setDate(d.getDate() + (c.bseCode % 40));
+    const lab = c.quarters[c.quarters.length - 1];
+    if (!lab) return new Date(0);
+    const d = new Date(lab.replace(' ', ' 1, '));
+    d.setMonth(d.getMonth() + 1);
+    d.setDate(0);
+    let h = 0;
+    for (const ch of c.symbol) h = (h * 31 + ch.charCodeAt(0)) % 997;
+    d.setDate(d.getDate() + 20 + (h % 30));
     return d;
   }
   function pageFeed() {
@@ -891,7 +918,7 @@
         const m = c.metrics;
         return '<div class="stat-mini" style="display:block"><div class="flex space-between"><a href="#/company/' + esc(c.symbol) + '"><b>' + esc(c.name) + '</b></a><span class="sub">' +
           resultDate(c).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + '</span></div>' +
-          '<div class="sub">Q1 FY27 &middot; Sales ₹ ' + num(m.qtrSales, 0) + ' Cr. <span class="' + signCls(m.qtrSalesVar) + '">(' + num(m.qtrSalesVar, 1) + '% YoY)</span> &middot; Net profit ₹ ' +
+          '<div class="sub">' + esc(c.quarters[c.quarters.length - 1] || '') + ' quarter &middot; Sales ₹ ' + num(m.qtrSales, 0) + ' Cr. <span class="' + signCls(m.qtrSalesVar) + '">(' + num(m.qtrSalesVar, 1) + '% YoY)</span> &middot; Net profit ₹ ' +
           num(m.qtrProfit, 0) + ' Cr. <span class="' + signCls(m.qtrProfitVar) + '">(' + num(m.qtrProfitVar, 1) + '% YoY)</span></div></div>';
       }).join('') + '<a class="btn btn-small" style="margin-top:12px" href="#/results/latest">All results</a></div>' +
       '<div class="card"><h2>Announcements</h2><ul class="doc-list" style="max-height:none">' + anns.slice(0, 25).map(x => '<li><span><a href="#/company/' + esc(x.c.symbol) + '">' + esc(x.c.symbol) + '</a> &middot; ' +
@@ -941,7 +968,7 @@
   function pageResults() {
     setTitle('Latest results');
     const all = Data.listCompanies().slice().sort((a, b) => resultDate(b) - resultDate(a));
-    app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Latest Results</h1><p>Quarter ended Jun 2026 &middot; figures in Rs. Cr.</p></div></div>' +
+    app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Latest Results</h1><p>Latest reported quarter &middot; figures in Rs. Cr.' + (Data.liveInfo().count ? ' &middot; result dates are estimated' : '') + '</p></div></div>' +
       '<div class="table-wrap"><table class="data list"><thead><tr><th>S.No.</th><th>Name</th><th>Result date</th><th>Sales</th><th>YoY %</th><th>Operating Profit</th><th>OPM %</th><th>Net Profit</th><th>YoY %</th><th>EPS</th></tr></thead><tbody>' +
       all.map((c, i) => {
         const n = c.q.sales.length - 1, m = c.metrics;
@@ -1074,7 +1101,17 @@
   document.addEventListener('keydown', e => {
     if (e.key === '/' && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); const s = $('#home-search') || $('#nav-search'); s.focus(); }
   });
-  window.addEventListener('hashchange', route);
   renderAuth();
-  route();
+  app.innerHTML = '<div class="container page muted">Loading market data…</div>';
+  Data.init().then(() => {
+    const info = Data.liveInfo();
+    const banner = $('#data-banner');
+    if (info.count) {
+      const when = info.updated ? new Date(info.updated).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+      banner.textContent = 'Market data from Yahoo Finance' + (when ? ', updated ' + when : '') + '. Prices are end of day; figures may be incomplete.' +
+        (info.count < info.total ? ' ' + (info.total - info.count) + ' companies without Yahoo data use sample figures.' : '');
+    }
+    window.addEventListener('hashchange', route);
+    route();
+  });
 })();

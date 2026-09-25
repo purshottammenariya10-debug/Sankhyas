@@ -315,108 +315,212 @@
       ratios.roe.push(R.np[i] / nw * 100);
     }
 
-    const last4 = k => sum(quarters[k].slice(-4));
-    const ttm = {
-      sales: last4('sales'), expenses: last4('expenses'), op: last4('op'), otherIncome: last4('otherIncome'),
-      interest: last4('interest'), depreciation: last4('depreciation'), pbt: last4('pbt'), np: last4('np')
-    };
-    ttm.opm = ttm.op / ttm.sales * 100;
-    ttm.tax = (1 - ttm.np / ttm.pbt) * 100;
-    ttm.eps = ttm.np / c.shares;
-
-    const n = px.prices.length;
-    const last = px.prices[n - 1], prev = px.prices[n - 2];
-    const yr = px.prices.slice(-252);
-    const L = YEARS.length - 1;
-    const nwLast = B.equity[L] + B.reserves[L];
-    const bookValue = nwLast / c.shares;
-    const marketCap = last * c.shares;
-    const pe = ttm.eps > 0 ? last / ttm.eps : null;
-    const dps = R.eps[L] * R.payout[L] / 100;
-    const qN = quarters.sales.length - 1;
-    const ret = days => (n > days ? (last / px.prices[n - 1 - days] - 1) * 100 : null);
-    const retCagr = (years) => { const d = 252 * years; return n > d ? (Math.pow(last / px.prices[n - 1 - d], 1 / years) - 1) * 100 : null; };
-
-    const metrics = {
-      price: last,
-      change: last - prev,
-      changePct: (last / prev - 1) * 100,
-      marketCap,
-      high52: Math.max.apply(null, yr),
-      low52: Math.min.apply(null, yr),
-      pe,
-      bookValue,
-      pb: last / bookValue,
-      divYield: dps / last * 100,
-      dps,
-      roce: ratios.roce[L],
-      roe: ratios.roe[L],
-      faceValue: c.faceValue,
-      sales: ttm.sales,
-      np: ttm.np,
-      op: ttm.op,
-      opm: ttm.opm,
-      eps: ttm.eps,
-      de: B.borrowings[L] / nwLast,
-      debt: B.borrowings[L],
-      promoter: sh.promoters[sh.promoters.length - 1],
-      fii: sh.fiis[sh.fiis.length - 1],
-      dii: sh.diis[sh.diis.length - 1],
-      public: sh.public[sh.public.length - 1],
-      promoterChange3y: sh.promoters[sh.promoters.length - 1] - sh.promoters[0],
-      shareholders: sh.holders[sh.holders.length - 1],
-      pledged: c.promoter > 0 ? round(Math.max(0, gauss(rng(hash(sym + 'pl'))) * 2), 2) : 0,
-      qtrSales: quarters.sales[qN],
-      qtrProfit: quarters.np[qN],
-      qtrSalesVar: (quarters.sales[qN] / quarters.sales[qN - 4] - 1) * 100,
-      qtrProfitVar: (quarters.np[qN] / quarters.np[qN - 4] - 1) * 100,
-      salesGrowth3: cagr(R.sales[L - 3], R.sales[L], 3),
-      salesGrowth5: cagr(R.sales[L - 5], R.sales[L], 5),
-      salesGrowth10: cagr(R.sales[L - 10], R.sales[L], 10),
-      profitGrowth3: cagr(R.np[L - 3], R.np[L], 3),
-      profitGrowth5: cagr(R.np[L - 5], R.np[L], 5),
-      profitGrowth10: cagr(R.np[L - 10], R.np[L], 10),
-      salesGrowthTTM: (ttm.sales / R.sales[L] - 1) * 100 + c.growth * 25,
-      profitGrowthTTM: (ttm.np / R.np[L] - 1) * 100 + c.growth * 25,
-      avgRoe3: sum(ratios.roe.slice(-3)) / 3,
-      avgRoe5: sum(ratios.roe.slice(-5)) / 5,
-      avgRoe10: sum(ratios.roe.slice(-10)) / 10,
-      avgRoce5: sum(ratios.roce.slice(-5)) / 5,
-      ret1m: ret(21), ret3m: ret(63), ret6m: ret(126), ret1y: ret(252),
-      ret3y: retCagr(3), ret5y: retCagr(5), ret10y: retCagr(10),
-      interestCoverage: R.interest[L] > 0 ? (R.pbt[L] + R.interest[L]) / R.interest[L] : 999,
-      fcf: cf.cfo[L] + cf.cfi[L],
-      cfo: cf.cfo[L],
-      debtorDays: ratios.debtor[L],
-      wcDays: ratios.wc[L],
-      volume: px.volume[n - 1],
-      avgVolume: sum(px.volume.slice(-21)) / 21,
-      dma50: sum(px.prices.slice(-50)) / 50,
-      dma200: sum(px.prices.slice(-200)) / 200,
-      evEbitda: (marketCap + B.borrowings[L] - B.investments[L] * 0.3) / ttm.op,
-      earningsYield: ttm.eps > 0 ? ttm.eps / last * 100 : 0,
-      shares: c.shares,
-      reserves: B.reserves[L],
-      totalAssets: B.total[L]
-    };
-    metrics.peg = pe && metrics.profitGrowth5 > 0 ? pe / metrics.profitGrowth5 : null;
-    metrics.priceToSales = marketCap / ttm.sales;
 
     const out = Object.assign({}, c, {
-      standalone: !!standalone,
+      standalone: !!standalone, live: false,
       years: YEARS, quarters: QUARTERS.map(q => q.label), shQuarters: SH_QUARTERS,
-      pl: R, bs: B, cf, ratios, q: quarters, ttm, sh, docs,
-      prices: px.prices, volume: px.volume, dates: PRICE_DAYS,
-      metrics
+      pl: R, bs: B, cf, ratios, q: quarters, sh, docs,
+      prices: px.prices, volume: px.volume, dates: PRICE_DAYS
+    });
+    out.ttm = computeTTM(out);
+    out.metrics = computeMetrics(out, {
+      pledged: c.promoter > 0 ? round(Math.max(0, gauss(rng(hash(sym + 'pl'))) * 2), 2) : 0
     });
     cache[key] = out;
     return out;
   }
 
+  /* ---------- shared calculations (sample and live data) ---------- */
+  const at = (arr, i) => (arr && i >= 0 && i < arr.length && arr[i] != null && isFinite(arr[i]) ? arr[i] : null);
+  const lastOf = arr => (arr && arr.length ? at(arr, arr.length - 1) : null);
+  const sumN = arr => { const v = arr.filter(x => x != null && isFinite(x)); return v.length === arr.length && v.length ? sum(v) : null; };
+  const avgN = arr => { const v = arr.filter(x => x != null && isFinite(x)); return v.length ? sum(v) / v.length : null; };
+  const div = (a, b) => (a != null && b != null && isFinite(a) && isFinite(b) && b !== 0 ? a / b : null);
+
+  function computeTTM(c) {
+    const q = c.q, p = c.pl;
+    const keys = ['sales', 'expenses', 'op', 'otherIncome', 'interest', 'depreciation', 'pbt', 'np'];
+    const t = {};
+    const useQ = q && q.sales && q.sales.length >= 4;
+    keys.forEach(k => { t[k] = useQ ? sumN(q[k].slice(-4)) : lastOf(p[k]); if (t[k] == null) t[k] = lastOf(p[k]); });
+    t.opm = div(t.op, t.sales) != null ? t.op / t.sales * 100 : null;
+    t.tax = div(t.np, t.pbt) != null ? (1 - t.np / t.pbt) * 100 : null;
+    t.eps = c.shares ? div(t.np, c.shares) : lastOf(p.eps);
+    return t;
+  }
+
+  function computeMetrics(c, extra) {
+    extra = extra || {};
+    const quote = extra.quote || {};
+    const R = c.pl, B = c.bs, cf = c.cf, ratios = c.ratios, quarters = c.q, sh = c.sh, ttm = c.ttm;
+    const prices = c.prices, vol = c.volume, n = prices.length;
+    const last = quote.price || prices[n - 1];
+    const prev = quote.prevClose || prices[n - 2] || last;
+    const yr = prices.slice(-252);
+    const L = R.sales.length - 1;
+    const nwLast = at(B.equity, L) != null && at(B.reserves, L) != null ? B.equity[L] + B.reserves[L] : null;
+    const bookValue = quote.bookValue || div(nwLast, c.shares);
+    const marketCap = quote.marketCap || (c.shares ? last * c.shares : null);
+    const pe = quote.pe || (ttm.eps > 0 ? last / ttm.eps : null);
+    const dps = quote.dividendRate != null ? quote.dividendRate : (at(R.eps, L) != null && at(R.payout, L) != null ? R.eps[L] * R.payout[L] / 100 : null);
+    const qN = quarters.sales.length - 1;
+    const ret = days => (n > days ? (last / prices[n - 1 - days] - 1) * 100 : null);
+    const retCagr = years => { const d = 252 * years; return n > d ? (Math.pow(last / prices[n - 1 - d], 1 / years) - 1) * 100 : null; };
+    const growth = (arr, yrs) => cagr(at(arr, L - yrs), at(arr, L), yrs);
+    const q4 = k => (quarters[k].length >= 8 ? div(sumN(quarters[k].slice(-4)), sumN(quarters[k].slice(-8, -4))) : null);
+    const avgLast = (arr, k) => (arr.length >= k ? avgN(arr.slice(-k)) : null);
+    const pctVar = (a, b) => (a != null && b != null && b > 0 ? (a / b - 1) * 100 : null);
+
+    const m = {
+      price: last,
+      change: last - prev,
+      changePct: (last / prev - 1) * 100,
+      marketCap,
+      high52: quote.high52 || Math.max.apply(null, yr),
+      low52: quote.low52 || Math.min.apply(null, yr),
+      pe,
+      bookValue,
+      pb: div(last, bookValue),
+      divYield: dps != null ? dps / last * 100 : null,
+      dps,
+      roce: lastOf(ratios.roce),
+      roe: quote.roe != null ? quote.roe : lastOf(ratios.roe),
+      faceValue: c.faceValue != null ? c.faceValue : null,
+      sales: ttm.sales, np: ttm.np, op: ttm.op, opm: ttm.opm, eps: ttm.eps,
+      de: div(at(B.borrowings, L), nwLast),
+      debt: at(B.borrowings, L),
+      promoter: lastOf(sh.promoters),
+      fii: lastOf(sh.fiis),
+      dii: lastOf(sh.diis),
+      public: lastOf(sh.public),
+      promoterChange3y: sh.promoters.length > 1 ? lastOf(sh.promoters) - sh.promoters[0] : null,
+      shareholders: lastOf(sh.holders),
+      pledged: extra.pledged != null ? extra.pledged : null,
+      qtrSales: at(quarters.sales, qN),
+      qtrProfit: at(quarters.np, qN),
+      qtrSalesVar: pctVar(at(quarters.sales, qN), at(quarters.sales, qN - 4)),
+      qtrProfitVar: pctVar(at(quarters.np, qN), at(quarters.np, qN - 4)),
+      salesGrowth3: growth(R.sales, 3), salesGrowth5: growth(R.sales, 5), salesGrowth10: growth(R.sales, 10),
+      profitGrowth3: growth(R.np, 3), profitGrowth5: growth(R.np, 5), profitGrowth10: growth(R.np, 10),
+      salesGrowthTTM: q4('sales') != null ? (q4('sales') - 1) * 100 : null,
+      profitGrowthTTM: q4('np') != null ? (q4('np') - 1) * 100 : null,
+      avgRoe3: avgLast(ratios.roe, 3), avgRoe5: avgLast(ratios.roe, 5), avgRoe10: avgLast(ratios.roe, 10),
+      avgRoce5: avgLast(ratios.roce, 5),
+      ret1m: ret(21), ret3m: ret(63), ret6m: ret(126), ret1y: ret(252),
+      ret3y: retCagr(3), ret5y: retCagr(5), ret10y: retCagr(10),
+      interestCoverage: at(R.interest, L) > 0 && at(R.pbt, L) != null ? (R.pbt[L] + R.interest[L]) / R.interest[L] : (at(R.interest, L) === 0 ? 999 : null),
+      fcf: at(cf.cfo, L) != null && at(cf.cfi, L) != null ? cf.cfo[L] + cf.cfi[L] : null,
+      cfo: at(cf.cfo, L),
+      debtorDays: lastOf(ratios.debtor),
+      wcDays: lastOf(ratios.wc),
+      volume: vol[n - 1],
+      avgVolume: avgN(vol.slice(-21)),
+      dma50: n >= 50 ? sum(prices.slice(-50)) / 50 : null,
+      dma200: n >= 200 ? sum(prices.slice(-200)) / 200 : null,
+      evEbitda: marketCap != null && ttm.op > 0 ? (marketCap + (at(B.borrowings, L) || 0) - (at(B.investments, L) || 0) * 0.3) / ttm.op : null,
+      earningsYield: ttm.eps > 0 ? ttm.eps / last * 100 : 0,
+      shares: c.shares,
+      reserves: at(B.reserves, L),
+      totalAssets: at(B.total, L)
+    };
+    m.peg = pe && m.profitGrowth5 > 0 ? pe / m.profitGrowth5 : null;
+    m.priceToSales = div(marketCap, ttm.sales);
+    return m;
+  }
+
+  /* ---------- live data (Yahoo Finance JSON produced by scripts/fetch_yahoo.py) ---------- */
+  const live = {};
+  let liveMeta = null;
+
+  function buildLive(j) {
+    const known = bySymbol[j.symbol] || {};
+    const a = j.annual || { periods: [] }, qq = j.quarterly || { periods: [] }, qt = j.quote || {};
+    const col = (src, k) => (src[k] || src.periods.map(() => null)).map(v => (v == null ? null : v));
+    const shares = qt.shares || known.shares || null;
+    const pl = {};
+    ['sales', 'expenses', 'op', 'otherIncome', 'interest', 'depreciation', 'pbt', 'tax', 'np', 'eps'].forEach(k => { pl[k] = col(a, k); });
+    pl.opm = pl.op.map((v, i) => div(v, pl.sales[i]) != null ? v / pl.sales[i] * 100 : null);
+    pl.payout = col(a, 'dividendsPaid').map((d, i) => (d != null && pl.np[i] > 0 ? Math.abs(d) / pl.np[i] * 100 : null));
+    pl.eps = pl.eps.map((v, i) => (v != null ? v : div(pl.np[i], shares)));
+    const q = {};
+    ['sales', 'expenses', 'op', 'otherIncome', 'interest', 'depreciation', 'pbt', 'tax', 'np', 'eps'].forEach(k => { q[k] = col(qq, k); });
+    q.opm = q.op.map((v, i) => div(v, q.sales[i]) != null ? v / q.sales[i] * 100 : null);
+    q.eps = q.eps.map((v, i) => (v != null ? v : div(q.np[i], shares)));
+    const bs = {};
+    ['equity', 'reserves', 'borrowings', 'otherLiab', 'total', 'fixedAssets', 'cwip', 'investments', 'otherAssets'].forEach(k => { bs[k] = col(a, k); });
+    const cf = { cfo: col(a, 'cfo'), cfi: col(a, 'cfi'), cff: col(a, 'cff'), net: col(a, 'net') };
+    const days = (arr, i) => (arr[i] != null && pl.sales[i] ? arr[i] / pl.sales[i] * 365 : null);
+    const rec = col(a, 'receivables'), inv = col(a, 'inventory'), pay = col(a, 'payables');
+    const ratios = { debtor: [], inventory: [], payable: [], ccc: [], wc: [], roce: [], roe: [] };
+    a.periods.forEach((_, i) => {
+      const d = days(rec, i), iv = days(inv, i), p = days(pay, i);
+      ratios.debtor.push(d); ratios.inventory.push(iv); ratios.payable.push(p);
+      ratios.ccc.push(d != null && iv != null && p != null ? d + iv - p : null);
+      ratios.wc.push(bs.otherAssets[i] != null && bs.otherLiab[i] != null && pl.sales[i] ? (bs.otherAssets[i] - bs.otherLiab[i]) / pl.sales[i] * 365 : null);
+      const ceOf = k => (bs.equity[k] != null && bs.reserves[k] != null ? bs.equity[k] + bs.reserves[k] + (bs.borrowings[k] || 0) : null);
+      const nwOf = k => (bs.equity[k] != null && bs.reserves[k] != null ? bs.equity[k] + bs.reserves[k] : null);
+      const ce = i && ceOf(i - 1) != null && ceOf(i) != null ? (ceOf(i - 1) + ceOf(i)) / 2 : ceOf(i);
+      const nw = i && nwOf(i - 1) != null && nwOf(i) != null ? (nwOf(i - 1) + nwOf(i)) / 2 : nwOf(i);
+      ratios.roce.push(pl.pbt[i] != null && ce ? (pl.pbt[i] + (pl.interest[i] || 0)) / ce * 100 : null);
+      ratios.roe.push(pl.np[i] != null && nw ? pl.np[i] / nw * 100 : null);
+    });
+    const ins = qt.insiders, inst = qt.institutions;
+    const sh = {
+      promoters: [ins != null ? ins : null], fiis: [inst != null ? inst : null], diis: [null], government: [null],
+      public: [ins != null && inst != null ? Math.max(0, 100 - ins - inst) : null], holders: [null]
+    };
+    const px = j.prices || { dates: [], close: [], volume: [] };
+    const out = {
+      symbol: j.symbol, name: j.name || known.name || j.symbol,
+      sector: known.sector || j.sector || 'Others', industry: known.industry || j.industry || '',
+      website: (j.website || known.website || '').replace(/^https?:\/\//, '').replace(/\/$/, ''),
+      bseCode: known.bseCode || '', faceValue: known.faceValue != null ? known.faceValue : null,
+      psu: !!known.psu, promoter: ins || 0, shares, about: j.about || '',
+      standalone: false, live: true, updated: j.updated,
+      years: a.periods, quarters: qq.periods, shQuarters: ['Latest'],
+      pl, bs, cf, ratios, q, sh,
+      docs: { announcements: [], reports: [], ratings: [], concalls: [] },
+      prices: px.close, volume: px.volume.map(v => v || 0), dates: px.dates.map(d => new Date(d + 'T00:00:00'))
+    };
+    out.ttm = computeTTM(out);
+    out.metrics = computeMetrics(out, { quote: qt });
+    return out;
+  }
+
+  async function init() {
+    try {
+      const res = await fetch('data/yahoo/index.json', { cache: 'no-cache' });
+      if (!res.ok) return;
+      liveMeta = await res.json();
+      const syms = liveMeta.symbols || [];
+      const files = await Promise.all(syms.map(s => fetch('data/yahoo/' + encodeURIComponent(s) + '.json', { cache: 'no-cache' })
+        .then(r => (r.ok ? r.json() : null)).catch(() => null)));
+      files.forEach(j => {
+        if (!j || !j.prices || !j.prices.close || j.prices.close.length < 2) return;
+        live[j.symbol] = j;
+        if (!bySymbol[j.symbol]) {
+          const meta = { symbol: j.symbol, name: j.name || j.symbol, sector: j.sector || 'Others', industry: j.industry || '', bseCode: '' };
+          base.push(meta);
+          bySymbol[j.symbol] = meta;
+        }
+      });
+    } catch (e) { /* no live data: sample mode */ }
+  }
+
+  function getAny(sym, standalone) {
+    sym = String(sym || '').toUpperCase();
+    if (live[sym]) {
+      if (!cache[sym + ':live']) cache[sym + ':live'] = buildLive(live[sym]);
+      return cache[sym + ':live'];
+    }
+    if (liveMeta && liveMeta.liveOnly) return null;
+    return getCompany(sym, standalone);
+  }
+
   let _all = null;
   function listCompanies() {
     if (_all) return _all;
-    _all = base.map(c => getCompany(c.symbol));
+    _all = base.map(c => getAny(c.symbol)).filter(Boolean);
     // industry P/E (median of sector)
     const sectors = {};
     _all.forEach(c => { (sectors[c.sector] = sectors[c.sector] || []).push(c.metrics.pe); });
@@ -429,6 +533,7 @@
     if (!q) return [];
     const scored = [];
     base.forEach(c => {
+      if (liveMeta && liveMeta.liveOnly && !live[c.symbol]) return;
       const s = c.symbol.toLowerCase(), n = c.name.toLowerCase();
       let score = -1;
       if (s === q) score = 100;
@@ -445,12 +550,13 @@
 
   window.Data = {
     TODAY, YEARS, QUARTERS: QUARTERS.map(q => q.label), SH_QUARTERS,
-    getCompany, listCompanies, search, median, cagr,
+    init, getCompany: getAny, listCompanies, search, median, cagr,
+    liveInfo: () => ({ count: Object.keys(live).length, total: listCompanies().length, updated: liveMeta && liveMeta.updated }),
     sectors: () => {
       const m = {};
-      base.forEach(c => { (m[c.sector] = m[c.sector] || []).push(c.symbol); });
+      listCompanies().forEach(c => { (m[c.sector] = m[c.sector] || []).push(c.symbol); });
       return m;
     },
-    exists: sym => !!bySymbol[String(sym || '').toUpperCase()]
+    exists: sym => { sym = String(sym || '').toUpperCase(); return !!live[sym] || (!!bySymbol[sym] && !(liveMeta && liveMeta.liveOnly)); }
   };
 })();
