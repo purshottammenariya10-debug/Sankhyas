@@ -213,7 +213,13 @@ def main(argv=None):
     ap.add_argument("--no-nse", action="store_true", help="skip NSE (BSE only)")
     args = ap.parse_args(argv)
 
-    universe = json.loads((ROOT / "data" / "universe.json").read_text())["companies"]
+    upath = ROOT / "data" / "universe.json"
+    if upath.exists():
+        universe = json.loads(upath.read_text())["companies"]
+    else:
+        print("data/universe.json not found; using scripts/symbols.txt", file=sys.stderr)
+        universe = [{"symbol": s.strip().upper(), "name": s.strip().upper(), "bse": "", "yahoo": s.strip().upper() + ".NS"}
+                    for s in (ROOT / "scripts" / "symbols.txt").read_text().split() if s.strip()]
     if args.symbols:
         wanted = {s.upper() for s in args.symbols}
         universe = [c for c in universe if c["symbol"].upper() in wanted]
@@ -234,6 +240,9 @@ def main(argv=None):
         sweep += bse_announcements(bse, "", start, today)
     except Exception as e:  # noqa: BLE001
         print("BSE sweep failed:", e, file=sys.stderr)
+        if "403" in str(e):
+            print("BSE is refusing this server (403). BSE blocks many cloud IP ranges, including GitHub's;"
+                  " run this script from another network or through a proxy to fetch BSE filings.", file=sys.stderr)
     if nse:
         try:
             sweep += nse_announcements(nse, None, start, today)

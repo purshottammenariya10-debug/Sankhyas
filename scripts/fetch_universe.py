@@ -16,7 +16,7 @@ import json
 import sys
 from pathlib import Path
 
-from exchange import BSE_API, bse_session, nse_session
+from exchange import BSE_API, bse_session, fetch_text, nse_session
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "data" / "universe.json"
@@ -84,12 +84,21 @@ def main(argv=None):
     prev = previous.get("companies", [])
 
     nse_rows = []
-    nse = nse_session()
-    if nse:
-        try:
-            nse_rows = parse_nse_csv(nse.get(NSE_EQUITY_CSV, expect_json=False).text)
-        except Exception as e:  # noqa: BLE001 - keep going with the previous list
-            print("NSE equity list failed:", e, file=sys.stderr)
+    # the archive server usually answers without website cookies; try it first, then via a primed session
+    try:
+        nse_rows = parse_nse_csv(fetch_text(NSE_EQUITY_CSV))
+        print(f"NSE equity list: {len(nse_rows)} companies")
+    except Exception as e:  # noqa: BLE001
+        print("NSE equity list (direct) failed:", e, file=sys.stderr)
+        nse = nse_session()
+        if not nse:
+            print("NSE refused a session (its website often blocks cloud servers)", file=sys.stderr)
+        else:
+            try:
+                nse_rows = parse_nse_csv(nse.get(NSE_EQUITY_CSV, expect_json=False).text)
+                print(f"NSE equity list: {len(nse_rows)} companies")
+            except Exception as e2:  # noqa: BLE001
+                print("NSE equity list failed:", e2, file=sys.stderr)
     if not nse_rows:
         nse_rows = [{"symbol": c["symbol"], "name": c["name"], "isin": c.get("isin", "")} for c in prev if c["yahoo"].endswith(".NS")]
         print(f"Using previous NSE list ({len(nse_rows)} companies)")
@@ -108,8 +117,11 @@ def main(argv=None):
 
     companies = merge(nse_rows, bse_rows, include_bse_only=not args.nse_only)
     if not companies:
-        print("No companies found; keeping previous universe.", file=sys.stderr)
-        return 1
+        # both exchanges refused and there is no earlier list: start from the built-in symbols so
+        # the rest of the pipeline (Yahoo data) still runs; the full list is picked up once reachable
+        builtin = [s.strip().upper() for s in (ROOT / "scripts" / "symbols.txt").read_text().split() if s.strip()]
+        companies = [{"symbol": s, "name": s, "isin": "", "bse": "", "industry": "", "yahoo": s + ".NS"} for s in builtin]
+        print(f"WARNING: NSE and BSE lists unavailable; using {len(companies)} built-in symbols", file=sys.stderr)
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps({"companies": companies}, separators=(",", ":")))
     nse_n = sum(1 for c in companies if c["yahoo"].endswith(".NS"))

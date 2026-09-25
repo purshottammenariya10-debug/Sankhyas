@@ -16,6 +16,7 @@ BSE_API = "https://api.bseindia.com/BseIndiaAPI/api"
 BSE_HEADERS = {
     "User-Agent": UA,
     "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://www.bseindia.com/",
     "Origin": "https://www.bseindia.com",
 }
@@ -60,6 +61,13 @@ class Throttled:
 
 def bse_session(delay=0.6):
     return Throttled(BSE_HEADERS, delay=delay)
+
+
+def fetch_text(url, referer="https://www.nseindia.com/", timeout=30):
+    """Plain GET with browser headers (no cookies); raises on HTTP errors."""
+    r = requests.get(url, headers={"User-Agent": UA, "Accept": "text/csv,text/plain,*/*", "Referer": referer}, timeout=timeout)
+    r.raise_for_status()
+    return r.text
 
 
 def nse_session(delay=0.8):

@@ -201,9 +201,11 @@ def build_company(symbol, t, yahoo=None, meta=None):
 
 def load_universe():
     path = ROOT / "data" / "universe.json"
-    if not path.exists():
-        raise SystemExit("data/universe.json not found; run scripts/fetch_universe.py first")
-    return json.loads(path.read_text())["companies"]
+    if path.exists():
+        return json.loads(path.read_text())["companies"]
+    print("data/universe.json not found; using scripts/symbols.txt", file=sys.stderr)
+    syms = [s.strip().upper() for s in (ROOT / "scripts" / "symbols.txt").read_text().split() if s.strip()]
+    return [{"symbol": s, "name": s, "yahoo": s + ".NS"} for s in syms]
 
 
 def file_age(sym):
