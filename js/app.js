@@ -751,6 +751,11 @@
     }
     return out;
   }
+  // NSE subjects read "<Company> has informed the Exchange about ..."; keep just the subject
+  function cleanTitle(t) {
+    const s = String(t || '').replace(/^.{0,160}?\b(has|have)\s+(informed|intimated|submitted to|filed with)\s+the\s+Exchange\s*(about|regarding|that|of|with|under)?\s*/i, '').trim();
+    return s ? s.charAt(0).toUpperCase() + s.slice(1) : String(t || '');
+  }
   const IMPORTANT_FILING = /financial result|outcome of board|dividend|bonus|split|sub-division|buy ?back|acquisition|amalgamation|merger|demerger|resignation|appointment of (managing|chief|ceo|cfo|md)|credit rating|rights issue|preferential|qip|fund ?rais/i;
   function documentsSection(c, f) {
     const X = exchangePages(c), P = X.nse || X.bse;
@@ -761,7 +766,7 @@
 
     // Announcements
     const annHtml = A.length
-      ? '<ul class="doc-list" id="ann-list">' + A.slice(0, 80).map(a => '<li data-imp="' + (IMPORTANT_FILING.test(a.t + ' ' + a.c) ? 1 : 0) + '"><span>' + ext(a.u, esc(a.t)) +
+      ? '<ul class="doc-list" id="ann-list">' + A.slice(0, 80).map(a => '<li data-imp="' + (IMPORTANT_FILING.test(a.t + ' ' + a.c) ? 1 : 0) + '"><span>' + ext(a.u, esc(cleanTitle(a.t))) +
           (a.c ? '<br><span class="sub">' + esc(a.c) + '</span>' : '') + '</span><span class="date">' + day(a.d) + ' ' + srcBadge(a.x) + '</span></li>').join('') + '</ul>'
       : '<ul class="doc-list" id="ann-list">' + [
           ['Latest announcements', 'ann', 0], ['Financial results', 'res', 1], ['Board meetings &amp; outcomes', 'bm', 1],
@@ -777,7 +782,7 @@
     // Credit ratings
     const ratings = A.filter(a => a.k === 'rating').slice(0, 12);
     const crHtml = ratings.length
-      ? '<ul class="doc-list">' + ratings.map(a => '<li>' + ext(a.u, esc(a.t)) + '<span class="date">' + day(a.d) + '</span></li>').join('') + '</ul>'
+      ? '<ul class="doc-list">' + ratings.map(a => '<li>' + ext(a.u, esc(cleanTitle(a.t))) + '<span class="date">' + day(a.d) + '</span></li>').join('') + '</ul>'
       : '<ul class="doc-list"><li>' + ext(P.ann, 'Credit rating filings') + '<span class="date">' + both('ann') + '</span></li></ul>';
 
     // Concalls: Transcript / PPT / REC per quarter
@@ -1092,7 +1097,7 @@
         const mineSet = new Set(mine.map(c => c.symbol));
         const items = ((f && f.items) || []).filter(it => !mineSet.size || mineSet.has(it.s)).slice(0, 40);
         $('#feed-anns').innerHTML = items.length ? items.map(it => '<li><span><a href="#/company/' + encodeURIComponent(it.s) + '">' + esc(it.s) + '</a> &middot; ' +
-          '<a target="_blank" rel="noopener noreferrer" href="' + esc(it.u) + '">' + esc(it.t) + '</a></span><span class="date">' +
+          '<a target="_blank" rel="noopener noreferrer" href="' + esc(it.u) + '">' + esc(cleanTitle(it.t)) + '</a></span><span class="date">' +
           new Date(it.d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + '</span></li>').join('')
           : '<li class="muted">No recent exchange announcements' + (mineSet.size ? ' for the companies you follow' : '') + '.</li>';
       });
