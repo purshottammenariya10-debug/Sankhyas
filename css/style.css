@@ -469,3 +469,6 @@ table.data.ai-table th.l, table.data.ai-table td.l { text-align: left; }
 .lock-cta { margin-top: 12px; padding: 14px; border: 1px dashed var(--primary); border-radius: 8px; background: var(--primary-bg); text-align: center; font-size: 14px; }
 .lock-cta .sub { margin: 4px 0 10px; }
 .legal h3 { margin-top: 22px; font-size: 16px; } .legal p, .legal li { font-size: 14.5px; line-height: 1.6; }
+.social { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 14px; font-size: 14px; }
+.social a { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); text-decoration: none; }
+.social a:hover { color: var(--primary); }

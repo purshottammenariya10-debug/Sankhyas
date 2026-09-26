@@ -109,6 +109,7 @@ jobs:
           PRO_FREE_DURING_BETA: ${{ vars.PRO_FREE_DURING_BETA }}
           BUSINESS_NAME: ${{ vars.BUSINESS_NAME }}
           BUSINESS_EMAIL: ${{ vars.BUSINESS_EMAIL }}
+          BUSINESS_INSTAGRAM: ${{ vars.BUSINESS_INSTAGRAM }}
           BUSINESS_PHONE: ${{ vars.BUSINESS_PHONE }}
           BUSINESS_ADDRESS: ${{ vars.BUSINESS_ADDRESS }}
         run: |
@@ -117,7 +118,7 @@ jobs:
               const e = process.env, s = v => JSON.stringify(v || "");
               const cfg = { supabaseUrl: e.SUPABASE_URL, supabaseAnonKey: e.SUPABASE_ANON_KEY, razorpayKeyId: e.RAZORPAY_KEY_ID,
                 proFreeDuringBeta: /^(1|true|yes)$/i.test(e.PRO_FREE_DURING_BETA || ""),
-                business: { name: e.BUSINESS_NAME || "Sankhyas", email: e.BUSINESS_EMAIL || "", phone: e.BUSINESS_PHONE || "", address: e.BUSINESS_ADDRESS || "" } };
+                business: { name: e.BUSINESS_NAME || "Sankhyas", email: e.BUSINESS_EMAIL || "connect@sankhyas.com", phone: e.BUSINESS_PHONE || "", address: e.BUSINESS_ADDRESS || "", instagram: e.BUSINESS_INSTAGRAM || "sankhyas.co" } };
               require("fs").writeFileSync("_site/js/config.js", "window.SANKHYAS_CONFIG = " + JSON.stringify(cfg, null, 2) + ";\n");
             '
             echo "Accounts and payments: on ($SUPABASE_URL)"

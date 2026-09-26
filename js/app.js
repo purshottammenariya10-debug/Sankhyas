@@ -1571,8 +1571,9 @@
     const kind = (location.hash.match(/^#\/(\w+)/) || [])[1];
     const B = Account.config.business || {}, name = esc(B.name || 'Sankhyas');
     const email = B.email ? '<a href="mailto:' + esc(B.email) + '">' + esc(B.email) + '</a>' : '<i>(support email: set business.email in js/config.js)</i>';
-    const contactLines = '<p><b>' + name + '</b><br>' + (B.address ? esc(B.address) + '<br>' : '<i>(address: set business.address in js/config.js)</i><br>') +
-      'Email: ' + email + (B.phone ? '<br>Phone: ' + esc(B.phone) : '') + '</p>';
+    const contactLines = '<p><b>' + name + '</b><br>' + (B.address ? esc(B.address) + '<br>' : '') +
+      'Email: ' + email + (B.phone ? '<br>Phone: ' + esc(B.phone) : '') +
+      (B.instagram ? '<br>Instagram: <a href="https://www.instagram.com/' + encodeURIComponent(B.instagram) + '/" target="_blank" rel="noopener noreferrer">@' + esc(B.instagram) + '</a>' : '') + '</p>';
     const updated = '<p class="sub">Last updated: 26 September 2026</p>';
     const pages = {
       contact: ['Contact & support', '<p>We are happy to help with your account, payments or data questions. We usually reply within 1–2 working days.</p>' + contactLines],

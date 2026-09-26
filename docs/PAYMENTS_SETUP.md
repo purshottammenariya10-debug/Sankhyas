@@ -91,7 +91,8 @@ repository variables. They are public values, so variables are fine; don't use s
 | `SUPABASE_ANON_KEY` | the anon public key from step 1 |
 | `RAZORPAY_KEY_ID` | `rzp_test_...` (later `rzp_live_...`) |
 | `BUSINESS_NAME` | your registered business name |
-| `BUSINESS_EMAIL` | your support email |
+| `BUSINESS_EMAIL` | your support email (default connect@sankhyas.com) |
+| `BUSINESS_INSTAGRAM` | Instagram handle (default sankhyas.co) |
 | `BUSINESS_PHONE` | your support phone (optional) |
 | `BUSINESS_ADDRESS` | your business address |
 | `PRO_FREE_DURING_BETA` | optional: `true` keeps Pro free for everyone while accounts work |

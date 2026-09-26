@@ -9,8 +9,9 @@ window.SANKHYAS_CONFIG = {
   proFreeDuringBeta: false, // true = Pro features stay free for everyone even with payments on
   business: {               // shown on the Contact, Terms, Privacy and Refund pages (Razorpay requires these)
     name: 'Sankhyas',
-    email: '',
+    email: 'connect@sankhyas.com',
     phone: '',
-    address: ''
+    address: '',
+    instagram: 'sankhyas.co'   // Instagram handle
   }
 };
