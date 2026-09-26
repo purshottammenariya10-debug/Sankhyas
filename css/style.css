@@ -377,3 +377,7 @@ table.data.ai-table th.l, table.data.ai-table td.l { text-align: left; }
 .ai-head { flex-wrap: wrap; }
 .ai-engine-ctl .btn { white-space: normal; text-align: left; }
 @media (max-width: 720px) { .ai-engine-ctl { margin-left: 0; width: 100%; } }
+.ai-progress { display: flex; flex-direction: column; gap: 6px; }
+.ai-progress-bar { height: 6px; border-radius: 3px; background: var(--bg-3); overflow: hidden; }
+.ai-progress-bar span { display: block; height: 100%; background: var(--primary); transition: width .3s; }
+.ai-consent { display: flex; flex-wrap: wrap; gap: 6px; }

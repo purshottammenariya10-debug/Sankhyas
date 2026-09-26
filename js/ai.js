@@ -742,15 +742,106 @@
     return 'Could not get an answer from free Claude' + (m ? ' (' + m.slice(0, 120) + ')' : '') + '. Try again or use "Ask Claude ↗".';
   }
 
+  /* ---------- Sankhyas AI on-device: an open-source model running in the visitor's browser ----------
+     WebLLM (https://webllm.mlc.ai) runs Qwen2.5 on the visitor's own GPU through WebGPU. Nothing is sent
+     to any AI service and it costs nothing; the model downloads once (cached by the browser) and then
+     works offline. It runs in a Web Worker so the page stays responsive. */
+  const WEBLLM = 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.85/+esm';
+  const DEVICE_MODELS = {
+    device: { id: 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC', size: 'about 1 GB', name: 'Lite' },
+    device_pro: { id: 'Qwen2.5-3B-Instruct-q4f16_1-MLC', size: 'about 2 GB', name: 'Pro' }
+  };
+  const hasWebGPU = () => typeof navigator !== 'undefined' && !!navigator.gpu;
+  const dev = { engine: null, model: null, loading: null, progress: null, accepted: {} };
+  function deviceEngine(modelId, onProgress) {
+    dev.progress = onProgress;
+    if (dev.engine && dev.model === modelId) return Promise.resolve(dev.engine);
+    if (dev.loading) return dev.loading.then(() => deviceEngine(modelId, onProgress), () => deviceEngine(modelId, onProgress));
+    dev.loading = (async () => {
+      const w = await import(WEBLLM);
+      const report = r => { if (dev.progress) dev.progress(r); };
+      if (!dev.engine) {
+        const src = 'import { WebWorkerMLCEngineHandler } from "' + WEBLLM + '";\nconst h = new WebWorkerMLCEngineHandler();\nself.onmessage = m => h.onmessage(m);';
+        const worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), { type: 'module' });
+        try { dev.engine = await w.CreateWebWorkerMLCEngine(worker, modelId, { initProgressCallback: report }); }
+        catch (e) { worker.terminate(); throw e; }
+      } else {
+        dev.model = null;
+        dev.engine.setInitProgressCallback && dev.engine.setInitProgressCallback(report);
+        await dev.engine.reload(modelId);
+      }
+      dev.model = modelId;
+      return dev.engine;
+    })();
+    const done = () => { dev.loading = null; };
+    dev.loading.then(done, done);
+    return dev.loading;
+  }
+  const DEVICE_SYSTEM = 'You are Sankhyas AI, the assistant of Sankhyas, an Indian stock research website. Answer the user\'s question helpfully and briefly. ' +
+    'For questions about companies or markets, rely on the DATA below and say when something is not in it. Money is in Rs crores and fiscal years end in March. ' +
+    'Use short paragraphs or bullets and **bold** key numbers. Never invent figures. No buy/sell advice or price targets: explain the evidence instead.';
+  async function deviceAsk(key, { data, turns, onText, onStatus, signal }) {
+    const m = DEVICE_MODELS[key];
+    const stopped = new Promise((_, rej) => signal.addEventListener('abort', () => rej({ code: 'cancelled' }), { once: true }));
+    stopped.catch(() => {});
+    const eng = await Promise.race([deviceEngine(m.id, r => onStatus && onStatus(r)), stopped]);
+    LS.set('device_ok_' + m.id, '1');
+    if (signal.aborted) throw { code: 'cancelled' };
+    const hist = turns.slice(-6).map(t => ({ role: t.role, content: t.content.slice(0, 1500) }));
+    while (hist.length && hist[0].role !== 'user') hist.shift();
+    const msgs = [{ role: 'system', content: DEVICE_SYSTEM + '\n\nDATA from Sankhyas:\n' + (data || 'No page data.').slice(0, 6000) }].concat(hist);
+    const stop = () => { try { eng.interruptGenerate(); } catch (e) { /* ignore */ } };
+    signal.addEventListener('abort', stop, { once: true });
+    let text = '';
+    try {
+      const chunks = await eng.chat.completions.create({ messages: msgs, stream: true, temperature: 0.3, max_tokens: 700 });
+      for await (const c of chunks) {
+        const d = c.choices && c.choices[0] && c.choices[0].delta && c.choices[0].delta.content;
+        if (d) { text += d; onText(text); }
+      }
+    } catch (e) { throw Object.assign({ text }, e && typeof e === 'object' ? e : { message: String(e) }); }
+    finally { signal.removeEventListener('abort', stop); }
+    if (signal.aborted) throw { code: 'cancelled', text };
+    if (!text.trim()) throw { code: 'empty', message: 'The model returned an empty answer.' };
+    return text;
+  }
+  function deviceError(e) {
+    const m = String((e && (e.message || e.name)) || e || '');
+    if (/webgpu|adapter|navigator\.gpu|shader-f16|f16/i.test(m)) return 'This browser or device can\'t run on-device AI (it needs WebGPU: a recent Chrome or Edge on a laptop, desktop or newer Android phone). Use Built-in or Free Claude instead.';
+    if (/memory|oom|device (was )?lost|allocation/i.test(m)) return 'Your device ran out of graphics memory. Try the Lite model, close other tabs, or use Built-in.';
+    if (/fetch|network|load|import|failed to|cache/i.test(m)) return 'The on-device model could not be downloaded. Check your connection and ask again: finished parts are kept.';
+    return 'On-device AI hit a problem' + (m ? ' (' + m.slice(0, 120) + ')' : '') + '. Try again, or use Built-in.';
+  }
+  const deviceProgress = r => {
+    const pct = Math.max(0, Math.min(100, Math.round((r && r.progress || 0) * 100)));
+    return '<div class="ai-progress"><div class="ai-progress-bar"><span style="width:' + pct + '%"></span></div>' +
+      '<span class="sub">' + esc(pct < 100 ? 'Loading Sankhyas AI on your device… ' + pct + '% (one-time download, cached for next time)' : 'Starting Sankhyas AI…') + '</span></div>';
+  };
+  const deviceEngineDef = key => ({
+    label: 'Sankhyas AI on-device · ' + DEVICE_MODELS[key].name + ' (' + DEVICE_MODELS[key].size.replace('about ', '~') + ')',
+    badge: 'Sankhyas AI · on-device',
+    thinking: 'Sankhyas AI is thinking…',
+    ask: o => deviceAsk(key, o), err: e => deviceError(e), progress: deviceProgress,
+    consent: {
+      ok: () => !!LS.get('device_ok_' + DEVICE_MODELS[key].id) || dev.model === DEVICE_MODELS[key].id || !!dev.accepted[key],
+      accept: () => { dev.accepted[key] = true; },
+      text: 'Sankhyas AI runs fully on your device: free, private and nothing is sent to any AI service. The first time, it downloads ' +
+        DEVICE_MODELS[key].size + ' (use Wi-Fi). After that it loads from your browser\'s cache.'
+    },
+    note: 'Sankhyas AI running on your own device (open-source Qwen2.5 via WebLLM). Free and private: your questions never leave this browser. It can be wrong. Not investment advice.'
+  });
+
   /* engine choice: 'builtin' (default), 'claude' (claude.ai view) or 'puter' (public site) */
   const ENGINES = {
+    device: deviceEngineDef('device'),
+    device_pro: deviceEngineDef('device_pro'),
     builtin: { label: 'Built-in', badge: 'Free', note: 'Built-in analysis generated instantly in your browser from Sankhyas data. Free, rule-based, and it can be wrong. Not investment advice.' },
     claude: { label: 'Claude (ask anything)', badge: 'Claude', thinking: 'Claude is thinking…', ask: o => claudeAsk(o), err: e => claudeError(e),
       note: 'Answers by Claude on your own Claude account, with Sankhyas data as context. It can be wrong. Not investment advice.' },
     puter: { label: 'Free Claude (ask anything)', badge: 'Claude · free', thinking: 'Asking free Claude… (sign in to Puter if a pop-up opens)', ask: o => puterAsk(o), err: e => puterError(e),
       note: 'Answers by Claude through Puter.js: free with a Puter account, no API key. Your question and this page\'s data are sent to Puter. It can be wrong. Not investment advice.' }
   };
-  const engines = () => ['builtin'].concat(claude.available() ? ['claude'] : [], inClaudeView ? [] : ['puter']);
+  const engines = () => ['builtin'].concat(!inClaudeView && hasWebGPU() ? ['device', 'device_pro'] : [], claude.available() ? ['claude'] : [], inClaudeView ? [] : ['puter']);
   const engine = () => { const e = LS.get('ai_engine'); return engines().indexOf(e) > 0 ? e : 'builtin'; };
 
   function claudeError(e) {
@@ -820,16 +911,27 @@
       if (!q || ctl) return;
       const intro = log.querySelector('.ai-intro');
       if (intro) intro.remove();
-      bubble('user', esc(q));
+      const mine = bubble('user', esc(q));
       const out = bubble('assistant', '');
-      btn.textContent = 'Stop'; btn.classList.remove('btn-primary'); ta.value = ''; autosize();
+      ta.value = ''; autosize();
       const eng = ENGINES[engine()];
+      if (eng.consent && !eng.consent.ok()) {
+        out.innerHTML = '<p>' + esc(eng.consent.text) + '</p><p class="ai-consent"><button type="button" class="btn btn-primary btn-small" data-go>Download and ask</button> ' +
+          '<button type="button" class="btn btn-small" data-no>Not now</button></p>';
+        out.querySelector('[data-no]').onclick = () => { out.innerHTML = '<p class="sub">Not downloaded. Pick Built-in or Free Claude in the menu above for an answer without a download.</p>'; };
+        out.querySelector('[data-go]').onclick = () => { eng.consent.accept(); mine.remove(); out.remove(); send(q); };
+        scroll();
+        return;
+      }
+      btn.textContent = 'Stop'; btn.classList.remove('btn-primary');
       if (eng.ask) {
         turns.push({ role: 'user', content: q });
         ctl = new AbortController();
+        const myCtl = ctl;
         out.innerHTML = '<span class="ai-thinking">' + esc(eng.thinking) + '</span>';
         try {
-          const text = await eng.ask({ data: dataOf(), turns: turns.slice(-12), signal: ctl.signal, onText: t => { out.innerHTML = md(t); scroll(); } });
+          const text = await eng.ask({ data: dataOf(), turns: turns.slice(-12), signal: ctl.signal, onText: t => { out.innerHTML = md(t); scroll(); },
+            onStatus: r => { if (eng.progress && ctl === myCtl) { out.innerHTML = eng.progress(r); scroll(); } } });
           out.innerHTML = md(text);
           turns.push({ role: 'assistant', content: text });
         } catch (e) {
