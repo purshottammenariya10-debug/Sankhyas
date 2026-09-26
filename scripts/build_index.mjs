@@ -39,7 +39,11 @@ if (fs.existsSync(universeFile)) {
 }
 const LISTING_WINDOW_DAYS = 5 * 365;
 function listingInfo(sym, j) {
-  const listed = (universe[sym] && universe[sym].listed) || j.listed;
+  // listing date: NSE's lists, else the first day of Yahoo's price history when that history is
+  // shorter than the 10 years we download (newly listed, SME and BSE-only companies)
+  const first = j.prices.dates[0];
+  const young = first && Date.now() - Date.parse(first) < 9.8 * 365 * 864e5 ? first : '';
+  const listed = (universe[sym] && universe[sym].listed) || j.listed || young;
   if (!listed || Date.now() - Date.parse(listed) > LISTING_WINDOW_DAYS * 864e5) return {};
   const dates = j.prices.dates, close = j.prices.close;
   const i = dates.findIndex(d => d >= listed);

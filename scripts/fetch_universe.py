@@ -47,7 +47,7 @@ def parse_nse_csv(text):
 def listing_date(s):
     """'06-OCT-2008' -> '2008-10-06' ('' when missing or unparseable)."""
     import datetime as dt
-    for fmt in ("%d-%b-%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y"):
+    for fmt in ("%d-%b-%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%d-%b-%y", "%d %b %Y", "%d/%m/%y", "%d-%B-%Y"):
         try:
             return dt.datetime.strptime((s or "").strip(), fmt).date().isoformat()
         except ValueError:
@@ -206,6 +206,8 @@ def main(argv=None):
         nse_rows = [{"symbol": c["symbol"], "name": c["name"], "isin": c.get("isin", ""), "listed": c.get("listed", "")} for c in prev if c["yahoo"].endswith(".NS") and not c.get("sme")]
         print(f"Using previous NSE list ({len(nse_rows)} companies)")
     sme_rows = fetch_nse_csv(NSE_SME_CSV, "NSE Emerge SME list")
+    if sme_rows:
+        print(f"  SME sample: {sme_rows[0]} ({sum(1 for r in sme_rows if r.get('listed'))} with listing dates)")
     if not sme_rows:
         sme_rows = [{"symbol": c["symbol"], "name": c["name"], "isin": c.get("isin", ""), "listed": c.get("listed", "")} for c in prev if c.get("sme")]
         print(f"Using previous SME list ({len(sme_rows)} companies)")
