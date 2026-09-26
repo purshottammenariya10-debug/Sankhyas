@@ -3,6 +3,7 @@
 
 Sources:
   - NSE equity list (EQUITY_L.csv): symbol, name, ISIN for every NSE-listed company.
+  - NSE Emerge SME list (SME_EQUITY_L.csv): companies on NSE's SME platform (flagged "sme").
   - BSE active scrip list: BSE code, name, ISIN, industry for every BSE-listed equity.
   - Yahoo Finance equity screener (region India, exchanges NSI and BSE): every Indian company
     Yahoo covers. This fills in BSE-only companies when BSE's own list is blocked (it refuses
@@ -27,18 +28,40 @@ from exchange import BSE_API, bse_session, fetch_text, nse_session
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "data" / "universe.json"
 NSE_EQUITY_CSV = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
+NSE_SME_CSV = "https://nsearchives.nseindia.com/emerge/corporates/content/SME_EQUITY_L.csv"
 
 
 def parse_nse_csv(text):
     rows = []
     reader = csv.DictReader(io.StringIO(text))
     for r in reader:
-        r = {k.strip().upper(): (v or "").strip() for k, v in r.items() if k}
+        r = {k.strip().upper().replace("_", " "): (v or "").strip() for k, v in r.items() if k}
         sym = r.get("SYMBOL")
         if not sym or r.get("SERIES", "EQ") not in ("EQ", "BE", "BZ", "SM", "ST"):
             continue
         rows.append({"symbol": sym, "name": r.get("NAME OF COMPANY") or sym, "isin": r.get("ISIN NUMBER", "")})
     return rows
+
+
+def fetch_nse_csv(url, label):
+    """Download an NSE archive CSV directly, then through a primed NSE session."""
+    try:
+        rows = parse_nse_csv(fetch_text(url))
+        print(f"{label}: {len(rows)} companies")
+        return rows
+    except Exception as e:  # noqa: BLE001
+        print(f"{label} (direct) failed:", e, file=sys.stderr)
+    nse = nse_session()
+    if not nse:
+        print("NSE refused a session (its website often blocks cloud servers)", file=sys.stderr)
+        return []
+    try:
+        rows = parse_nse_csv(nse.get(url, expect_json=False).text)
+        print(f"{label}: {len(rows)} companies")
+        return rows
+    except Exception as e:  # noqa: BLE001
+        print(f"{label} failed:", e, file=sys.stderr)
+        return []
 
 
 def parse_bse_list(payload):
@@ -67,8 +90,11 @@ def merge(nse_rows, bse_rows, include_bse_only=True):
     out, seen_isin = [], set()
     for r in nse_rows:
         b = by_isin.get(r["isin"], {})
-        out.append({"symbol": r["symbol"], "name": r["name"], "isin": r["isin"], "bse": b.get("bse", ""),
-                    "industry": b.get("industry", ""), "yahoo": r["symbol"] + ".NS"})
+        e = {"symbol": r["symbol"], "name": r["name"], "isin": r["isin"], "bse": b.get("bse", ""),
+             "industry": b.get("industry", ""), "yahoo": r["symbol"] + ".NS"}
+        if r.get("sme"):
+            e["sme"] = True
+        out.append(e)
         if r["isin"]:
             seen_isin.add(r["isin"])
     if include_bse_only:
@@ -118,6 +144,17 @@ def yahoo_listing(max_rows=20000):
     return list(out.values())
 
 
+def fix_sme_tickers(companies, listing):
+    """Yahoo may list NSE SME stocks under a different ticker; match by name when SYMBOL.NS is unknown."""
+    tickers = {y["ticker"] for y in listing}
+    by_name = {norm_name(y["name"]): y["ticker"] for y in listing if y["ticker"].endswith(".NS")}
+    for c in companies:
+        if c.get("sme") and c["yahoo"] not in tickers:
+            t = by_name.get(norm_name(c["name"]))
+            if t:
+                c["yahoo"] = t
+
+
 def add_yahoo(companies, listing):
     """Add Yahoo-listed companies the exchange lists missed (mostly BSE-only ones)."""
     have_sym = {c["symbol"] for c in companies}
@@ -150,25 +187,17 @@ def main(argv=None):
     previous = json.loads(OUT.read_text()) if OUT.exists() else {"companies": []}
     prev = previous.get("companies", [])
 
-    nse_rows = []
-    # the archive server usually answers without website cookies; try it first, then via a primed session
-    try:
-        nse_rows = parse_nse_csv(fetch_text(NSE_EQUITY_CSV))
-        print(f"NSE equity list: {len(nse_rows)} companies")
-    except Exception as e:  # noqa: BLE001
-        print("NSE equity list (direct) failed:", e, file=sys.stderr)
-        nse = nse_session()
-        if not nse:
-            print("NSE refused a session (its website often blocks cloud servers)", file=sys.stderr)
-        else:
-            try:
-                nse_rows = parse_nse_csv(nse.get(NSE_EQUITY_CSV, expect_json=False).text)
-                print(f"NSE equity list: {len(nse_rows)} companies")
-            except Exception as e2:  # noqa: BLE001
-                print("NSE equity list failed:", e2, file=sys.stderr)
+    nse_rows = fetch_nse_csv(NSE_EQUITY_CSV, "NSE equity list")
     if not nse_rows:
-        nse_rows = [{"symbol": c["symbol"], "name": c["name"], "isin": c.get("isin", "")} for c in prev if c["yahoo"].endswith(".NS")]
+        nse_rows = [{"symbol": c["symbol"], "name": c["name"], "isin": c.get("isin", "")} for c in prev if c["yahoo"].endswith(".NS") and not c.get("sme")]
         print(f"Using previous NSE list ({len(nse_rows)} companies)")
+    sme_rows = fetch_nse_csv(NSE_SME_CSV, "NSE Emerge SME list")
+    if not sme_rows:
+        sme_rows = [{"symbol": c["symbol"], "name": c["name"], "isin": c.get("isin", "")} for c in prev if c.get("sme")]
+        print(f"Using previous SME list ({len(sme_rows)} companies)")
+    main_syms = {r["symbol"] for r in nse_rows}
+    nse_rows += [dict(r, sme=True) for r in sme_rows if r["symbol"] not in main_syms]
+
 
     bse_rows = []
     try:
@@ -188,6 +217,8 @@ def main(argv=None):
             listing = yahoo_listing()
             if args.nse_only:
                 listing = [y for y in listing if y["ticker"].endswith(".NS")]
+            if listing:
+                fix_sme_tickers(companies, listing)
             print(f"Yahoo listing added {add_yahoo(companies, listing)} companies missing from the exchange lists")
         except Exception as e:  # noqa: BLE001
             print("Yahoo screener listing failed:", e, file=sys.stderr)
@@ -206,7 +237,8 @@ def main(argv=None):
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps({"companies": companies}, separators=(",", ":")))
     nse_n = sum(1 for c in companies if c["yahoo"].endswith(".NS"))
-    print(f"Universe: {len(companies)} companies ({nse_n} on NSE, {len(companies) - nse_n} BSE-only) -> {OUT}")
+    sme_n = sum(1 for c in companies if c.get("sme"))
+    print(f"Universe: {len(companies)} companies ({nse_n} on NSE incl. {sme_n} SME, {len(companies) - nse_n} BSE-only) -> {OUT}")
     return 0
 
 

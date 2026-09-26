@@ -275,7 +275,7 @@
     app.innerHTML =
       '<div class="company-head" id="top"><div class="container">' +
       '<div class="company-title"><div>' +
-      '<h1>' + esc(c.name) + '</h1>' +
+      '<h1>' + esc(c.name) + (c.sme ? ' <span class="sme-badge" title="Listed on the NSE Emerge SME platform">SME</span>' : '') + '</h1>' +
       '<div class="company-links">' +
       (c.website ? '<a href="https://' + esc(c.website) + '" target="_blank" rel="noopener">🔗 ' + esc(c.website) + '</a>' : '') +
       (c.exchange === 'BSE' ? '<span>BSE: ' + esc(c.bseCode || c.symbol) + '</span>'

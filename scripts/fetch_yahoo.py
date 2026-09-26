@@ -182,6 +182,7 @@ def build_company(symbol, t, yahoo=None, meta=None):
         "yahoo": yahoo or symbol + ".NS",
         "bse": meta.get("bse") or None,
         "isin": meta.get("isin") or None,
+        "sme": True if meta.get("sme") else None,
         "name": info.get("longName") or info.get("shortName") or meta.get("name") or symbol,
         "sector": info.get("sector"),
         "industry": info.get("industry") or meta.get("industry") or None,

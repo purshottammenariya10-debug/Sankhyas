@@ -326,6 +326,7 @@
     out.metrics = computeMetrics(out, {
       pledged: c.promoter > 0 ? round(Math.max(0, gauss(rng(hash(sym + 'pl'))) * 2), 2) : 0
     });
+    out.metrics.sme = 0;
     cache[key] = out;
     return out;
   }
@@ -486,6 +487,8 @@
     };
     out.ttm = computeTTM(out);
     out.metrics = computeMetrics(out, { quote: qt });
+    out.metrics.sme = j.sme ? 1 : 0;
+    out.sme = !!j.sme;
     out.lastQuarter = out.quarters[out.quarters.length - 1] || '';
     return out;
   }
@@ -512,7 +515,7 @@
       if (liveMeta.liveOnly) { base.length = 0; Object.keys(bySymbol).forEach(k => delete bySymbol[k]); }
       (idx.companies || []).forEach(e => {
         const c = {
-          symbol: e.s, name: e.n || e.s, sector: e.sec || 'Others', industry: e.ind || '', bseCode: e.bse || '', exchange: e.ex || 'NSE', isin: e.isin || '',
+          symbol: e.s, name: e.n || e.s, sector: e.sec || 'Others', industry: e.ind || '', bseCode: e.bse || '', exchange: e.ex || 'NSE', sme: !!(e.m && e.m.sme), isin: e.isin || '',
           live: true, summary: true, lastQuarter: e.q || '', updated: idx.updated, metrics: e.m || {}
         };
         summaries[c.symbol] = c;
