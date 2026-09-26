@@ -36,6 +36,14 @@ const dealsFile = path.join(root, 'data', 'deals', 'deals.json');
 let deals = [];
 try { if (fs.existsSync(dealsFile)) deals = JSON.parse(fs.readFileSync(dealsFile, 'utf8')).deals || []; } catch (e) { deals = []; }
 const dealsBy = {};
+const salesBy = {};
+// an order value read from a filing PDF is dropped when it is implausible for the company's size
+// (usually an order-book total or another figure picked up by mistake)
+function plausibleOrder(amt, sales) {
+  if (amt == null || !Number.isFinite(amt) || amt <= 0) return null;
+  if (Number.isFinite(sales) && sales > 0 && amt > 2.5 * sales) return null;
+  return amt;
+}
 deals.forEach(x => { (dealsBy[x.s] = dealsBy[x.s] || []).push(x); });
 
 // listing dates (NSE equity and SME lists) for the IPO & new listings hub
@@ -77,7 +85,7 @@ for (const f of files) {
         const wins = (filings.announcements || []).filter(a => a.k === 'order' && a.d >= yearAgo);
         if (wins.length) {
           c.metrics.orderWins12m = wins.length;
-          const amt = wins.reduce((t, a) => t + (a.amt || 0), 0);
+          const amt = wins.reduce((t, a) => t + (plausibleOrder(a.amt, c.metrics.sales) || 0), 0);
           if (amt) c.metrics.orders12m = amt;
         }
         c.metrics.riskScore = Insights.redFlags(c, filings).score;
@@ -85,6 +93,7 @@ for (const f of files) {
         if (g.score != null) c.metrics.guidanceScore = g.score;
       } catch (e) { /* keep the numbers-only score */ }
     }
+    salesBy[c.symbol] = c.metrics.sales;
     const m = {};
     for (const k of KEYS) { const v = round(c.metrics[k]); if (v != null) m[k] = v; }
     companies.push(Object.assign({ s: c.symbol, n: c.name, sec: c.sector, ind: c.industry, bse: c.bseCode || undefined, ex: c.exchange === 'BSE' ? 'BSE' : undefined, isin: c.isin || undefined, q: c.lastQuarter || undefined, m },
@@ -173,7 +182,7 @@ if (fs.existsSync(filingsDir)) {
       try { doc = JSON.parse(fs.readFileSync(path.join(filingsDir, f), 'utf8')); } catch (e) { continue; }
       const sym = doc.symbol || f.replace(/\.json$/, '');
       for (const a of doc.announcements || []) {
-        if (a.k === 'order' && a.d >= since) orders.push({ s: sym, n: names[sym] || sym, d: a.d, amt: a.amt || null, cust: a.cust || '', desc: a.desc || '', u: a.u });
+        if (a.k === 'order' && a.d >= since) orders.push({ s: sym, n: names[sym] || sym, d: a.d, amt: plausibleOrder(a.amt, salesBy[sym]), cust: a.cust || '', desc: a.desc || '', u: a.u });
         else if ((a.k === 'insider' || a.k === 'sast') && a.d >= since2) disclosures.push({ s: sym, n: names[sym] || sym, d: a.d, k: a.k, dir: a.dir || '', t: String(a.t).slice(0, 200), u: a.u });
       }
     }
