@@ -137,6 +137,7 @@ def annual_block(t):
         "receivables": align(bcols, bget("Accounts Receivable", "Receivables")),
         "inventory": align(bcols, bget("Inventory")),
         "payables": align(bcols, bget("Accounts Payable", "Payables")),
+        "sharesOut": align(bcols, bget("Ordinary Shares Number", "Share Issued")),   # crore shares
         "cfo": cfo, "cfi": cfi, "cff": cff, "net": net,
         "dividendsPaid": align(ccols, cget("Cash Dividends Paid", "Common Stock Dividend Paid")),
     })

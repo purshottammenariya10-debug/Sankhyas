@@ -327,6 +327,7 @@
       pledged: c.promoter > 0 ? round(Math.max(0, gauss(rng(hash(sym + 'pl'))) * 2), 2) : 0
     });
     out.metrics.sme = 0;
+    if (window.Insights) out.metrics.riskScore = window.Insights.redFlags(out).score;
     cache[key] = out;
     return out;
   }
@@ -441,6 +442,7 @@
     const shares = qt.shares || known.shares || null;
     const pl = {};
     ['sales', 'expenses', 'op', 'otherIncome', 'interest', 'depreciation', 'pbt', 'tax', 'np', 'eps'].forEach(k => { pl[k] = col(a, k); });
+    const sharesOut = col(a, 'sharesOut');
     pl.opm = pl.op.map((v, i) => div(v, pl.sales[i]) != null ? v / pl.sales[i] * 100 : null);
     pl.payout = col(a, 'dividendsPaid').map((d, i) => (d != null && pl.np[i] > 0 ? Math.abs(d) / pl.np[i] * 100 : null));
     pl.eps = pl.eps.map((v, i) => (v != null ? v : div(pl.np[i], shares)));
@@ -481,7 +483,7 @@
       psu: !!known.psu, promoter: ins || 0, shares, about: j.about || '',
       standalone: false, live: true, updated: j.updated,
       years: a.periods, quarters: qq.periods, shQuarters: ['Latest'],
-      pl, bs, cf, ratios, q, sh,
+      pl, bs, cf, ratios, q, sh, sharesOut,
       docs: { announcements: [], reports: [], ratings: [], concalls: [] },
       prices: px.close, volume: px.volume.map(v => v || 0), dates: px.dates.map(d => new Date(d + 'T00:00:00'))
     };
@@ -489,6 +491,7 @@
     out.metrics = computeMetrics(out, { quote: qt });
     out.metrics.sme = j.sme ? 1 : 0;
     out.sme = !!j.sme;
+    if (window.Insights) out.metrics.riskScore = window.Insights.redFlags(out).score;
     out.lastQuarter = out.quarters[out.quarters.length - 1] || '';
     return out;
   }

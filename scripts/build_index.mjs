@@ -19,7 +19,9 @@ const ctx = { window: {}, console };
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(path.join(root, 'js/data.js'), 'utf8'), ctx);
 vm.runInContext(fs.readFileSync(path.join(root, 'js/screener.js'), 'utf8'), ctx);
-const { Data, Screener } = ctx.window;
+vm.runInContext(fs.readFileSync(path.join(root, 'js/insights.js'), 'utf8'), ctx);
+const { Data, Screener, Insights } = ctx.window;
+const filingsDir = path.join(root, 'data', 'filings');
 
 const KEYS = Screener.RATIOS.map(r => r.key).concat(['change', 'changePct', 'qtrOp', 'qtrOpm', 'qtrEps', 'avgVolume']);
 const round = v => (v == null || !Number.isFinite(v) ? null : Number(v.toPrecision(6)));
@@ -33,6 +35,15 @@ for (const f of files) {
     const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
     if (!j.prices || !j.prices.close || j.prices.close.length < 2) { skipped++; continue; }
     const c = Data._buildLive(j);
+    const ff = path.join(filingsDir, c.symbol + '.json');
+    if (fs.existsSync(ff)) {
+      try {
+        const filings = JSON.parse(fs.readFileSync(ff, 'utf8'));
+        c.metrics.riskScore = Insights.redFlags(c, filings).score;
+        const g = Insights.guidance(c, filings);
+        if (g.score != null) c.metrics.guidanceScore = g.score;
+      } catch (e) { /* keep the numbers-only score */ }
+    }
     const m = {};
     for (const k of KEYS) { const v = round(c.metrics[k]); if (v != null) m[k] = v; }
     companies.push({ s: c.symbol, n: c.name, sec: c.sector, ind: c.industry, bse: c.bseCode || undefined, ex: c.exchange === 'BSE' ? 'BSE' : undefined, isin: c.isin || undefined, q: c.lastQuarter || undefined, m });

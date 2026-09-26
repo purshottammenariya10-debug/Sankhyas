@@ -415,3 +415,40 @@ table.data.ai-table th.l, table.data.ai-table td.l { text-align: left; }
 .ai-progress-bar span { display: block; height: 100%; background: var(--primary); transition: width .3s; }
 .ai-consent { display: flex; flex-wrap: wrap; gap: 6px; }
 .sme-badge { display: inline-block; vertical-align: middle; font-size: 12px; font-weight: 600; letter-spacing: .03em; color: var(--primary); background: var(--primary-bg); border-radius: 4px; padding: 2px 6px; margin-left: 6px; }
+/* Sankhyas Insights */
+.ins-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "risk changed" "guide guide"; gap: 20px; align-items: start; }
+.ins-risk { grid-area: risk; } .ins-changed { grid-area: changed; } .ins-guide { grid-area: guide; }
+.ins-card table.data th, .ins-card table.data td { padding: 6px 8px; font-size: 13px; }
+.ins-card td.l, .ins-card th.l { text-align: left; }
+.ins-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; min-width: 0; }
+.ins-card h4 { font-size: 14px; margin: 14px 0 6px; color: var(--ink-2); }
+.ins-card h4:first-of-type { margin-top: 4px; }
+.ins-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.ins-head h3 { margin: 0; font-size: 16px; }
+.pro-tag { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; color: var(--primary); background: var(--primary-bg); border-radius: 4px; padding: 2px 6px; }
+.risk-meter { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+.risk-score b { font-size: 34px; line-height: 1; }
+.risk-score span { color: var(--ink-3); font-size: 14px; }
+.risk-band { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+.risk-bar { width: 150px; height: 6px; border-radius: 3px; background: var(--bg-3); overflow: hidden; }
+.risk-bar span { display: block; height: 100%; }
+.risk-low .risk-bar span { background: var(--green); } .risk-low .risk-band { color: var(--green); }
+.risk-mid .risk-bar span { background: #d99a1a; } .risk-mid .risk-band { color: #b7800f; }
+.risk-high .risk-bar span { background: var(--red); } .risk-high .risk-band { color: var(--red); }
+.flag-list { list-style: none; margin: 0; padding: 0; font-size: 13.5px; }
+.flag-list li { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line-2); }
+.flag-list .sub { font-size: 12.5px; margin-top: 2px; }
+.sev { flex: none; width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; }
+.sev-high { background: var(--red); } .sev-medium { background: #d99a1a; } .sev-low { background: var(--ink-3); }
+.gd-score { font-size: 14px; margin-bottom: 10px; } .gd-score b { font-size: 20px; color: var(--primary); }
+.gd-table td, .gd-table th { font-size: 13px; }
+.gd { display: inline-block; font-size: 11.5px; font-weight: 600; border-radius: 4px; padding: 2px 6px; white-space: nowrap; }
+.gd-delivered, .gd-beat { color: var(--green); background: var(--green-bg); }
+.gd-missed { color: var(--red); background: var(--red-bg); }
+.gd-nearly { color: #b7800f; background: var(--yellow-bg); }
+.gd-pending, .gd-long-term, .gd-not-tracked { color: var(--ink-2); background: var(--bg-3); }
+.chg-list { margin: 0; padding-left: 18px; font-size: 13.5px; } .chg-list li { margin-bottom: 6px; }
+.mv { font-size: 11px; font-weight: 600; border-radius: 4px; padding: 1px 5px; background: var(--bg-3); color: var(--ink-2); }
+.mv-raised, .mv-new { color: var(--green); background: var(--green-bg); }
+.mv-lowered, .mv-not-repeated { color: var(--red); background: var(--red-bg); }
+@media (max-width: 900px) { .ins-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "risk" "changed" "guide"; } }

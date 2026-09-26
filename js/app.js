@@ -147,7 +147,7 @@
       if (existing) { existing.remove(); return; }
       const dd = document.createElement('div');
       dd.className = 'dropdown';
-      dd.innerHTML = '<a href="#/watchlist">Watchlist</a><a href="#/screens">My screens</a><a href="#/premium">Premium</a><button id="logout-btn">Logout</button>';
+      dd.innerHTML = '<a href="#/watchlist">Watchlist</a><a href="#/screens">My screens</a><a href="#/premium">Sankhyas Pro</a><button id="logout-btn">Logout</button>';
       $('.user-menu').appendChild(dd);
       $('#logout-btn').onclick = () => { store.set('user', null); renderAuth(); toast('Logged out'); location.hash = '#/'; };
       setTimeout(() => document.addEventListener('click', () => dd.remove(), { once: true }));
@@ -237,7 +237,7 @@
 
   /* ---------- Company ---------- */
   const COMPANY_SECTIONS = [
-    ['top', 'Summary'], ['ai', 'AI Analyst'], ['chart', 'Chart'], ['analysis', 'Analysis'], ['peers', 'Peers'], ['quarters', 'Quarters'],
+    ['top', 'Summary'], ['ai', 'AI Analyst'], ['insights', 'Insights'], ['chart', 'Chart'], ['analysis', 'Analysis'], ['peers', 'Peers'], ['quarters', 'Quarters'],
     ['profit-loss', 'Profit & Loss'], ['balance-sheet', 'Balance Sheet'], ['cash-flow', 'Cash Flow'], ['ratios', 'Ratios'],
     ['shareholding', 'Investors'], ['documents', 'Documents']
   ];
@@ -293,7 +293,7 @@
       COMPANY_SECTIONS.map(s => '<a href="" data-target="' + s[0] + '">' + esc(s[1]) + '</a>').join('') + '</div></div>' +
       '</div>' +
       '<div class="container page">' +
-      summarySection(c) + aiSection(c) + chartSection(c) + analysisSection(c) + peersSection(c) + quartersSection(c) +
+      summarySection(c) + aiSection(c) + insightsSection(c) + chartSection(c) + analysisSection(c) + peersSection(c) + quartersSection(c) +
       plSection(c) + bsSection(c) + cfSection(c) + ratiosSection(c) + shareholdingSection(c) + documentsSection(c) + notesSection(c) +
       '</div>';
 
@@ -342,6 +342,7 @@
         tmp.innerHTML = documentsSection(c, f);
         $('#documents').replaceWith(tmp.firstChild);
         bindDocuments();
+        refreshInsights(c);
       });
     }
     bindNotes(c);
@@ -404,6 +405,66 @@
   }
 
   /* AI analyst */
+  /* ---------- Sankhyas Insights: red flags, guidance tracker, what changed ---------- */
+  const PRO_TAG = '<span class="pro-tag" title="Sankhyas Pro feature, free during beta">PRO</span>';
+  const signed = (v, unit) => (v == null || !isFinite(v) ? '<span class="muted">-</span>' : '<span class="' + (v >= 0 ? 'up' : 'down') + '">' + (v >= 0 ? '+' : '') + num(v, 1) + unit + '</span>');
+  function riskCard(c) {
+    const r = Insights.redFlags(c);
+    const cls = r.band === 'High' ? 'risk-high' : r.band === 'Moderate' ? 'risk-mid' : 'risk-low';
+    return '<div class="ins-card ins-risk"><div class="ins-head"><h3>Red-flag scan</h3>' + PRO_TAG + '</div>' +
+      '<div class="risk-meter ' + cls + '"><div class="risk-score"><b>' + r.score + '</b><span>/100</span></div><div><div class="risk-band">' + r.band + ' risk</div>' +
+      '<div class="risk-bar"><span style="width:' + Math.max(3, r.score) + '%"></span></div></div></div>' +
+      (r.flags.length ? '<ul class="flag-list">' + r.flags.map(f => '<li><span class="sev sev-' + f.sev + '" title="' + f.sev + ' severity"></span><div><b>' + esc(f.title) + '</b>' +
+        (f.src ? ' <a class="sub" target="_blank" rel="noopener noreferrer" href="' + esc(f.src) + '">filing ↗</a>' : '') + '<div class="sub">' + esc(f.detail) + '</div></div></li>').join('') + '</ul>'
+        : '<p class="muted">No red flags found in the financials' + (r.checked ? ' or the last 2 years of filings' : '') + '.</p>') +
+      '<p class="table-note">Checks cash conversion, debt, receivables, dilution, tax, other income' + (r.checked ? ', and filings for auditor exits, pledges, defaults, downgrades and regulatory action.' : '. Filing checks run once this company\'s exchange filings are fetched.') + ' Higher = more warning signs; not a verdict.</p></div>';
+  }
+  function guidanceCard(c) {
+    const g = Insights.guidance(c);
+    const badge = s => '<span class="gd gd-' + s.toLowerCase().replace(/\s+/g, '-') + '">' + esc(s) + '</span>';
+    const body = g.rows.length
+      ? '<div class="table-wrap"><table class="data gd-table"><thead><tr><th class="l">Guided</th><th class="l">For</th><th>Target</th><th>Actual</th><th>Status</th></tr></thead><tbody>' +
+        g.rows.slice(0, 12).map(r => '<tr><td class="l" title="' + esc(r.t) + '">' + esc(r.label) + '<div class="sub">said ' + new Date(r.said).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) +
+          (r.move ? ' &middot; ' + esc(r.move) : '') + '</div></td><td class="l">' + esc(r.p) + '</td><td>' + esc(r.target) + '</td><td>' +
+          (r.actual != null ? num(r.actual, 1) + '%' : r.runRate != null ? '<span class="sub">run-rate</span> ' + num(r.runRate, 1) + '%' : '<span class="muted">-</span>') + '</td><td>' + badge(r.status) + '</td></tr>').join('') +
+        '</tbody></table></div><p class="table-note">Targets are read from concall transcripts (hover a row for the exact words). Actuals come from the annual results; "run-rate" is the latest quarter vs a year ago.</p>'
+      : '<p class="muted">No numeric guidance extracted yet. It appears automatically once ' + esc(c.name) + '\'s concall transcripts are fetched and summarised.</p>';
+    return '<div class="ins-card ins-guide"><div class="ins-head"><h3>Guidance tracker</h3>' + PRO_TAG + '</div>' +
+      (g.score != null ? '<div class="gd-score"><b>' + g.score + '%</b> of checkable guidance delivered <span class="sub">(' + g.judged + ' target' + (g.judged === 1 ? '' : 's') + ' checked, ' + g.calls + ' call' + (g.calls === 1 ? '' : 's') + ')</span></div>' : '') +
+      body + '</div>';
+  }
+  function changedCard(c) {
+    const w = Insights.whatChanged(c);
+    let html = '';
+    if (w.results) {
+      html += '<h4>Results: ' + esc(w.results.quarter) + '</h4><div class="table-wrap"><table class="data"><thead><tr><th class="l"></th><th>Value</th><th>vs ' + esc(w.results.prev) + '</th><th>vs ' + esc(w.results.yago || 'year ago') + '</th></tr></thead><tbody>' +
+        w.results.rows.filter(r => r.cur != null && isFinite(r.cur)).map(r => '<tr><td class="l">' + esc(r.label) + '</td><td>' + (r.isPct ? num(r.cur, 1) + '%' : num(r.cur, r.label === 'EPS' ? 2 : 0)) + '</td><td>' +
+          signed(r.qoq, r.isPct ? ' pts' : '%') + '</td><td>' + signed(r.yoy, r.isPct ? ' pts' : '%') + '</td></tr>').join('') + '</tbody></table></div>';
+    }
+    if (w.concall) {
+      const cc = w.concall, mv = m => '<span class="mv mv-' + m.replace(/\s+/g, '-') + '">' + esc(m) + '</span>';
+      html += '<h4>Concall: ' + new Date(cc.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '</h4><ul class="chg-list">' +
+        '<li>Tone <b class="tone-' + esc(cc.tone).toLowerCase() + '">' + esc(cc.tone) + '</b>' + (cc.prevTone ? (cc.prevTone === cc.tone ? ', same as last call' : ', was <b class="tone-' + esc(cc.prevTone).toLowerCase() + '">' + esc(cc.prevTone) + '</b>') : '') + '</li>' +
+        cc.guidance.map(g => '<li>' + esc(g.label) + ' ' + esc(g.period) + ': <b>' + esc(g.target) + '</b> ' + mv(g.move) + (g.was && g.move !== 'maintained' ? ' <span class="sub">was ' + esc(g.was) + '</span>' : '') + '</li>').join('') +
+        cc.newRisks.slice(0, 3).map(x => '<li><span class="mv mv-lowered">new risk</span> ' + esc(x) + '</li>').join('') + '</ul>';
+    }
+    if (w.filings.length) {
+      html += '<h4>Important filings since</h4><ul class="chg-list">' + w.filings.map(a => '<li><span class="sub">' + docWhen(a.d) + '</span> <a target="_blank" rel="noopener noreferrer" href="' + esc(a.u) + '">' + esc(cleanTitle(a.t)) + '</a></li>').join('') + '</ul>';
+    }
+    return '<div class="ins-card ins-changed"><div class="ins-head"><h3>What changed</h3>' + PRO_TAG + '</div>' + (html || '<p class="muted">Not enough history yet to compare the latest quarter and concall with the previous ones.</p>') + '</div>';
+  }
+  function insightsSection(c) {
+    return '<section class="section card" id="insights"><div class="section-head"><div><h2>Sankhyas Insights</h2><p>Forensic red flags, management\'s promises vs delivery, and what changed this quarter. Free during beta.</p></div></div>' +
+      '<div class="ins-grid">' + riskCard(c) + guidanceCard(c) + changedCard(c) + '</div></section>';
+  }
+  function refreshInsights(c) {
+    const el = $('#insights');
+    if (!el) return;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = insightsSection(c);
+    el.replaceWith(tmp.firstChild);
+  }
+
   function aiSection(c) {
     return '<section class="section card" id="ai"><div id="ai-widget"></div></section>';
   }
@@ -417,6 +478,9 @@
       suggestions: [
         'Write a full research report: business snapshot, growth, profitability, balance sheet, cash flows, valuation, key risks and what to watch',
         'Explain the latest quarterly results',
+        'Any red flags?',
+        'What changed this quarter?',
+        'Has management delivered on its guidance?',
         'Summarise the latest concall',
         'Is the valuation reasonable versus its history and growth?',
         'Give me the bull case and the bear case',
@@ -1375,16 +1439,18 @@
   const pageRegister = (p, params) => authPage(true, params);
 
   function pagePremium() {
-    setTitle('Premium');
+    setTitle('Sankhyas Pro');
     const feat = (list) => '<ul style="padding-left:18px;font-size:14px">' + list.map(f => '<li style="margin-bottom:6px">' + f + '</li>').join('') + '</ul>';
-    app.innerHTML = '<div class="container page"><div style="text-align:center;margin-bottom:28px"><h1>Sankhyas Premium</h1><p class="muted">Do more with your research.</p></div>' +
+    app.innerHTML = '<div class="container page"><div style="text-align:center;margin-bottom:28px"><h1>Sankhyas Pro</h1><p class="muted">The AI that reads every concall, annual report and filing for you. All Pro features are free during beta.</p></div>' +
       '<div class="grid grid-2" style="max-width:820px;margin:0 auto">' +
       '<div class="card"><h2>Free</h2><p style="font-size:28px;font-weight:700;margin:0">₹ 0</p><p class="muted">forever</p>' +
-      feat(['10 years of financial data', 'Custom stock screens', 'Watchlist & feed', 'Export to Excel', 'Compare companies']) + '<a class="btn" href="#/register">Get started</a></div>' +
-      '<div class="card" style="border-color:var(--primary)"><h2>Premium</h2><p style="font-size:28px;font-weight:700;margin:0">₹ 4,999</p><p class="muted">per year</p>' +
-      feat(['Everything in Free', 'Unlimited saved screens & alerts', 'Custom ratios', 'Screen on quarterly history', 'Priority support']) + '<button class="btn btn-primary" id="buy">Upgrade</button></div>' +
+      feat(['Financials, ratios, charts and peers for every NSE, BSE and SME company', 'Custom stock screens in plain English', 'Sankhyas AI (built-in, on-device and Claude)', 'Watchlist, feed and compare', 'Export to Excel']) + '<a class="btn" href="#/register">Get started</a></div>' +
+      '<div class="card" style="border-color:var(--primary)"><h2>Pro ' + PRO_TAG + '</h2><p style="font-size:28px;font-weight:700;margin:0">₹ 2,499</p><p class="muted">per year, or ₹ 299 a month &middot; <b>free during beta</b></p>' +
+      feat(['<b>Red-flag scan</b>: forensic score from the financials and filings (auditor exits, pledges, defaults, downgrades)', '<b>Guidance tracker</b>: management\'s promises vs what it delivered',
+        '<b>What changed</b>: every quarter\'s results, concall tone, guidance and new risks vs the last one', 'AI summaries of concall transcripts, investor presentations and annual reports',
+        'Screens on red-flag score and guidance delivery (e.g. Clean Compounders)']) + '<button class="btn btn-primary" id="buy">Use Pro free during beta</button></div>' +
       '</div></div>';
-    $('#buy').onclick = () => toast('Premium is coming soon.');
+    $('#buy').onclick = () => { location.hash = '#/company/' + ((Data.listCompanies()[0] || {}).symbol || 'TCS'); toast('Pro features are free during beta: see Sankhyas Insights on any company page.'); };
   }
 
   function pageAbout() {

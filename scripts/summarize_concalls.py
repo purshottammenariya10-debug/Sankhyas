@@ -148,6 +148,116 @@ def summarize(text, per_topic=3):
     return {"tone": tone, "sections": picked, "words": len(text.split())}
 
 
+# ---------- guidance extraction: numeric targets management gives on the call ----------
+GUIDE_VERB = re.compile(r"guid|expect|target|aim|aspir|outlook|going forward|plan to|planning to|envisage|anticipat|confident|should (be|grow|see|reach|deliver)|"
+                        r"will (be|grow|reach|deliver|cross|achieve)|would (be|grow)|looking at|trying to|estimate|project|budget|endeavou?r|on track", re.I)
+GUIDE_METRICS = [
+    ("margin", re.compile(r"\b(ebitda|ebit|operating|op(erating)? profit|gross)\s*margins?\b|\bmargins?\b", re.I)),
+    ("pat_growth", re.compile(r"\b(pat|net profit|profit after tax|bottom ?line|earnings|eps)\b", re.I)),
+    ("revenue_growth", re.compile(r"\b(revenue|revenues|sales|top ?line|turnover|income from operations|business)\b", re.I)),
+    ("volume_growth", re.compile(r"\bvolumes?\b", re.I)),
+    ("capex", re.compile(r"\bcapex|capital expenditure\b", re.I)),
+    ("order_inflow", re.compile(r"\border (inflow|intake|book)\b", re.I)),
+]
+WORD_RANGE = [(r"high[- ]single[- ]digit", 7, 9), (r"mid[- ]single[- ]digit", 4, 6), (r"low[- ]single[- ]digit", 1, 3),
+              (r"low[- ]double[- ]digit|low[- ]teens", 10, 13), (r"mid[- ]teens", 14, 16), (r"high[- ]teens", 17, 19),
+              (r"double[- ]digit", 10, None), (r"low[- ]twenties", 20, 23), (r"mid[- ]twenties", 24, 26)]
+NUM = r"(\d{1,3}(?:\.\d+)?)"
+PCT = r"\s*(?:%|percent|per cent)"
+RANGE_PCT = re.compile(NUM + r"\s*(?:%|percent|per cent)?\s*(?:-|–|to)\s*" + NUM + PCT, re.I)
+ONE_PCT = re.compile(r"(?:(at least|over|more than|above|around|about|~|approximately|close to|upwards of)\s*)?" + NUM + PCT + r"(\s*(?:\+|plus|and above))?", re.I)
+CRORE = re.compile(r"(?:rs\.?|inr|₹)?\s*(\d[\d,]*(?:\.\d+)?)\s*(crore|cr\b|billion|bn\b)", re.I)
+PERIOD_FY = re.compile(r"\b(?:fy|financial year|fiscal)\s*'?(\d{2}|\d{4})(?:\s*[-/]\s*(\d{2}))?\b", re.I)
+
+
+def call_fy(d):
+    """Fiscal year (ending March) a call on date d falls in, as the ending year: a Jul 2026 call is FY2027."""
+    y, m = int(d[:4]), int(d[5:7])
+    return y + 1 if m >= 4 else y
+
+
+def guidance_period(s, d):
+    m = PERIOD_FY.search(s)
+    if m:
+        a, b = m.group(1), m.group(2)
+        y = int(b) if b else int(a)
+        y = y + 2000 if y < 100 else y
+        return f"FY{y}"
+    t = s.lower()
+    fy = call_fy(d)
+    if re.search(r"next (year|fiscal|financial year)|coming year", t):
+        return f"FY{fy + 1}"
+    if re.search(r"this (year|fiscal|financial year)|current (year|fiscal)|full[- ]year|for the year", t):
+        return f"FY{fy}"
+    if re.search(r"medium[- ]term|long[- ]term|next (two|three|four|five|2|3|4|5) years|over the (next|coming) (few|couple)|cagr", t):
+        return "Medium term"
+    return f"FY{fy}"
+
+
+def guidance_value(s, metric):
+    """(low, high, unit) of the target in sentence s, or None."""
+    if metric in ("capex", "order_inflow"):
+        m = CRORE.search(s)
+        if not m:
+            return None
+        v = float(m.group(1).replace(",", ""))
+        if m.group(2).lower().startswith("b"):
+            v *= 100    # 1 billion rupees = 100 crore
+        return v, v, "cr"
+    m = RANGE_PCT.search(s)
+    if m:
+        lo, hi = float(m.group(1)), float(m.group(2))
+        if lo <= hi <= 100:
+            return lo, hi, "%"
+    for pat, lo, hi in WORD_RANGE:
+        if re.search(pat, s, re.I):
+            return float(lo), (float(hi) if hi is not None else None), "%"
+    m = ONE_PCT.search(s)
+    if m:
+        v = float(m.group(2))
+        if 0 < v <= 100:
+            open_up = bool(m.group(1) and re.match(r"at least|over|more than|above|upwards", m.group(1), re.I)) or bool(m.group(3))
+            return v, (None if open_up else v), "%"
+    return None
+
+
+def extract_guidance(text, d, limit=12):
+    """Numeric targets from a transcript: [{m: metric, lo, hi, u: unit, p: period, t: sentence}]."""
+    out, seen = [], set()
+    for s, in_qa, is_q in sentences(text):
+        if is_q or not (40 <= len(s) <= 400) or not GUIDE_VERB.search(s) or BOILERPLATE.search(s) and not re.search(r"guid", s, re.I):
+            continue
+        if re.search(r"\b(last|previous|during the|in the) (year|quarter)\b.*\b(was|were|grew|stood|reported)\b", s, re.I) and not re.search(r"expect|guid|target", s, re.I):
+            continue    # a reported number, not a target
+        metric = None
+        for name, pat in GUIDE_METRICS:
+            if pat.search(s):
+                metric = name
+                break
+        if not metric:
+            continue
+        if metric in ("revenue_growth", "pat_growth", "volume_growth") and not re.search(r"grow|growth|increase|cagr|expand|double[- ]digit|teens", s, re.I):
+            continue
+        val = guidance_value(s, metric)
+        if not val:
+            continue
+        lo, hi, unit = val
+        if unit == "%" and metric != "margin" and lo > 80:
+            continue
+        per = guidance_period(s, d)
+        key = (metric, per)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"m": metric, "lo": lo, "hi": hi, "u": unit, "p": per, "t": s[:300]})
+        if len(out) >= limit:
+            break
+    return out
+
+
+NOTE_VERSION = 2
+
+
 def fiscal_year(d):
     """An annual report filed Jul 2026 covers the year ending Mar 2026, labelled '2025-26' like fetch_filings."""
     y, m = int(d[:4]), int(d[5:7])
@@ -163,9 +273,12 @@ def main(argv=None):
     import requests
     from exchange import UA
 
-    def pending(notes, u):
+    def pending(notes, u, kind=None):
         n = notes.get(u)
-        return n is None or (n.get("failed") and n.get("tries", 0) < 3)
+        if n is None or (n.get("failed") and n.get("tries", 0) < 3):
+            return True
+        # transcripts summarised before guidance tracking existed are processed again once
+        return kind == "transcript" and not n.get("failed") and n.get("v", 1) < NOTE_VERSION
 
     todo, ars = [], []
     for f in sorted(FILINGS.glob("*.json")):
@@ -174,7 +287,7 @@ def main(argv=None):
         doc = json.loads(f.read_text())
         notes = doc.get("notes") or {}
         for a in doc.get("announcements", []):
-            if a.get("k") in ("transcript", "ppt") and pending(notes, a["u"]):
+            if a.get("k") in ("transcript", "ppt") and pending(notes, a["u"], a.get("k")):
                 todo.append((a["d"], f, a["u"], a["k"]))
         # latest annual report only: from the annual-report list, else a Reg. 34 announcement
         reps = sorted(doc.get("annualReports", []), key=lambda r: r.get("y", ""), reverse=True)
@@ -203,11 +316,12 @@ def main(argv=None):
             else:
                 text = pdf_text(r.content)
                 note = summarize(text)
+                note["guidance"] = extract_guidance(text, d)
             if len(text.split()) < (80 if kind == "ppt" else 300):
                 raise ValueError("too little text (scanned PDF?)")
             if not note["sections"]:
                 raise ValueError("nothing to summarise")
-            note["d"], note["kind"] = d, kind
+            note["d"], note["kind"], note["v"] = d, kind, NOTE_VERSION
             doc = json.loads(f.read_text())
             doc.setdefault("notes", {})[url] = note
             f.write_text(json.dumps(doc, separators=(",", ":")))

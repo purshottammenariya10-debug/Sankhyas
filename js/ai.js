@@ -269,6 +269,11 @@
   }
   function answerCompany(c, q) {
     const t = q.toLowerCase();
+    if (window.Insights) {
+      if (/red ?flags?|forensic|fraud|manipulat|accounting (issue|quality)|warning signs?|risk score|governance/.test(t)) return Insights.redFlagsMd(c) + sourceNote(c);
+      if (/what('?s| has| have)? (changed|new)|changes? (since|this quarter|vs|from)|latest (update|changes)/.test(t)) return Insights.whatChangedMd(c) + sourceNote(c);
+      if (/guidance|promis|track record|deliver(ed|y)? on|credib|execution/.test(t)) return Insights.guidanceMd(c) + sourceNote(c);
+    }
     if (/concall|con call|conference call|earnings call|transcript|management (said|say|commentary|guidance)|what did management/.test(t)) return concall(c);
     if (/report|full|detailed|everything|overview|analy[sz]|deep dive|summar|tell me about|explain the company/.test(t)) return fullReport(c) + sourceNote(c);
     const hit = [];
@@ -634,6 +639,12 @@
     const lc = latestConcall(c);
     if (lc) out.push('Latest concall (' + lc.n.d.slice(0, 10) + ', tone ' + lc.n.tone + '): ' +
       Object.keys(lc.n.sections).map(k => k + ': ' + lc.n.sections[k].join(' ')).join(' | ').slice(0, 2500));
+    if (window.Insights) {
+      const rf = Insights.redFlags(c);
+      out.push('Sankhyas red-flag score: ' + rf.score + '/100 (' + rf.band + ')' + (rf.flags.length ? '; flags: ' + rf.flags.map(f => f.title + ' (' + f.detail + ')').join('; ').slice(0, 1200) : '; no flags'));
+      const g = Insights.guidance(c);
+      if (g.rows.length) out.push('Management guidance from concalls: ' + g.rows.slice(0, 8).map(r => r.label + ' ' + r.p + ' target ' + r.target + ' -> ' + r.status + (r.actual != null ? ' (actual ' + Math.round(r.actual * 10) / 10 + '%)' : '')).join('; '));
+    }
     if (c.about) out.push('About: ' + c.about.slice(0, 600));
     return out.join('\n');
   }

@@ -66,7 +66,9 @@
     ['Low price', 'low52', 'Rs.', '52w Low Rs.', '52 week low'],
     ['Volume', 'volume', '', 'Volume', 'Latest day volume'],
     ['Number of equity shares', 'shares', 'Cr.', 'No. Eq. Shares Cr.', ''],
-    ['SME listed', 'sme', '', 'SME', '1 if listed on the NSE Emerge SME platform, else 0']
+    ['SME listed', 'sme', '', 'SME', '1 if listed on the NSE Emerge SME platform, else 0'],
+    ['Red flag score', 'riskScore', '', 'Red flags', 'Sankhyas forensic score 0-100 from the financials and exchange filings (higher = more warning signs)'],
+    ['Guidance delivery', 'guidanceScore', '%', 'Guidance %', 'Share of concall guidance that management delivered']
   ].map(r => ({ name: r[0], key: r[1], unit: r[2], label: r[3], desc: r[4] }));
 
   const BY_KEY = {};
@@ -139,6 +141,7 @@
     { slug: 'high-promoter-holding', name: 'High Promoter Holding', desc: 'Companies where promoters hold more than 60%.', query: 'Promoter holding > 60 AND Pledged percentage < 1' },
     { slug: 'near-52-week-low', name: 'Near 52 Week Low', desc: 'Quality stocks trading close to their 52 week low.', query: 'Current price < Low price * 1.2 AND Return on equity > 12' },
     { slug: 'golden-crossover', name: 'Golden Crossover', desc: 'Stocks where 50 DMA is above 200 DMA.', query: 'DMA 50 > DMA 200 AND Current price > DMA 50' },
+    { slug: 'clean-compounders', name: 'Clean Compounders', desc: 'Growing, high-return companies with few forensic red flags.', query: 'Red flag score < 15 AND Return on capital employed > 18 AND Sales growth 5Years > 12' },
     { slug: 'sme-stocks', name: 'SME Stocks', desc: 'Profitable, growing companies listed on the NSE Emerge SME platform.', query: 'SME listed = 1 AND Return on capital employed > 15 AND Sales growth 3Years > 15' },
     { slug: 'psu-stocks', name: 'Cash Rich Companies', desc: 'Companies generating strong free cash flow.', query: 'Free cash flow last year > 2000 AND Debt to equity < 0.3' }
   ];
