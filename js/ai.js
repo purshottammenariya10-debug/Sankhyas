@@ -614,18 +614,173 @@
     return html;
   }
 
+  /* ---------- data context (for Gemini and the ChatGPT/Gemini hand-off) ---------- */
+  const r2 = v => (ok(v) ? (Math.abs(v) >= 100 ? Math.round(v).toString() : (Math.round(v * 100) / 100).toString()) : 'NA');
+  const KEYS = [['Price Rs', 'price'], ['Market cap Rs Cr', 'marketCap'], ['P/E', 'pe'], ['Industry P/E', 'industryPE'], ['P/B', 'pb'],
+    ['Dividend yield %', 'divYield'], ['ROCE %', 'roce'], ['ROE %', 'roe'], ['Debt/Equity', 'de'], ['Sales TTM Cr', 'sales'], ['Net profit TTM Cr', 'np'],
+    ['OPM %', 'opm'], ['Sales CAGR 5y %', 'salesGrowth5'], ['Profit CAGR 5y %', 'profitGrowth5'], ['Qtr sales YoY %', 'qtrSalesVar'],
+    ['Qtr profit YoY %', 'qtrProfitVar'], ['Free cash flow Cr', 'fcf'], ['52w high', 'high52'], ['52w low', 'low52'], ['1y return %', 'ret1y'],
+    ['Promoter/insider %', 'promoter'], ['FII/institutions %', 'fii']];
+  function companyContext(c) {
+    const m = c.metrics, out = ['Company: ' + c.name + ' (NSE: ' + c.symbol + ')', 'Sector: ' + c.sector + ' | Industry: ' + c.industry,
+      'Data source: ' + (c.live ? 'Yahoo Finance end-of-day data via Sankhyas' : 'SAMPLE data for illustration, not real figures'),
+      'Key metrics: ' + KEYS.map(([l, k]) => l + ' ' + r2(m[k])).join('; ')];
+    const ser = (label, per, vals, n) => label + ': ' + (per || []).slice(-n).map((p, i, a) => p + ' ' + r2((vals || []).slice(-a.length)[i])).join(', ');
+    if (c.pl) {
+      out.push(ser('Annual sales Cr', c.years, c.pl.sales, 6), ser('Annual net profit Cr', c.years, c.pl.np, 6), ser('OPM %', c.years, c.pl.opm, 6),
+        ser('Quarterly sales Cr', c.quarters, c.q.sales, 6), ser('Quarterly net profit Cr', c.quarters, c.q.np, 6),
+        ser('Borrowings Cr', c.years, c.bs.borrowings, 4), ser('Operating cash flow Cr', c.years, c.cf.cfo, 4), ser('ROCE %', c.years, c.ratios.roce, 5));
+    }
+    const lc = latestConcall(c);
+    if (lc) out.push('Latest concall (' + lc.n.d.slice(0, 10) + ', tone ' + lc.n.tone + '): ' +
+      Object.keys(lc.n.sections).map(k => k + ': ' + lc.n.sections[k].join(' ')).join(' | ').slice(0, 2500));
+    if (c.about) out.push('About: ' + c.about.slice(0, 600));
+    return out.join('\n');
+  }
+  function tableContext(list, note) {
+    const cols = [['PE', 'pe'], ['ROCE%', 'roce'], ['ROE%', 'roe'], ['D/E', 'de'], ['Sales5y%', 'salesGrowth5'], ['Profit5y%', 'profitGrowth5'], ['QtrProfitYoY%', 'qtrProfitVar'], ['MCapCr', 'marketCap']];
+    return (note ? note + '\n' : '') + 'Symbol | Name | Sector | ' + cols.map(c => c[0]).join(' | ') + '\n' +
+      list.map(c => [c.symbol, c.name, c.sector].concat(cols.map(([, k]) => r2(c.metrics[k]))).join(' | ')).join('\n');
+  }
+  function marketContext(max) {
+    const all = Data.listCompanies().slice().sort((a, b) => (b.metrics.marketCap || 0) - (a.metrics.marketCap || 0));
+    return tableContext(all.slice(0, max || 120), 'Largest ' + Math.min(all.length, max || 120) + ' of ' + all.length + ' companies covered by Sankhyas (latest metrics):');
+  }
+
+  const SYSTEM = 'You are Sankhyas AI, the assistant inside Sankhyas, an Indian stock research website. Answer any question the user asks. ' +
+    'When the question is about companies or markets, use the DATA provided by Sankhyas first and say when something is not in it; money is in Rs crores unless stated and fiscal years end in March. ' +
+    'Be concise and structured (short paragraphs, bullets, **bold** key figures). Do not give personalised buy/sell recommendations or price targets; explain the evidence and the bull and bear case instead. ' +
+    'If the DATA says it is sample data, mention that the figures are illustrative.';
+
+  /* ---------- Gemini (visitor's own free API key, stored only in their browser) ---------- */
+  const LS = { get: k => { try { return localStorage.getItem('sankhyas_' + k) || ''; } catch (e) { return ''; } },
+    set: (k, v) => { try { v ? localStorage.setItem('sankhyas_' + k, v) : localStorage.removeItem('sankhyas_' + k); } catch (e) { /* ignore */ } } };
+  const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash'];
+  const gemini = {
+    key: () => LS.get('gemini_key'),
+    setKey: k => LS.set('gemini_key', (k || '').trim()),
+    enabled: () => !!LS.get('gemini_key') && LS.get('ai_engine') !== 'builtin'
+  };
+  async function geminiAsk({ data, turns, onText, signal }) {
+    const key = gemini.key();
+    const contents = turns.map(t => ({ role: t.role === 'assistant' ? 'model' : 'user', parts: [{ text: t.content }] }));
+    if (data) contents[0] = { role: 'user', parts: [{ text: '<DATA from Sankhyas>\n' + data + '\n</DATA>\n\n' + contents[0].parts[0].text }] };
+    const body = JSON.stringify({ systemInstruction: { parts: [{ text: SYSTEM }] }, contents, generationConfig: { temperature: 0.4, maxOutputTokens: 2048 } });
+    const models = [LS.get('gemini_model')].filter(Boolean).concat(GEMINI_MODELS);
+    let lastErr;
+    for (const model of models) {
+      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':streamGenerateContent?alt=sse',
+        { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body, signal });
+      if (res.status === 404) { lastErr = new Error('Model ' + model + ' not available'); continue; }
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        const msg = (j.error && j.error.message) || ('Gemini error ' + res.status);
+        throw { code: res.status === 429 ? 'rate_limited' : (res.status === 400 || res.status === 403) && /key/i.test(msg) ? 'bad_key' : 'upstream', message: msg };
+      }
+      LS.set('gemini_model', model);
+      const reader = res.body.getReader(), dec = new TextDecoder();
+      let buf = '', text = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue;
+          try {
+            const j = JSON.parse(line.slice(5));
+            const cand = j.candidates && j.candidates[0];
+            const piece = cand && cand.content && (cand.content.parts || []).map(p => p.text || '').join('');
+            if (piece) { text += piece; onText(text); }
+            if (cand && cand.finishReason === 'SAFETY') throw { code: 'refused', message: 'Gemini declined to answer this.' };
+          } catch (e) { if (e && e.code) throw e; }
+        }
+      }
+      if (!text.trim()) throw { code: 'empty', message: 'Gemini returned an empty answer.' };
+      return text;
+    }
+    throw { code: 'upstream', message: (lastErr && lastErr.message) || 'No Gemini model available.' };
+  }
+  function geminiSettings(onChange) {
+    const bd = document.createElement('div');
+    bd.className = 'modal-backdrop';
+    const has = !!gemini.key();
+    bd.innerHTML = '<div class="modal" role="dialog" aria-modal="true"><div class="modal-head"><h3>Connect Google Gemini (free)</h3><button class="btn btn-plain" data-x aria-label="Close">✕</button></div>' +
+      '<div class="modal-body"><p>Answer <b>any question</b> with Google\'s Gemini, using Sankhyas data as context. It\'s free with your own key:</p>' +
+      '<ol><li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio → API keys</a> and sign in with a Google account.</li>' +
+      '<li>Click <b>Create API key</b> and copy it.</li><li>Paste it below.</li></ol>' +
+      '<div class="field"><label for="gem-key">Gemini API key</label><input type="password" id="gem-key" placeholder="AIza…" value="' + esc(gemini.key()) + '" autocomplete="off"></div>' +
+      '<p class="table-note">Your key is saved only in this browser and sent only to Google. The free tier has daily limits; Google may use free-tier prompts to improve its products, so don\'t enter anything private.</p></div>' +
+      '<div class="modal-foot">' + (has ? '<button class="btn" data-remove>Remove key</button>' : '') + '<button class="btn" data-x>Cancel</button><button class="btn btn-primary" data-save>Save</button></div></div>';
+    const close = () => bd.remove();
+    bd.addEventListener('click', e => {
+      if (e.target === bd || e.target.closest('[data-x]')) close();
+      else if (e.target.closest('[data-remove]')) { gemini.setKey(''); LS.set('ai_engine', ''); close(); onChange(); }
+      else if (e.target.closest('[data-save]')) {
+        const v = bd.querySelector('#gem-key').value.trim();
+        if (!v) { bd.querySelector('#gem-key').focus(); return; }
+        gemini.setKey(v); LS.set('ai_engine', 'gemini'); close(); onChange();
+      }
+    });
+    document.body.appendChild(bd);
+    bd.querySelector('#gem-key').focus();
+  }
+
+  /* ---------- hand-off to ChatGPT / Gemini apps (visitor's own free account) ---------- */
+  function handoffPrompt(q, data) {
+    let p = 'I am researching Indian stocks on Sankhyas. ' + q.trim() + '\n\nData from Sankhyas:\n' + (data || '') +
+      '\n\n(Not a request for personalised investment advice.)';
+    return p.length > 6000 ? p.slice(0, 5950) + '\n…' : p;
+  }
+  function openChatGPT(q, data) {
+    window.open('https://chatgpt.com/?q=' + encodeURIComponent(handoffPrompt(q, data)), '_blank', 'noopener');
+  }
+  function openGemini(q, data) {
+    const p = handoffPrompt(q, data);
+    const go = () => window.open('https://gemini.google.com/app', '_blank', 'noopener');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(p).then(() => { flash('Question and data copied: paste into Gemini (Ctrl/Cmd+V)'); go(); }, go);
+    } else go();
+  }
+  function flash(msg) {
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3500);
+  }
+
   /* ---------- chat widget ---------- */
   const ready = Promise.resolve({ kind: 'local' });
   function mount(el, opts) {
     let ctl = null;
-    el.innerHTML = '<div class="ai-box"><div class="ai-head"><span class="ai-spark" aria-hidden="true">✦</span><b>' + esc(opts.title || 'Sankhyas AI') +
-      '</b><span class="ai-badge">Free</span></div>' +
+    const turns = [];
+    const dataOf = () => { try { return opts.context ? opts.context() : ''; } catch (e) { return ''; } };
+    el.innerHTML = '<div class="ai-box"><div class="ai-head"><span class="ai-spark" aria-hidden="true">✦</span><b>' + esc(opts.title || 'Sankhyas AI') + '</b>' +
+      '<span class="ai-badge ai-engine"></span><span class="ai-engine-ctl"></span></div>' +
       '<div class="ai-log" aria-live="polite">' + (opts.intro ? '<div class="ai-intro">' + esc(opts.intro) + '</div>' : '') + '</div>' +
       '<div class="ai-chips">' + (opts.suggestions || []).map((s, i) => '<button type="button" class="chip" data-i="' + i + '">' + esc(s) + '</button>').join('') + '</div>' +
       '<form class="ai-form"><textarea rows="1" placeholder="' + esc(opts.placeholder || 'Ask a question') + '" aria-label="Ask AI"></textarea>' +
       '<button class="btn btn-primary" type="submit">Ask</button></form>' +
-      '<p class="ai-note">Built-in analysis generated instantly in your browser from the data shown in Sankhyas. Free, rule-based, and it can be wrong. Not investment advice.</p></div>';
+      '<div class="ai-external">Also ask for free in: <button type="button" class="btn btn-small" data-ext="chatgpt">ChatGPT ↗</button>' +
+      '<button type="button" class="btn btn-small" data-ext="gemini">Gemini ↗</button> <span class="sub">(opens with your question and this page\'s data)</span></div>' +
+      '<p class="ai-note"></p></div>';
     const log = el.querySelector('.ai-log'), form = el.querySelector('form'), ta = form.querySelector('textarea'), btn = form.querySelector('button');
+    const renderEngine = () => {
+      const g = gemini.enabled();
+      el.querySelector('.ai-engine').textContent = g ? 'Gemini' : 'Free';
+      el.querySelector('.ai-engine-ctl').innerHTML = gemini.key()
+        ? '<select class="ai-engine-select" aria-label="AI engine"><option value="gemini"' + (g ? ' selected' : '') + '>Gemini (ask anything)</option><option value="builtin"' + (g ? '' : ' selected') + '>Built-in</option></select><button type="button" class="btn btn-small btn-plain" data-gem>⚙</button>'
+        : '<button type="button" class="btn btn-small" data-gem>Connect Gemini (free) to ask anything</button>';
+      el.querySelector('.ai-note').textContent = g
+        ? 'Answers by Google Gemini using your free key, with Sankhyas data as context. It can be wrong. Not investment advice.'
+        : 'Built-in analysis generated instantly in your browser from Sankhyas data. Free, rule-based, and it can be wrong. Not investment advice.';
+      const sel = el.querySelector('.ai-engine-select');
+      if (sel) sel.onchange = () => { LS.set('ai_engine', sel.value); renderEngine(); };
+      el.querySelector('[data-gem]').onclick = () => geminiSettings(renderEngine);
+    };
+    renderEngine();
     const scroll = () => { log.scrollTop = log.scrollHeight; };
     function bubble(role, html) {
       const d = document.createElement('div');
@@ -635,42 +790,70 @@
       scroll();
       return d;
     }
-    function send(q) {
+    const idle = () => { ctl = null; btn.textContent = 'Ask'; btn.classList.add('btn-primary'); };
+    function lastQuestion() { for (let i = turns.length - 1; i >= 0; i--) if (turns[i].role === 'user') return turns[i].content; return ta.value.trim(); }
+    async function send(q) {
       q = String(q || '').trim();
       if (!q || ctl) return;
       const intro = log.querySelector('.ai-intro');
       if (intro) intro.remove();
       bubble('user', esc(q));
+      const out = bubble('assistant', '');
+      btn.textContent = 'Stop'; btn.classList.remove('btn-primary'); ta.value = ''; autosize();
+      if (gemini.enabled()) {
+        turns.push({ role: 'user', content: q });
+        ctl = new AbortController();
+        out.innerHTML = '<span class="ai-thinking">Asking Gemini…</span>';
+        try {
+          const text = await geminiAsk({ data: dataOf(), turns: turns.slice(-12), signal: ctl.signal, onText: t => { out.innerHTML = md(t); scroll(); } });
+          out.innerHTML = md(text);
+          turns.push({ role: 'assistant', content: text });
+        } catch (e) {
+          if (e && e.name === 'AbortError') { out.innerHTML += '<p class="sub">Stopped.</p>'; }
+          else {
+            const msg = e && e.code === 'bad_key' ? 'Your Gemini key was rejected. Check it in ⚙ settings.'
+              : e && e.code === 'rate_limited' ? 'Gemini\'s free limit is used up for now. Switch to Built-in or try again later.'
+              : (e && e.message) || 'Could not reach Gemini.';
+            out.innerHTML = '<p class="ai-err">' + esc(msg) + '</p>';
+            turns.pop();
+          }
+        }
+        idle(); scroll();
+        return;
+      }
+      turns.push({ role: 'user', content: q });
       let text;
       try { text = opts.answer(q); } catch (e) { text = 'Sorry, I could not work that out. Try rephrasing the question.'; }
-      const out = bubble('assistant', '');
+      turns.push({ role: 'assistant', content: text });
       const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-      if (reduce) { out.innerHTML = md(text); scroll(); return; }
-      // reveal progressively
+      if (reduce) { out.innerHTML = md(text); scroll(); idle(); return; }
       let i = 0;
       const step = Math.max(24, Math.ceil(text.length / 60));
-      ctl = { stop: false };
+      ctl = { stop: false, abort() { this.stop = true; } };
       const me = ctl;
-      btn.textContent = 'Stop'; btn.classList.remove('btn-primary'); ta.value = ''; autosize();
       const tick = () => {
         if (me.stop) i = text.length;
         i = Math.min(text.length, i + step);
         out.innerHTML = md(text.slice(0, i));
         scroll();
-        if (i < text.length) setTimeout(tick, 16);
-        else { ctl = null; btn.textContent = 'Ask'; btn.classList.add('btn-primary'); }
+        if (i < text.length) setTimeout(tick, 16); else idle();
       };
       tick();
     }
     function autosize() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'; }
     ta.addEventListener('input', autosize);
     ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } });
-    form.addEventListener('submit', e => { e.preventDefault(); if (ctl) ctl.stop = true; else send(ta.value); });
+    form.addEventListener('submit', e => { e.preventDefault(); if (ctl) ctl.abort(); else send(ta.value); });
     el.querySelectorAll('.ai-chips .chip').forEach(c => c.addEventListener('click', () => send(opts.suggestions[+c.dataset.i])));
-    return { send, abort: () => { if (ctl) ctl.stop = true; } };
+    el.querySelectorAll('[data-ext]').forEach(b => b.addEventListener('click', () => {
+      const q = lastQuestion() || opts.placeholder || 'Analyse this for me';
+      (b.dataset.ext === 'chatgpt' ? openChatGPT : openGemini)(q, dataOf());
+    }));
+    return { send, abort: () => { if (ctl) ctl.abort(); } };
   }
 
   function errorCopy(e) { return (e && e.message) || 'Something went wrong.'; }
 
-  window.AI = { ready, md, mount, answerCompany, answerMarket, answerCompare, screenQuery, parseConditions, errorCopy, kind: () => 'local' };
+  window.AI = { ready, md, mount, answerCompany, answerMarket, answerCompare, screenQuery, parseConditions, errorCopy,
+    companyContext, tableContext, marketContext, gemini, kind: () => (gemini.enabled() ? 'gemini' : 'local') };
 })();

@@ -23,6 +23,9 @@ Sankhyas AI runs entirely in the visitor's browser (`js/ai.js`). It is a rule-ba
 
 - **Concall AI Notes:** the data update downloads each earnings-call transcript PDF (`scripts/summarize_concalls.py`) and keeps the most informative sentences management said, grouped into guidance & outlook, growth & demand, margins & costs, capex, balance sheet and risks. It also rates the call's tone. An **✦ AI Notes** button appears next to the transcript in the Concalls panel, and the AI Analyst answers "summarise the latest concall".
 
+- **Ask anything with Gemini (free):** in any AI panel, click **Connect Gemini (free)** and paste a free API key from [Google AI Studio](https://aistudio.google.com/apikey). Questions then go to Google Gemini with the page's Sankhyas data as context, so it can answer general questions too. The key is saved only in that visitor's browser and sent only to Google, and switching back to **Built-in** is one click. Free-tier daily limits apply.
+- **ChatGPT ↗ / Gemini ↗ buttons:** these open ChatGPT (question and data pre-filled) or Gemini (question and data copied to the clipboard) in a new tab, using the visitor's own free account.
+
 Answers are written from templates and thresholds applied to the same data the page shows, so they can't invent numbers. They also can't handle open-ended questions outside those topics. They never give buy/sell recommendations.
 
 ## Data: every Indian listed company + NSE/BSE filings

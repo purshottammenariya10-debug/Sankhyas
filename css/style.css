@@ -370,3 +370,7 @@ table.data.ai-table th.l, table.data.ai-table td.l { text-align: left; }
 .btn.btn-ai { color: var(--primary); border-color: var(--primary); background: var(--primary-bg); }
 .note-body { background: none; border: 0; padding: 0; }
 .tone-positive { color: var(--green); } .tone-cautious { color: var(--red); } .tone-neutral { color: var(--ink-2); }
+.ai-engine-ctl { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+.ai-engine-select { width: auto; padding: 4px 8px; font-size: 13px; }
+.ai-external { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; color: var(--ink-2); }
+.modal-body ol { padding-left: 20px; font-size: 14px; }

@@ -412,6 +412,7 @@
       intro: 'Ask about ' + c.name + ': growth, margins, debt, cash flow, valuation, the latest quarter, ownership, peers, or the bull and bear case.',
       placeholder: 'Ask about ' + c.name + '…',
       answer: q => AI.answerCompany(c, q),
+      context: () => AI.companyContext(c),
       suggestions: [
         'Write a full research report: business snapshot, growth, profitability, balance sheet, cash flows, valuation, key risks and what to watch',
         'Explain the latest quarterly results',
@@ -1185,6 +1186,7 @@
         intro: 'Ask AI to compare ' + comps.map(c => c.symbol).join(', ') + '.',
         placeholder: 'Ask about these companies…',
         answer: q => AI.answerCompare(comps, q),
+        context: () => comps.map(x => AI.companyContext(x)).join('\n\n---\n\n'),
         suggestions: ['Compare these companies on growth, profitability, balance sheet and valuation', 'Which has the strongest balance sheet?', 'Which looks most expensive relative to growth?']
       });
       onLeave(w.abort);
@@ -1224,6 +1226,7 @@
       intro: 'Ask for rankings, filters and sector overviews, e.g. "top 5 cheapest IT stocks by P/E". For a deep dive into one company, open its page and use the AI Analyst tab.',
       placeholder: 'Ask about Indian stocks…',
       answer: q => AI.answerMarket(q),
+      context: () => AI.marketContext(120),
       suggestions: [
         'Which companies combine high ROCE with low debt?',
         'Which sectors look cheapest on P/E?',
