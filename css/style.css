@@ -374,3 +374,6 @@ table.data.ai-table th.l, table.data.ai-table td.l { text-align: left; }
 .ai-engine-select { width: auto; padding: 4px 8px; font-size: 13px; }
 .ai-external { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; color: var(--ink-2); }
 .modal-body ol { padding-left: 20px; font-size: 14px; }
+.ai-head { flex-wrap: wrap; }
+.ai-engine-ctl .btn { white-space: normal; text-align: left; }
+@media (max-width: 720px) { .ai-engine-ctl { margin-left: 0; width: 100%; } }
