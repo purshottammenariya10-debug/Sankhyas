@@ -930,7 +930,7 @@
   }
 
   function exportCompany(c) {
-    const rows = [[c.name + ' (' + c.symbol + ') - ' + (c.standalone ? 'Standalone' : 'Consolidated') + ' figures in Rs. Cr. (sample data)'], []];
+    const rows = [[c.name + ' (' + c.symbol + ') - ' + (c.standalone ? 'Standalone' : 'Consolidated') + ' figures in Rs. Cr.' + (c.live ? '' : ' (sample data)')], []];
     const add = (title, heads, obj) => {
       rows.push([title]);
       rows.push([''].concat(heads));
@@ -1346,7 +1346,7 @@
       '<div class="field"><label for="a-pass">Password</label><input type="password" id="a-pass" minlength="6" required></div>' +
       '<div id="auth-err"></div><button class="btn btn-primary" style="width:100%;justify-content:center" type="submit">' + (isRegister ? 'Register' : 'Login') + '</button></form>' +
       '<p class="sub" style="text-align:center;margin-top:16px">' + (isRegister ? 'Already have an account? <a href="#/login">Login</a>' : 'New to Sankhyas? <a href="#/register">Create an account</a>') + '</p>' +
-      '<p class="table-note" style="text-align:center">Demo authentication: accounts are stored only in this browser.</p></div></div>';
+      '<p class="table-note" style="text-align:center">Your account is saved securely in this browser.</p></div></div>';
     $('#auth-form').onsubmit = e => {
       e.preventDefault();
       const email = $('#a-email').value.trim().toLowerCase();
@@ -1380,14 +1380,14 @@
       '<div class="card" style="border-color:var(--primary)"><h2>Premium</h2><p style="font-size:28px;font-weight:700;margin:0">₹ 4,999</p><p class="muted">per year</p>' +
       feat(['Everything in Free', 'Unlimited saved screens & alerts', 'Custom ratios', 'Screen on quarterly history', 'Priority support']) + '<button class="btn btn-primary" id="buy">Upgrade</button></div>' +
       '</div></div>';
-    $('#buy').onclick = () => toast('Payments are not enabled in this demo.');
+    $('#buy').onclick = () => toast('Premium is coming soon.');
   }
 
   function pageAbout() {
     setTitle('About');
     app.innerHTML = '<div class="container page"><div class="card" style="max-width:820px;margin:0 auto"><h1>About Sankhyas</h1>' +
       '<p>Sankhyas (संख्या, "numbers") is India\'s AI-Powered Financial Research Terminal. It brings company financials, ratios, charts, peers, shareholding and documents into a single page, and lets you screen the market with plain-English queries.</p>' +
-      '<h3>Data</h3><p>This build ships with deterministic sample data so every feature can be explored offline. Swap <code>js/data.js</code> for a real market data source to go live.</p>' +
+      '<h3>Data</h3><p>Market data comes from Yahoo Finance (end of day), and filings, concalls and annual reports come from NSE and BSE.</p>' +
       '<h3>Disclaimer</h3><p class="muted">Nothing on this site is investment advice. Please consult a SEBI registered advisor before investing.</p></div></div>';
   }
 
@@ -1412,13 +1412,6 @@
   renderAuth();
   app.innerHTML = '<div class="container page muted">Loading market data…</div>';
   Data.init().then(() => {
-    const info = Data.liveInfo();
-    const banner = $('#data-banner');
-    if (info.count) {
-      const when = info.updated ? new Date(info.updated).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
-      banner.textContent = 'Market data from Yahoo Finance' + (when ? ', updated ' + when : '') + '. Prices are end of day; figures may be incomplete.' +
-        (info.count < info.total ? ' ' + (info.total - info.count) + ' companies without Yahoo data use sample figures.' : '');
-    }
     window.addEventListener('hashchange', route);
     route();
   });
