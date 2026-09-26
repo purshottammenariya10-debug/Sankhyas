@@ -246,5 +246,67 @@
     return s || 'Not enough history yet to compare ' + c.name + '\'s latest results and concall with the previous ones.';
   }
 
-  window.Insights = { redFlags, guidance, whatChanged, redFlagsMd, guidanceMd, whatChangedMd, METRIC_LABEL };
+  /* ---------- Sankhyas Score: 0-100 from five pillars, each a percentile rank across all companies ---------- */
+  const PILLARS = [
+    ['quality', 'Quality', 0.25, [['roce', 1], ['roe', 1], ['opm', 1], ['avgRoce5', 1]]],
+    ['growth', 'Growth', 0.20, [['salesGrowth3', 1], ['profitGrowth3', 1], ['qtrSalesVar', 1], ['qtrProfitVar', 1]]],
+    ['value', 'Value', 0.20, [['pe', -1], ['pb', -1], ['earningsYield', 1], ['divYield', 1]]],
+    ['momentum', 'Momentum', 0.15, [['ret6m', 1], ['ret1y', 1], ['vsDma200', 1]]],
+    ['safety', 'Safety', 0.20, [['de', -1], ['interestCoverage', 1], ['pledged', -1], ['riskScore', -1]]]
+  ];
+  const SCORE_KEY = { quality: 'scoreQuality', growth: 'scoreGrowth', value: 'scoreValue', momentum: 'scoreMomentum', safety: 'scoreSafety' };
+  let scoreMap = {};
+  function inputOf(c, key) {
+    const m = c.metrics;
+    if (key === 'vsDma200') return ok(m.price) && ok(m.dma200) && m.dma200 > 0 ? m.price / m.dma200 - 1 : null;
+    if (key === 'pe') return ok(m.pe) ? (m.pe > 0 ? m.pe : 1e6) : null;        // loss-makers rank as the most expensive
+    if (key === 'pb') return ok(m.pb) ? (m.pb > 0 ? m.pb : 1e6) : null;
+    if (key === 'de' && isFinancial(c)) return null;                          // leverage is the business model for lenders
+    if (key === 'pledged') return ok(m.pledged) ? m.pledged : (m.promoter != null ? 0 : null);
+    return ok(m[key]) ? m[key] : null;
+  }
+  function computeScores(all) {
+    const ranks = {};
+    const need = new Set();
+    PILLARS.forEach(p => p[3].forEach(([k]) => need.add(k)));
+    need.forEach(k => {
+      const vals = all.map(c => inputOf(c, k)).filter(v => v != null).sort((a, b) => a - b);
+      ranks[k] = vals.length >= 20 ? vals : null;
+    });
+    const pct = (k, v) => {
+      const a = ranks[k];
+      let lo = 0, hi = a.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (a[mid] < v) lo = mid + 1; else hi = mid; }
+      let eq = lo;
+      while (eq < a.length && a[eq] === v) eq++;
+      return (lo + (eq - lo) / 2) / a.length * 100;
+    };
+    scoreMap = {};
+    all.forEach(c => {
+      const out = { pillars: {} };
+      let wsum = 0, tot = 0, n = 0;
+      PILLARS.forEach(([id, , w, inputs]) => {
+        const got = inputs.map(([k, dir]) => { const v = inputOf(c, k); return v == null || !ranks[k] ? null : (dir > 0 ? pct(k, v) : 100 - pct(k, v)); }).filter(v => v != null);
+        const val = got.length >= 2 ? Math.round(got.reduce((a, b) => a + b, 0) / got.length) : null;
+        out.pillars[id] = val;
+        if (val != null) { wsum += w; tot += w * val; n++; }
+        c.metrics[SCORE_KEY[id]] = val;
+      });
+      out.score = n >= 3 ? Math.round(tot / wsum) : null;
+      c.metrics.sankhyasScore = out.score;
+      scoreMap[c.symbol] = out;
+    });
+    // rank within sector for context
+    const bySector = {};
+    all.forEach(c => { if (scoreMap[c.symbol].score != null) (bySector[c.sector] = bySector[c.sector] || []).push(c); });
+    Object.keys(bySector).forEach(sec => {
+      const list = bySector[sec].sort((a, b) => scoreMap[b.symbol].score - scoreMap[a.symbol].score);
+      list.forEach((c, i) => { scoreMap[c.symbol].sectorRank = i + 1; scoreMap[c.symbol].sectorSize = list.length; });
+    });
+    return scoreMap;
+  }
+  const scoreOf = sym => scoreMap[sym] || null;
+  const scoreBand = v => (v == null ? '' : v >= 75 ? 'Strong' : v >= 55 ? 'Good' : v >= 40 ? 'Average' : 'Weak');
+
+  window.Insights = { computeScores, scoreOf, scoreBand, PILLARS, redFlags, guidance, whatChanged, redFlagsMd, guidanceMd, whatChangedMd, METRIC_LABEL };
 })();

@@ -265,6 +265,103 @@ def fiscal_year(d):
     return f"{end - 1}-{str(end)[-2:]}"
 
 
+# ---------- order wins and insider / promoter disclosures ----------
+FX = {"usd": 84.0, "us$": 84.0, "$": 84.0, "eur": 92.0, "€": 92.0}
+AMOUNT = re.compile(r"(rs\.?|inr|₹|usd|us\$|\$|eur|€)\s*([\d,]+(?:\.\d+)?)\s*(/-)?\s*(crores?|cr\b\.?|lakhs?|lacs?|millions?|mn\b|billions?|bn\b)?", re.I)
+ORDER_WORDS = re.compile(r"order|contract|award|\bloa\b|worth|valued|value of|amounting|aggregating|consideration", re.I)
+
+
+def to_crore(cur, value, unit):
+    v = float(value.replace(",", ""))
+    unit = (unit or "").lower().rstrip(".")
+    mult = 1 / 1e7                        # plain rupees
+    if unit.startswith("cr"):
+        mult = 1
+    elif unit.startswith("la"):
+        mult = 1 / 100
+    elif unit in ("million", "millions", "mn"):
+        mult = 1 / 10
+    elif unit in ("billion", "billions", "bn"):
+        mult = 100
+    fx = FX.get(cur.lower().rstrip("."), 1.0)
+    if fx != 1.0 and not unit:            # "$ 1,200,000" style: plain dollars
+        mult = 1 / 1e7
+    return round(v * mult * fx, 2)
+
+
+def order_details(text):
+    """Largest amount mentioned next to order words, the customer, and a one-line description."""
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\b(M/s|Rs|No|Ltd|Pvt|Co|Inc|approx)\.", r"\1", text, flags=re.I)   # abbreviations are not sentence ends
+    best = None
+    for sent in re.split(r"(?<=[.;])\s+(?=[A-Z])", text):
+        if not ORDER_WORDS.search(sent):
+            continue
+        for m in AMOUNT.finditer(sent):
+            try:
+                cr = to_crore(m.group(1), m.group(2), m.group(4))
+            except ValueError:
+                continue
+            if 0.01 <= cr <= 500000 and (best is None or cr > best[0]):
+                best = (cr, sent)
+    cust = re.search(r"\bfrom\s+(?:[Mm]/[Ss]\.?\s*)?([A-Z][A-Za-z0-9&.,()' -]{3,80}?)(?=\s+(?:for|worth|valued|amounting|aggregating|of\s+(?:rs|inr|₹)|towards|to\s+(?:supply|execute|design))|[,.(])", text)
+    desc = next((x for x in re.split(r"(?<=[.])\s+(?=[A-Z])", text) if re.search(r"order|contract|award", x, re.I) and 40 < len(x) < 400), "")
+    return {"amt": best[0] if best else None, "cust": cust.group(1).strip()[:80] if cust else "", "desc": desc[:280]}
+
+
+def disclosure_direction(text):
+    t = text.lower()
+    if re.search(r"(creation|invocation) of (pledge|encumbrance)|pledge created", t):
+        return "pledge"
+    if re.search(r"release of (pledge|encumbrance)|pledge released", t):
+        return "release"
+    buy = len(re.findall(r"acqui|purchase|bought|\bbuy", t))
+    sell = len(re.findall(r"dispos|\bsale\b|\bsold\b|\bsell", t))
+    return "buy" if buy > sell * 1.3 else "sell" if sell > buy * 1.3 else ""
+
+
+def filing_details(requests, UA, limit=150):
+    """Read order-win and insider/promoter disclosure PDFs once and store what they say on the filing."""
+    todo = []
+    for f in sorted(FILINGS.glob("*.json")):
+        if f.name == "latest.json":
+            continue
+        doc = json.loads(f.read_text())
+        for i, a in enumerate(doc.get("announcements", [])):
+            if a.get("k") in ("order", "insider", "sast") and not a.get("det") and a["u"].lower().endswith(".pdf"):
+                todo.append((a["d"], f, i))
+    todo.sort(key=lambda t: t[0], reverse=True)
+    done = found = 0
+    by_file = {}
+    for d, f, i in todo[:limit]:
+        doc = by_file.get(f) or json.loads(f.read_text())
+        by_file[f] = doc
+        a = doc["announcements"][i]
+        a["det"] = 1
+        done += 1
+        try:
+            r = requests.get(a["u"], headers={"User-Agent": UA, "Referer": "https://www.nseindia.com/"}, timeout=60)
+            r.raise_for_status()
+            text = pdf_text(r.content, max_pages=4)
+            if a["k"] == "order":
+                info = order_details(text)
+                for k2, v in info.items():
+                    if v:
+                        a[k2] = v
+                found += 1 if info["amt"] else 0
+            else:
+                direction = disclosure_direction(text)
+                if direction:
+                    a["dir"] = direction
+                    found += 1
+        except Exception as e:  # noqa: BLE001
+            print(f"{f.stem}: {a['k']} details not read ({str(e)[:60]})", file=sys.stderr)
+    for f, doc in by_file.items():
+        f.write_text(json.dumps(doc, separators=(",", ":")))
+    if done:
+        print(f"Order/insider details: {found} extracted from {done} filings, {max(0, len(todo) - limit)} left for later runs")
+
+
 REC_LINK = re.compile(r"https?://[^\s<>\"')\]]+", re.I)
 
 
@@ -336,6 +433,7 @@ def main(argv=None):
             ars.append((cand[0][0], f, cand[0][1], "ar"))
     todo.sort(key=lambda t: t[0], reverse=True)   # newest first
     find_recordings(requests, UA)
+    filing_details(requests, UA)
     ars.sort(key=lambda t: t[0], reverse=True)
     work = todo[:args.max] + ars[:args.max_ar]
     done = failed = 0

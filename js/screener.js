@@ -68,7 +68,16 @@
     ['Number of equity shares', 'shares', 'Cr.', 'No. Eq. Shares Cr.', ''],
     ['SME listed', 'sme', '', 'SME', '1 if listed on the NSE Emerge SME platform, else 0'],
     ['Red flag score', 'riskScore', '', 'Red flags', 'Sankhyas forensic score 0-100 from the financials and exchange filings (higher = more warning signs)'],
-    ['Guidance delivery', 'guidanceScore', '%', 'Guidance %', 'Share of concall guidance that management delivered']
+    ['Guidance delivery', 'guidanceScore', '%', 'Guidance %', 'Share of concall guidance that management delivered'],
+    ['Sankhyas Score', 'sankhyasScore', '', 'Score', 'Overall 0-100 score from quality, growth, value, momentum and safety, ranked against all companies'],
+    ['Quality score', 'scoreQuality', '', 'Quality', 'ROCE, ROE, margins and their 5-year history, as a 0-100 percentile'],
+    ['Growth score', 'scoreGrowth', '', 'Growth', 'Sales and profit growth (3-year and latest quarter), as a 0-100 percentile'],
+    ['Value score', 'scoreValue', '', 'Value', 'P/E, P/B, earnings and dividend yield, as a 0-100 percentile (higher = cheaper)'],
+    ['Momentum score', 'scoreMomentum', '', 'Momentum', '6-month and 1-year returns and price vs 200 DMA, as a 0-100 percentile'],
+    ['Safety score', 'scoreSafety', '', 'Safety', 'Debt, interest cover, pledging and red flags, as a 0-100 percentile (higher = safer)'],
+    ['Order wins 12M', 'orders12m', 'Rs.Cr.', 'Orders 12M Cr.', 'Value of order wins announced to the exchange in the last 12 months (where the filing states it)'],
+    ['Order announcements 12M', 'orderWins12m', '', 'Order wins 12M', 'Number of order-win filings in the last 12 months'],
+    ['Bulk/block net buy 3M', 'dealsNet3m', 'Rs.Cr.', 'Deals net 3M Cr.', 'Bulk and block deal buys minus sells in the last 3 months']
   ].map(r => ({ name: r[0], key: r[1], unit: r[2], label: r[3], desc: r[4] }));
 
   const BY_KEY = {};
@@ -141,6 +150,8 @@
     { slug: 'high-promoter-holding', name: 'High Promoter Holding', desc: 'Companies where promoters hold more than 60%.', query: 'Promoter holding > 60 AND Pledged percentage < 1' },
     { slug: 'near-52-week-low', name: 'Near 52 Week Low', desc: 'Quality stocks trading close to their 52 week low.', query: 'Current price < Low price * 1.2 AND Return on equity > 12' },
     { slug: 'golden-crossover', name: 'Golden Crossover', desc: 'Stocks where 50 DMA is above 200 DMA.', query: 'DMA 50 > DMA 200 AND Current price > DMA 50' },
+    { slug: 'sankhyas-top-scorers', name: 'Sankhyas Top Scorers', desc: 'Companies scoring 75+ on the Sankhyas Score across quality, growth, value, momentum and safety.', query: 'Sankhyas Score > 75 AND Market Capitalization > 1000' },
+    { slug: 'order-book-momentum', name: 'Order Book Momentum', desc: 'Companies announcing large order wins relative to their size in the last year.', query: 'Order wins 12M > 1000 AND Return on capital employed > 12' },
     { slug: 'clean-compounders', name: 'Clean Compounders', desc: 'Growing, high-return companies with few forensic red flags.', query: 'Red flag score < 15 AND Return on capital employed > 18 AND Sales growth 5Years > 12' },
     { slug: 'sme-stocks', name: 'SME Stocks', desc: 'Profitable, growing companies listed on the NSE Emerge SME platform.', query: 'SME listed = 1 AND Return on capital employed > 15 AND Sales growth 3Years > 15' },
     { slug: 'psu-stocks', name: 'Cash Rich Companies', desc: 'Companies generating strong free cash flow.', query: 'Free cash flow last year > 2000 AND Debt to equity < 0.3' }

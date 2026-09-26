@@ -416,7 +416,8 @@ table.data.ai-table th.l, table.data.ai-table td.l { text-align: left; }
 .ai-consent { display: flex; flex-wrap: wrap; gap: 6px; }
 .sme-badge { display: inline-block; vertical-align: middle; font-size: 12px; font-weight: 600; letter-spacing: .03em; color: var(--primary); background: var(--primary-bg); border-radius: 4px; padding: 2px 6px; margin-left: 6px; }
 /* Sankhyas Insights */
-.ins-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "risk changed" "guide guide"; gap: 20px; align-items: start; }
+.ins-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "risk changed" "guide guide" "orders deals"; gap: 20px; align-items: start; }
+.ins-orders { grid-area: orders; } .ins-deals { grid-area: deals; }
 .ins-risk { grid-area: risk; } .ins-changed { grid-area: changed; } .ins-guide { grid-area: guide; }
 .ins-card table.data th, .ins-card table.data td { padding: 6px 8px; font-size: 13px; }
 .ins-card td.l, .ins-card th.l { text-align: left; }
@@ -451,7 +452,7 @@ table.data.ai-table th.l, table.data.ai-table td.l { text-align: left; }
 .mv { font-size: 11px; font-weight: 600; border-radius: 4px; padding: 1px 5px; background: var(--bg-3); color: var(--ink-2); }
 .mv-raised, .mv-new { color: var(--green); background: var(--green-bg); }
 .mv-lowered, .mv-not-repeated { color: var(--red); background: var(--red-bg); }
-@media (max-width: 900px) { .ins-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "risk" "changed" "guide"; } }
+@media (max-width: 900px) { .ins-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "risk" "changed" "guide" "orders" "deals"; } }
 /* accounts and Pro */
 .btn-google { width: 100%; justify-content: center; gap: 10px; background: var(--bg); }
 .or-line { display: flex; align-items: center; gap: 10px; color: var(--ink-3); font-size: 12px; margin: 16px 0; }
@@ -505,3 +506,52 @@ table.data.ai-table th.l, table.data.ai-table td.l { text-align: left; }
 .doc-pill.find:hover { border-color: var(--primary); color: var(--primary); }
 .cc-period small { display: block; font-size: 11px; color: var(--ink-3); font-weight: 400; }
 .cc-note { font-size: 11.5px; color: var(--ink-3); margin: 6px 0 0; }
+
+/* Sankhyas Score, activity, research report */
+.score-card { position: relative; display: grid; grid-template-columns: minmax(0, 280px) minmax(0, 1fr); gap: 24px; align-items: center; border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 20px; margin-bottom: 20px; }
+.score-main { display: flex; align-items: center; gap: 16px; }
+.score-main h3 { margin: 0 0 2px; font-size: 16px; }
+.score-band { font-weight: 700; color: var(--primary); }
+.score-ring text { fill: var(--ink); }
+.score-pillars { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
+.score-pillars.blurred { filter: blur(5px); pointer-events: none; user-select: none; }
+.score-lock { position: absolute; right: 20px; top: 50%; transform: translateY(-50%); background: var(--bg); border: 1px dashed var(--primary); border-radius: 8px; padding: 10px 14px; font-size: 14px; }
+.pillar-head { display: flex; justify-content: space-between; font-size: 13.5px; }
+.pillar-bar { height: 6px; border-radius: 3px; background: var(--bg-3); margin: 6px 0 4px; overflow: hidden; }
+.pillar-bar span { display: block; height: 100%; background: var(--primary); }
+.pillar .sub { font-size: 11.5px; }
+@media (max-width: 900px) { .score-card { grid-template-columns: 1fr; } .score-pillars { grid-template-columns: repeat(2, minmax(0, 1fr)); } .score-lock { position: static; transform: none; } }
+.stats-row.mini { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); margin-bottom: 10px; }
+.stats-row.mini b { font-size: 16px; }
+.act-list { list-style: none; margin: 0; padding: 0; font-size: 13.5px; }
+.act-list li { padding: 7px 0; border-top: 1px solid var(--line-2); }
+.ins-card h4 { margin-top: 14px; }
+td.wrap { white-space: normal; min-width: 260px; font-size: 13px; }
+.report { max-width: 900px; }
+.report-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
+.report-page { background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 32px 36px; font-size: 13.5px; line-height: 1.5; }
+.report-page h1 { margin: 6px 0 2px; font-size: 26px; }
+.report-page h2 { font-size: 16px; margin: 20px 0 6px; border-bottom: 2px solid var(--primary-bg); padding-bottom: 4px; }
+.report-page h3 { font-size: 13.5px; margin: 10px 0 2px; }
+.report-page ul { margin: 4px 0; padding-left: 18px; }
+.report-head { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+.report-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 20px; margin-top: 14px; align-items: center; }
+.report-score { display: flex; gap: 12px; align-items: center; }
+.kv { width: 100%; border-collapse: collapse; font-size: 13px; }
+.kv th { text-align: left; color: var(--ink-2); font-weight: 500; padding: 4px 6px; }
+.kv td { text-align: right; padding: 4px 6px; font-weight: 600; border-right: 1px solid var(--line-2); }
+.report-table th, .report-table td { padding: 5px 8px; font-size: 12.5px; }
+.report-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.report-foot { margin-top: 24px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--ink-3); }
+@media (max-width: 720px) { .report-top, .report-cols { grid-template-columns: 1fr; } .report-page { padding: 18px; } }
+@media print {
+  .navbar, .footer, .no-print, #data-banner, .sub-nav { display: none !important; }
+  body { background: #fff !important; color: #000; }
+  .page { padding: 0 !important; }
+  .report-page { border: 0; padding: 0; }
+  .report-page h2 { break-after: avoid; }
+  .report-table, .kv, .report-cols > div { break-inside: avoid; }
+  a { color: inherit; text-decoration: none; }
+}
+.company-actions { flex-wrap: wrap; }
+@media print { .report-wrap { overflow: visible !important; border: 0 !important; } }

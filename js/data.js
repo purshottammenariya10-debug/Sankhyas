@@ -579,6 +579,13 @@
     if (mode === 'sample') return Promise.resolve(null);
     return getJSON('data/yahoo/calendar.json').catch(() => null);
   }
+  /** Order wins, insider/promoter disclosures and bulk/block deals (scripts/build_index.mjs). Cached. */
+  let _activity = null;
+  function loadActivity() {
+    if (mode === 'sample') return Promise.resolve(null);
+    if (!_activity) _activity = getJSON('data/yahoo/activity.json').catch(() => null);
+    return _activity;
+  }
   function latestFilings() {
     if (mode === 'sample') return Promise.resolve(null);
     return getJSON('data/filings/latest.json').catch(() => null);
@@ -596,6 +603,7 @@
       const ind = groups['i:' + c.industry];
       c.metrics.industryPE = median(c.industry && ind && ind.length >= 5 ? ind : groups['s:' + c.sector]);
     });
+    if (window.Insights && window.Insights.computeScores) window.Insights.computeScores(_all);
     return _all;
   }
 
@@ -621,7 +629,7 @@
 
   window.Data = {
     TODAY, YEARS, QUARTERS: QUARTERS.map(q => q.label), SH_QUARTERS,
-    init, getCompany: getAny, loadCompany, loadFilings, loadCalendar, latestFilings, listCompanies, search, median, cagr,
+    init, getCompany: getAny, loadCompany, loadFilings, loadCalendar, loadActivity, latestFilings, listCompanies, search, median, cagr,
     mode: () => mode,
     liveInfo: () => ({
       count: mode === 'summary' ? Object.keys(summaries).length : Object.keys(live).length,

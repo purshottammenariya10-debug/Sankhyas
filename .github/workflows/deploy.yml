@@ -79,6 +79,11 @@ jobs:
         # the 2-hourly sweep skips history backfill (NSE/BSE history APIs refuse GitHub's servers anyway)
         run: python scripts/fetch_filings.py --max-backfill "${{ github.event.schedule == '17 */2 * * *' && '0' || github.event.inputs.max_backfill || '150' }}"
 
+      - name: Bulk and block deals (NSE daily files)
+        if: github.event_name != 'push'
+        continue-on-error: true
+        run: python scripts/fetch_deals.py
+
       - name: Concall summaries (free, rule-based)
         if: github.event_name != 'push'
         continue-on-error: true

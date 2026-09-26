@@ -27,9 +27,16 @@ const KEYS = Screener.RATIOS.map(r => r.key).concat(['change', 'changePct', 'qtr
 const round = v => (v == null || !Number.isFinite(v) ? null : Number(v.toPrecision(6)));
 
 const index = fs.existsSync(path.join(dir, 'index.json')) ? JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')) : {};
-const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !['index.json', 'metrics.json', 'calendar.json'].includes(f));
+const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !['index.json', 'metrics.json', 'calendar.json', 'activity.json'].includes(f));
 const companies = [];
 let skipped = 0;
+
+// bulk and block deals (scripts/fetch_deals.py)
+const dealsFile = path.join(root, 'data', 'deals', 'deals.json');
+let deals = [];
+try { if (fs.existsSync(dealsFile)) deals = JSON.parse(fs.readFileSync(dealsFile, 'utf8')).deals || []; } catch (e) { deals = []; }
+const dealsBy = {};
+deals.forEach(x => { (dealsBy[x.s] = dealsBy[x.s] || []).push(x); });
 
 // listing dates (NSE equity and SME lists) for the IPO & new listings hub
 const universeFile = path.join(root, 'data', 'universe.json');
@@ -57,9 +64,22 @@ for (const f of files) {
     if (!j.prices || !j.prices.close || j.prices.close.length < 2) { skipped++; continue; }
     const c = Data._buildLive(j);
     const ff = path.join(filingsDir, c.symbol + '.json');
+    const dl = dealsBy[c.symbol];
+    if (dl) {
+      const since = new Date(Date.now() - 92 * 864e5).toISOString().slice(0, 10);
+      const net = dl.filter(x => x.d >= since).reduce((a, x) => a + (x.side === 'B' ? x.v : -x.v), 0);
+      if (net) c.metrics.dealsNet3m = net;
+    }
     if (fs.existsSync(ff)) {
       try {
         const filings = JSON.parse(fs.readFileSync(ff, 'utf8'));
+        const yearAgo = new Date(Date.now() - 365 * 864e5).toISOString();
+        const wins = (filings.announcements || []).filter(a => a.k === 'order' && a.d >= yearAgo);
+        if (wins.length) {
+          c.metrics.orderWins12m = wins.length;
+          const amt = wins.reduce((t, a) => t + (a.amt || 0), 0);
+          if (amt) c.metrics.orders12m = amt;
+        }
         c.metrics.riskScore = Insights.redFlags(c, filings).score;
         const g = Insights.guidance(c, filings);
         if (g.score != null) c.metrics.guidanceScore = g.score;
@@ -140,5 +160,28 @@ if (fs.existsSync(filingsDir)) {
   const list = Object.values(events).sort((a, b) => a.d.localeCompare(b.d) || a.n.localeCompare(b.n));
   fs.writeFileSync(path.join(dir, 'calendar.json'), JSON.stringify({ updated: new Date().toISOString(), today, events: list }));
   console.log(`calendar.json: ${list.length} board meetings between ${from} and ${to}`);
+}
+
+// ---------- market activity: order wins, insider/promoter disclosures, bulk & block deals ----------
+{
+  const orders = [], disclosures = [];
+  const since = new Date(Date.now() - 400 * 864e5).toISOString(), since2 = new Date(Date.now() - 200 * 864e5).toISOString();
+  if (fs.existsSync(filingsDir)) {
+    for (const f of fs.readdirSync(filingsDir)) {
+      if (!f.endsWith('.json') || f === 'latest.json') continue;
+      let doc;
+      try { doc = JSON.parse(fs.readFileSync(path.join(filingsDir, f), 'utf8')); } catch (e) { continue; }
+      const sym = doc.symbol || f.replace(/\.json$/, '');
+      for (const a of doc.announcements || []) {
+        if (a.k === 'order' && a.d >= since) orders.push({ s: sym, n: names[sym] || sym, d: a.d, amt: a.amt || null, cust: a.cust || '', desc: a.desc || '', u: a.u });
+        else if ((a.k === 'insider' || a.k === 'sast') && a.d >= since2) disclosures.push({ s: sym, n: names[sym] || sym, d: a.d, k: a.k, dir: a.dir || '', t: String(a.t).slice(0, 200), u: a.u });
+      }
+    }
+  }
+  orders.sort((a, b) => b.d.localeCompare(a.d));
+  disclosures.sort((a, b) => b.d.localeCompare(a.d));
+  const recentDeals = deals.filter(x => x.d >= since.slice(0, 10)).map(x => Object.assign({}, x, { n: names[x.s] || x.n }));
+  fs.writeFileSync(path.join(dir, 'activity.json'), JSON.stringify({ updated: new Date().toISOString(), orders, disclosures, deals: recentDeals }));
+  console.log(`activity.json: ${orders.length} order wins (${orders.filter(o => o.amt).length} with value), ${disclosures.length} insider/promoter disclosures, ${recentDeals.length} bulk/block deals`);
 }
 

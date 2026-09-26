@@ -48,6 +48,13 @@ def classify(text):
         return "ppt"
     if re.search(r"credit rating|\brating", t) and not re.search(r"rating agenc(y|ies)'? ?meet", t):
         return "rating"
+    if re.search(r"bagging|receiving of orders|receipt of (an? |new )?(order|contract)|order (win|received|inflow)|letter of (award|acceptance|intent)|\bloa\b|work order|purchase order|(bags?|secures?|wins?|received?|awarded) (an? |new |the )?(orders?|contracts?)", t) \
+            and not re.search(r"orders? passed|in order to|court|tribunal|nclt", t):
+        return "order"
+    if re.search(r"regulation\s*7\s*\(2\)|reg\.?\s*7\s*\(2\)|continual disclosure", t) and "trading window" not in t:
+        return "insider"
+    if re.search(r"regulation\s*(29|31|10)\s*\(|reg\.?\s*(29|31|10)\s*\(|substantial acquisition of shares|\bsast\b|(creation|release|invocation) of (pledge|encumbrance)", t) and "trading window" not in t:
+        return "sast"
     if re.search(r"con\.? ?call|conference call|earnings call|analysts?[ /]+institutional investor meet|investor meet", t):
         return "concall"
     if re.search(r"financial result|outcome of board", t):

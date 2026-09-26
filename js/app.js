@@ -184,6 +184,7 @@
       '': pageHome, company: pageCompany, screens: pageScreens, screen: pageScreen, feed: pageFeed, tools: pageTools,
       market: pageMarket, results: pageResults, compare: pageCompare, watchlist: pageWatchlist,
       login: pageLogin, register: pageRegister, premium: pagePremium, about: pageAbout, ai: pageAI,
+      deals: pageDeals, orders: pageOrders, report: pageReport,
       ipo: pageIPO, calendar: pageCalendar, themes: pageThemes, theme: pageThemes, studio: pageStudio,
       account: pageAccount, forgot: pageForgot, reset: pageReset, terms: pageLegal, privacy: pageLegal, refunds: pageLegal, contact: pageLegal
     };
@@ -291,6 +292,7 @@
       '</div><div class="company-actions">' +
       '<button class="btn" id="export-btn">⤓ Export to Excel</button>' +
       '<button class="btn" id="share-btn" title="Make an image for Instagram, X or WhatsApp">↗ Share card</button>' +
+      '<a class="btn" href="#/report/' + encodeURIComponent(c.symbol) + '" title="Printable research report (PDF)">⤓ Research PDF</a>' +
       '<button class="btn ' + (followed ? 'active' : 'btn-primary') + '" id="follow-btn">' + (followed ? '✓ Following' : '+ Follow') + '</button>' +
       '</div></div></div>' +
       '<div class="sub-nav" id="sub-nav"><div class="container"><span class="sub-nav-name">' + esc(c.symbol) + '</span>' +
@@ -347,6 +349,11 @@
         tmp.innerHTML = documentsSection(c, f);
         $('#documents').replaceWith(tmp.firstChild);
         bindDocuments();
+        refreshInsights(c);
+      });
+      Data.loadActivity().then(act => {
+        if (token !== navToken || !act) return;
+        c._activity = act;
         refreshInsights(c);
       });
     }
@@ -458,6 +465,57 @@
     }
     return '<div class="ins-card ins-changed"><div class="ins-head"><h3>What changed</h3>' + PRO_TAG + '</div>' + (html || '<p class="muted">Not enough history yet to compare the latest quarter and concall with the previous ones.</p>') + '</div>';
   }
+  /* ---------- Sankhyas Score, order wins, deals & insider activity ---------- */
+  const PILLAR_HELP = { quality: 'ROCE, ROE, margins', growth: 'Sales & profit growth', value: 'P/E, P/B, yields', momentum: '6M & 1Y returns, vs 200 DMA', safety: 'Debt, interest cover, pledges, red flags' };
+  function scoreRing(v, size) {
+    const r = 42, C = 2 * Math.PI * r, band = Insights.scoreBand(v);
+    const col = band === 'Strong' ? 'var(--green)' : band === 'Good' ? 'var(--primary)' : band === 'Average' ? '#d99a1a' : 'var(--red)';
+    return '<svg class="score-ring" viewBox="0 0 100 100" width="' + (size || 96) + '" height="' + (size || 96) + '" aria-hidden="true"><circle cx="50" cy="50" r="' + r + '" fill="none" stroke="var(--bg-3)" stroke-width="9"/>' +
+      '<circle cx="50" cy="50" r="' + r + '" fill="none" stroke="' + col + '" stroke-width="9" stroke-linecap="round" stroke-dasharray="' + (C * v / 100).toFixed(1) + ' ' + C.toFixed(1) + '" transform="rotate(-90 50 50)"/>' +
+      '<text x="50" y="57" text-anchor="middle" font-size="26" font-weight="800" fill="currentColor">' + v + '</text></svg>';
+  }
+  function scoreCard(c, open) {
+    const sc = Insights.scoreOf(c.symbol);
+    if (!sc || sc.score == null) return '';
+    const bars = Insights.PILLARS.map(([id, label]) => {
+      const v = sc.pillars[id];
+      return '<div class="pillar"><div class="pillar-head"><b>' + label + '</b><span>' + (v == null ? '-' : v) + '</span></div><div class="pillar-bar"><span style="width:' + (v || 0) + '%"></span></div><div class="sub">' + PILLAR_HELP[id] + '</div></div>';
+    }).join('');
+    return '<div class="score-card"><div class="score-main">' + scoreRing(sc.score) + '<div><h3>Sankhyas Score</h3><div class="score-band">' + Insights.scoreBand(sc.score) + '</div>' +
+      (sc.sectorRank ? '<div class="sub">#' + sc.sectorRank + ' of ' + sc.sectorSize + ' in ' + esc(c.sector) + '</div>' : '') + '<div class="sub">Out of 100, vs all ' + Data.listCompanies().length.toLocaleString('en-IN') + ' companies</div></div></div>' +
+      '<div class="score-pillars' + (open ? '' : ' blurred') + '">' + bars + '</div>' +
+      (open ? '' : '<div class="score-lock"><span aria-hidden="true">🔒</span> See the 5 pillars with <a href="#/premium">Sankhyas Pro</a></div>') + '</div>';
+  }
+  const crFmt = v => (v == null ? '-' : '₹ ' + num(v, v < 10 ? 2 : 0) + ' Cr');
+  function ordersCard(c) {
+    const act = c._activity;
+    if (!act) return '';
+    const list = act.orders.filter(o => o.s === c.symbol);
+    const total = list.reduce((a, o) => a + (o.amt || 0), 0), sales = c.metrics.sales;
+    return '<div class="ins-card ins-orders"><div class="ins-head"><h3>Order wins</h3>' + PRO_TAG + '</div>' +
+      (list.length ? '<div class="stats-row mini"><div class="stat"><div class="sub">Last 12 months</div><b>' + list.length + '</b></div><div class="stat"><div class="sub">Value stated</div><b>' + (total ? crFmt(total) : '-') + '</b></div>' +
+        (total && sales ? '<div class="stat"><div class="sub">vs annual sales</div><b>' + num(total / sales * 100, 0) + '%</b></div>' : '') + '</div>' +
+        '<ul class="act-list">' + list.slice(0, 8).map(o => '<li><span class="sub">' + docWhen(o.d) + '</span> ' + (o.amt ? '<b>' + crFmt(o.amt) + '</b>' : '<span class="muted">value not stated</span>') + (o.cust ? ' from ' + esc(o.cust) : '') +
+          '<div class="sub">' + esc((o.desc || '').slice(0, 160)) + ' <a target="_blank" rel="noopener noreferrer" href="' + esc(o.u) + '">filing ↗</a></div></li>').join('') + '</ul>'
+        : '<p class="muted">No order wins announced to the exchange in the last 12 months.</p>') +
+      '<p class="table-note">From "bagging/receiving of orders" filings; values are read from the filing and some filings do not state one.</p></div>';
+  }
+  const DIR = { buy: ['Bought', 'up'], sell: ['Sold', 'down'], pledge: ['Pledged', 'down'], release: ['Pledge released', 'up'] };
+  function dealsCard(c) {
+    const act = c._activity;
+    if (!act) return '';
+    const dl = act.deals.filter(x => x.s === c.symbol), ds = act.disclosures.filter(x => x.s === c.symbol);
+    const since = new Date(Date.now() - 92 * 864e5).toISOString().slice(0, 10);
+    const net = dl.filter(x => x.d >= since).reduce((a, x) => a + (x.side === 'B' ? x.v : -x.v), 0);
+    return '<div class="ins-card ins-deals"><div class="ins-head"><h3>Deals &amp; insider activity</h3>' + PRO_TAG + '</div>' +
+      (dl.length ? '<div class="sub" style="margin-bottom:6px">Bulk/block net in 3 months: <b class="' + signCls(net) + '">' + (net >= 0 ? '+' : '−') + crFmt(Math.abs(net)) + '</b></div>' +
+        '<div class="table-wrap"><table class="data"><thead><tr><th class="l">Date</th><th class="l">Client</th><th class="l">Side</th><th>Qty</th><th>Price</th><th>Value</th></tr></thead><tbody>' +
+        dl.slice(0, 8).map(x => '<tr><td class="l">' + docWhen(x.d) + '</td><td class="l">' + esc(x.c) + ' <span class="sub">' + x.t + '</span></td><td class="l ' + (x.side === 'B' ? 'up' : 'down') + '">' + (x.side === 'B' ? 'Buy' : 'Sell') + '</td><td>' + num(x.q, 0) + '</td><td>' + num(x.p, 2) + '</td><td>' + crFmt(x.v) + '</td></tr>').join('') + '</tbody></table></div>' : '') +
+      (ds.length ? '<h4>Insider &amp; promoter disclosures</h4><ul class="act-list">' + ds.slice(0, 6).map(x => '<li><span class="sub">' + docWhen(x.d) + '</span> ' + (x.dir && DIR[x.dir] ? '<b class="' + DIR[x.dir][1] + '">' + DIR[x.dir][0] + '</b> · ' : '') +
+        (x.k === 'insider' ? 'Insider trading disclosure' : 'Takeover / substantial holding disclosure') + ' <a target="_blank" rel="noopener noreferrer" href="' + esc(x.u) + '">filing ↗</a></li>').join('') + '</ul>' : '') +
+      (!dl.length && !ds.length ? '<p class="muted">No bulk/block deals or insider/promoter disclosures in the last months.</p>' : '') + '</div>';
+  }
+
   // free users see the score and what is inside, with the details behind Pro
   function lockedCard(cls, title, teaser) {
     return '<div class="ins-card ' + cls + ' locked"><div class="ins-head"><h3>' + title + '</h3>' + PRO_TAG + '</div>' + teaser +
@@ -468,7 +526,7 @@
     const open = Account.isPro();
     const note = !Account.cloud || Account.config.proFreeDuringBeta ? 'Free during beta.' : open ? 'Included in your Pro plan.' : 'The red-flag score is free; the details are part of Sankhyas Pro.';
     let cards;
-    if (open) cards = riskCard(c) + guidanceCard(c) + changedCard(c);
+    if (open) cards = riskCard(c) + guidanceCard(c) + changedCard(c) + ordersCard(c) + dealsCard(c);
     else {
       const r = Insights.redFlags(c), g = Insights.guidance(c), w = Insights.whatChanged(c);
       const cls = r.band === 'High' ? 'risk-high' : r.band === 'Moderate' ? 'risk-mid' : 'risk-low';
@@ -476,9 +534,15 @@
           '<div class="risk-bar"><span style="width:' + Math.max(3, r.score) + '%"></span></div></div></div><p class="muted">' + (r.flags.length ? r.flags.length + ' warning sign' + (r.flags.length > 1 ? 's' : '') + ' found' : 'No warning signs found') + '. See each one and the filing behind it with Pro.</p>') +
         lockedCard('ins-changed', 'What changed', '<p class="muted">' + (w.results ? 'Results for ' + esc(w.results.quarter) + ' vs the previous quarter and a year ago' : 'Latest results vs the previous quarter') + (w.concall ? ', concall tone and guidance changes' : '') + (w.filings.length ? ', and ' + w.filings.length + ' important filing' + (w.filings.length > 1 ? 's' : '') : '') + '.</p>') +
         lockedCard('ins-guide', 'Guidance tracker', '<p class="muted">' + (g.rows.length ? g.rows.length + ' management target' + (g.rows.length > 1 ? 's' : '') + ' tracked from ' + g.calls + ' concall' + (g.calls > 1 ? 's' : '') + '. See what was promised and what was delivered.' : 'Management\'s concall promises, scored against what was actually delivered.') + '</p>');
+      const act = c._activity;
+      if (act) {
+        const o = act.orders.filter(x => x.s === c.symbol), dl = act.deals.filter(x => x.s === c.symbol), ds = act.disclosures.filter(x => x.s === c.symbol);
+        cards += lockedCard('ins-orders', 'Order wins', '<p class="muted">' + (o.length ? o.length + ' order win' + (o.length > 1 ? 's' : '') + ' announced in the last year.' : 'No order wins announced in the last year.') + '</p>') +
+          lockedCard('ins-deals', 'Deals &amp; insider activity', '<p class="muted">' + (dl.length + ds.length ? dl.length + ' bulk/block deal' + (dl.length === 1 ? '' : 's') + ' and ' + ds.length + ' insider/promoter disclosure' + (ds.length === 1 ? '' : 's') + '.' : 'No bulk/block deals or insider disclosures recently.') + '</p>');
+      }
     }
-    return '<section class="section card" id="insights"><div class="section-head"><div><h2>Sankhyas Insights</h2><p>Forensic red flags, management\'s promises vs delivery, and what changed this quarter. ' + note + '</p></div></div>' +
-      '<div class="ins-grid">' + cards + '</div></section>';
+    return '<section class="section card" id="insights"><div class="section-head"><div><h2>Sankhyas Insights</h2><p>Sankhyas Score, forensic red flags, management\'s promises vs delivery, order wins, smart-money activity and what changed this quarter. ' + note + '</p></div></div>' +
+      scoreCard(c, open) + '<div class="ins-grid">' + cards + '</div></section>';
   }
   function refreshInsights(c) {
     const el = $('#insights');
@@ -1290,6 +1354,8 @@
       ['#/market', 'Sectors & industries', 'Browse companies by sector with sector level medians.'],
       ['#/watchlist', 'Watchlist', 'Track companies you follow in one table.'],
       ['#/screens', 'Popular screens', 'Ready-made screens such as Magic Formula and Coffee Can.'],
+      ['#/deals', 'Smart money', 'Bulk and block deals, and insider and promoter buying and selling, market-wide.'],
+      ['#/orders', 'Order wins', 'Every order and contract win announced to the exchange, with its value.'],
       ['#/ipo', 'IPO & new listings', 'Every mainboard and SME listing of the last 3 years and how it has done since.'],
       ['#/calendar', 'Results calendar', 'Upcoming board meetings for results, dividends and fund raising.'],
       ['#/themes', 'Theme tracker', 'Defence, railways, EV, PSU banks, renewables and more, with leaders and laggards.'],
@@ -1453,6 +1519,137 @@
         (past.length ? '<h2 style="margin-top:28px">Held in the last 7 days</h2>' + group(past) : '') +
         '<p class="table-note">Companies must tell the exchange at least 5 working days before a results board meeting. The list grows as new intimations are filed. Dates can change: check the filing.</p></div></div>';
     });
+  }
+
+  /* ---------- Smart money: bulk/block deals and insider disclosures ---------- */
+  const proLock = (shown, total, what) => (total > shown ? '<div class="lock-cta" style="margin-top:12px"><span aria-hidden="true">🔒</span> <b>' + (total - shown) + ' more ' + what + ' with Sankhyas Pro</b>' +
+    '<div class="sub">From ₹ 208 a month on the yearly plan.</div><a class="btn btn-primary btn-small" href="#/premium">See Pro plans</a></div>' : '');
+  function pageDeals(parts, params) {
+    setTitle('Smart money');
+    const tab = params.tab === 'insider' ? 'insider' : 'deals', days = +(params.days || 30), side = params.side || 'all';
+    app.innerHTML = LOADING;
+    const token = navToken;
+    Data.loadActivity().then(act => {
+      if (token !== navToken) return;
+      const pro = Account.isPro(), limit = pro ? 500 : 5;
+      const since = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
+      const link = (o) => '#/deals?' + Object.entries(Object.assign({ tab, days, side }, o)).map(([k, v]) => k + '=' + v).join('&');
+      const seg = (items, cur, key) => '<div class="seg">' + items.map(([k, l]) => '<a class="' + (String(k) === String(cur) ? 'active' : '') + '" href="' + link({ [key]: k }) + '">' + l + '</a>').join('') + '</div>';
+      const co = (sym, name) => Data.exists(sym) ? '<a href="#/company/' + encodeURIComponent(sym) + '">' + esc(name || sym) + '</a>' : esc(name || sym);
+      let body = '';
+      if (!act) body = '<p class="muted">Deals and insider disclosures appear with the live data. They are built from NSE\'s daily bulk and block deal files and exchange filings.</p>';
+      else if (tab === 'deals') {
+        const list = act.deals.filter(x => x.d >= since && (side === 'all' || x.side === side));
+        const net = {};
+        list.forEach(x => { const n = net[x.s] || (net[x.s] = { s: x.s, n: x.n, v: 0, k: 0 }); n.v += x.side === 'B' ? x.v : -x.v; n.k++; });
+        const nets = Object.values(net).sort((a, b) => b.v - a.v);
+        const top = arr => '<ul class="rank-list">' + arr.map(n => '<li>' + co(n.s, n.n) + '<span class="' + signCls(n.v) + '">' + (n.v >= 0 ? '+' : '−') + '₹ ' + num(Math.abs(n.v), 1) + ' Cr</span></li>').join('') + '</ul>';
+        body = (side === 'all' && nets.length ? '<div class="grid grid-2" style="margin-bottom:18px"><div><h3>Net buying</h3>' + top(nets.filter(n => n.v > 0).slice(0, pro ? 10 : 3)) + '</div><div><h3>Net selling</h3>' +
+            top(nets.filter(n => n.v < 0).reverse().slice(0, pro ? 10 : 3)) + '</div></div>' : '') +
+          '<div class="table-wrap"><table class="data list"><thead><tr><th class="l">Date</th><th class="l">Company</th><th class="l">Client</th><th class="l">Type</th><th class="l">Side</th><th>Quantity</th><th>Price ₹</th><th>Value ₹ Cr</th></tr></thead><tbody>' +
+          (list.length ? list.slice(0, limit).map(x => '<tr><td class="l">' + docWhen(x.d) + '</td><td class="l">' + co(x.s, x.n) + '</td><td class="l">' + esc(x.c) + '</td><td class="l">' + (x.t === 'block' ? 'Block' : 'Bulk') + '</td><td class="l ' + (x.side === 'B' ? 'up' : 'down') + '">' +
+            (x.side === 'B' ? 'Buy' : 'Sell') + '</td><td>' + num(x.q, 0) + '</td><td>' + num(x.p, 2) + '</td><td>' + num(x.v, 2) + '</td></tr>').join('') : '<tr><td colspan="8" class="muted" style="text-align:center;padding:20px">No deals in this period yet. The history builds up from NSE\'s daily files.</td></tr>') +
+          '</tbody></table></div>' + proLock(Math.min(limit, list.length), list.length, 'deals');
+      } else {
+        const list = act.disclosures.filter(x => x.d.slice(0, 10) >= since && (side === 'all' || (side === 'B' ? x.dir === 'buy' : side === 'S' ? x.dir === 'sell' : true)));
+        body = '<div class="table-wrap"><table class="data list"><thead><tr><th class="l">Date</th><th class="l">Company</th><th class="l">Disclosure</th><th class="l">Action</th><th class="l">Filing</th></tr></thead><tbody>' +
+          (list.length ? list.slice(0, limit).map(x => '<tr><td class="l">' + docWhen(x.d) + '</td><td class="l">' + co(x.s, x.n) + '</td><td class="l">' + (x.k === 'insider' ? 'Insider trading (Reg 7)' : 'Takeover / substantial holding') + '</td><td class="l">' +
+            (x.dir && DIR[x.dir] ? '<b class="' + DIR[x.dir][1] + '">' + DIR[x.dir][0] + '</b>' : '<span class="muted">see filing</span>') + '</td><td class="l"><a target="_blank" rel="noopener noreferrer" href="' + esc(x.u) + '">Open ↗</a></td></tr>').join('')
+            : '<tr><td colspan="5" class="muted" style="text-align:center;padding:20px">No disclosures in this period.</td></tr>') + '</tbody></table></div>' + proLock(Math.min(limit, list.length), list.length, 'disclosures') +
+          '<p class="table-note">Insiders and promoters must disclose trades above set limits under SEBI\'s insider-trading and takeover rules. "Action" is read from the filing and may be blank when it is unclear.</p>';
+      }
+      app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Smart money</h1><p>Who is buying and selling: bulk and block deals, and insider and promoter disclosures.' + (act ? ' Updated ' + docWhen(act.updated) + '.' : '') + '</p></div></div>' +
+        '<div class="flex flex-wrap" style="gap:12px;margin-bottom:16px">' + seg([['deals', 'Bulk &amp; block deals'], ['insider', 'Insider &amp; promoter']], tab, 'tab') + seg([[7, '1 week'], [30, '1 month'], [90, '3 months'], [365, '1 year']], days, 'days') +
+        seg([['all', 'All'], ['B', 'Buys'], ['S', 'Sells']], side, 'side') + '</div>' + body + '</div></div>';
+    });
+  }
+
+  /* ---------- Order wins ---------- */
+  function pageOrders(parts, params) {
+    setTitle('Order wins');
+    const days = +(params.days || 90), theme = params.theme || '';
+    app.innerHTML = LOADING;
+    const token = navToken;
+    Data.loadActivity().then(act => {
+      if (token !== navToken) return;
+      const pro = Account.isPro(), limit = pro ? 500 : 5;
+      const since = new Date(Date.now() - days * 864e5).toISOString();
+      const members = theme && Themes.get(theme) ? new Set(Themes.members(Themes.get(theme), Data.listCompanies()).map(c => c.symbol)) : null;
+      const list = act ? act.orders.filter(o => o.d >= since && (!members || members.has(o.s))) : [];
+      const total = list.reduce((a, o) => a + (o.amt || 0), 0);
+      const biggest = list.filter(o => o.amt).sort((a, b) => b.amt - a.amt)[0];
+      const byCo = {};
+      list.forEach(o => { const x = byCo[o.s] || (byCo[o.s] = { s: o.s, n: o.n, amt: 0, k: 0 }); x.amt += o.amt || 0; x.k++; });
+      const leaders = Object.values(byCo).map(x => { const c = Data.getCompany(x.s); return Object.assign(x, { pct: c && c.metrics.sales ? x.amt / c.metrics.sales * 100 : null }); })
+        .filter(x => x.amt).sort((a, b) => b.amt - a.amt).slice(0, pro ? 10 : 3);
+      const link = o => '#/orders?' + Object.entries(Object.assign({ days, theme }, o)).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+      const co = (sym, name) => Data.exists(sym) ? '<a href="#/company/' + encodeURIComponent(sym) + '">' + esc(name || sym) + '</a>' : esc(name || sym);
+      app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Order wins</h1><p>Orders and contracts announced to the exchange, with the value stated in the filing.</p></div></div>' +
+        '<div class="flex flex-wrap" style="gap:12px;margin-bottom:16px"><div class="seg">' + [[30, '1 month'], [90, '3 months'], [365, '1 year']].map(([k, l]) => '<a class="' + (k === days ? 'active' : '') + '" href="' + link({ days: k }) + '">' + l + '</a>').join('') + '</div>' +
+        '<select id="ord-theme" aria-label="Theme" style="width:auto"><option value="">All companies</option>' + Themes.list.map(t => '<option value="' + t.slug + '"' + (t.slug === theme ? ' selected' : '') + '>' + t.icon + ' ' + esc(t.name) + '</option>').join('') + '</select></div>' +
+        (!act ? '<p class="muted">Order wins appear with the live data, from exchange filings.</p>'
+          : '<div class="stats-row"><div class="stat"><div class="sub">Order wins</div><b>' + list.length + '</b></div><div class="stat"><div class="sub">Value stated</div><b>₹ ' + num(total, 0) + ' Cr</b></div>' +
+            '<div class="stat"><div class="sub">Biggest</div><b>' + (biggest ? co(biggest.s, biggest.n) : '-') + '</b>' + (biggest ? '<div class="sub">₹ ' + num(biggest.amt, 0) + ' Cr</div>' : '') + '</div></div>' +
+            (leaders.length ? '<h3>Most order value</h3><ul class="rank-list" style="margin-bottom:18px">' + leaders.map(x => '<li>' + co(x.s, x.n) + '<span>₹ ' + num(x.amt, 0) + ' Cr' + (x.pct != null ? ' <span class="sub">(' + num(x.pct, 0) + '% of sales)</span>' : '') + '</span></li>').join('') + '</ul>' : '') +
+            '<div class="table-wrap"><table class="data list"><thead><tr><th class="l">Date</th><th class="l">Company</th><th>Value ₹ Cr</th><th class="l">From</th><th class="l">Details</th></tr></thead><tbody>' +
+            (list.length ? list.slice(0, limit).map(o => '<tr><td class="l">' + docWhen(o.d) + '</td><td class="l">' + co(o.s, o.n) + '</td><td>' + (o.amt ? num(o.amt, o.amt < 10 ? 2 : 0) : '<span class="muted">-</span>') + '</td><td class="l">' + esc(o.cust || '') +
+              '</td><td class="l wrap">' + esc((o.desc || '').slice(0, 140)) + ' <a target="_blank" rel="noopener noreferrer" href="' + esc(o.u) + '">filing ↗</a></td></tr>').join('') : '<tr><td colspan="5" class="muted" style="text-align:center;padding:20px">No order wins in this period yet.</td></tr>') +
+            '</tbody></table></div>' + proLock(Math.min(limit, list.length), list.length, 'order wins') +
+            '<p class="table-note">Read from "bagging/receiving of orders" filings. Values in foreign currency are converted at approximate rates; some filings state no value.</p>') + '</div></div>';
+      const sel = $('#ord-theme');
+      if (sel) sel.onchange = () => { location.hash = link({ theme: sel.value }); };
+    });
+  }
+
+  /* ---------- Research report (print / save as PDF) ---------- */
+  function pageReport(parts) {
+    const sym = decodeURIComponent(parts[0] || '');
+    setTitle('Research report');
+    if (!Account.isPro()) {
+      app.innerHTML = '<div class="container page"><div class="card" style="max-width:640px;margin:0 auto;text-align:center"><h1>Research PDF ' + PRO_TAG + '</h1><p class="muted">A 2-page branded report with financials, Sankhyas Score, red flags, guidance and the latest concall summary, ready to print or save as PDF.</p>' +
+        '<a class="btn btn-primary" href="#/premium">See Pro plans</a> <a class="btn" href="#/company/' + encodeURIComponent(sym) + '">Back to company</a></div></div>';
+      return;
+    }
+    app.innerHTML = LOADING;
+    const token = navToken;
+    Data.listCompanies();
+    Promise.all([Data.loadCompany(sym), Data.loadFilings(sym).catch(() => null), Data.loadActivity().catch(() => null)]).then(([c, f, act]) => {
+      if (token !== navToken) return;
+      if (!c) return pageNotFound();
+      if (f) c._filings = f;
+      if (act) c._activity = act;
+      setTitle(c.name + ' research report');
+      const m = c.metrics, sc = Insights.scoreOf(c.symbol), r = Insights.redFlags(c), g = Insights.guidance(c);
+      const lc = ((f && f.announcements) || []).find(a => a.k === 'transcript' && f.notes && f.notes[a.u] && f.notes[a.u].sections);
+      const note = lc ? f.notes[lc.u] : null;
+      const yrs = c.years.slice(-6), yi = c.years.length - yrs.length;
+      const row = (label, arr, d, pct) => '<tr><td class="l">' + label + '</td>' + yrs.map((_, i) => '<td>' + (pct ? num(arr[yi + i], 1) + '%' : num(arr[yi + i], d || 0)) + '</td>').join('') + '</tr>';
+      const qs = c.quarters.slice(-5), qi = c.quarters.length - qs.length;
+      const qrow = (label, arr, d) => '<tr><td class="l">' + label + '</td>' + qs.map((_, i) => '<td>' + num(arr[qi + i], d || 0) + '</td>').join('') + '</tr>';
+      const pc = v => (v == null || !isFinite(v) ? '-' : num(v, 1) + '%');
+      const kv = [['Price', '₹ ' + num(m.price, 2)], ['Market cap', '₹ ' + num(m.marketCap, 0) + ' Cr'], ['P/E', num(m.pe, 1)], ['P/B', num(m.pb, 1)], ['ROCE', pc(m.roce)], ['ROE', pc(m.roe)],
+        ['Debt / equity', num(m.de, 2)], ['Dividend yield', pc(m.divYield)], ['Sales growth 5Y', pc(m.salesGrowth5)], ['Profit growth 5Y', pc(m.profitGrowth5)], ['1-year return', pc(m.ret1y)], ['Promoters', pc(m.promoter)]];
+      const orders = act ? act.orders.filter(o => o.s === c.symbol) : [];
+      app.innerHTML = '<div class="container page report"><div class="report-actions no-print"><a class="btn" href="#/company/' + encodeURIComponent(c.symbol) + '">← Back</a><button class="btn btn-primary" id="print-btn">⤓ Save as PDF / Print</button>' +
+        '<span class="sub">In the print dialog choose "Save as PDF".</span></div>' +
+        '<div class="report-page"><header class="report-head"><div class="logo"><img class="logo-mark" src="assets/logo.svg" alt=""><span>Sankhyas</span></div><div class="sub">Research report · ' + new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) + '</div></header>' +
+        '<h1>' + esc(c.name) + '</h1><p class="sub">' + esc([c.exchange === 'BSE' ? 'BSE: ' + (c.bseCode || c.symbol) : 'NSE: ' + c.symbol, c.sector, c.industry].filter(Boolean).join(' · ')) + '</p>' +
+        '<div class="report-top">' + (sc && sc.score != null ? '<div class="report-score">' + scoreRing(sc.score, 90) + '<div><b>Sankhyas Score</b><div>' + Insights.scoreBand(sc.score) + (sc.sectorRank ? ' · #' + sc.sectorRank + ' of ' + sc.sectorSize + ' in sector' : '') + '</div>' +
+          '<div class="sub">' + Insights.PILLARS.map(([id, l]) => l + ' ' + (sc.pillars[id] == null ? '-' : sc.pillars[id])).join(' · ') + '</div></div></div>' : '') +
+        '<table class="kv">' + kv.map(([k, v], i) => (i % 2 ? '' : '<tr>') + '<th>' + k + '</th><td>' + v + '</td>' + (i % 2 ? '</tr>' : '')).join('') + '</table></div>' +
+        (c.about ? '<h2>Business</h2><p>' + esc(c.about.slice(0, 700)) + (c.about.length > 700 ? '…' : '') + '</p>' : '') +
+        '<h2>Financials (₹ Cr)</h2><div class="table-wrap report-wrap"><table class="data report-table"><thead><tr><th class="l"></th>' + yrs.map(y => '<th>' + esc(y) + '</th>').join('') + '</tr></thead><tbody>' +
+        row('Sales', c.pl.sales) + row('Operating profit', c.pl.op) + row('OPM', c.pl.opm, 1, true) + row('Net profit', c.pl.np) + row('EPS (₹)', c.pl.eps, 2) + row('Operating cash flow', c.cf.cfo) + row('Borrowings', c.bs.borrowings) + '</tbody></table></div>' +
+        (qs.length ? '<h2>Recent quarters (₹ Cr)</h2><div class="table-wrap report-wrap"><table class="data report-table"><thead><tr><th class="l"></th>' + qs.map(q => '<th>' + esc(q) + '</th>').join('') + '</tr></thead><tbody>' +
+          qrow('Sales', c.q.sales) + qrow('Operating profit', c.q.op) + qrow('Net profit', c.q.np) + qrow('EPS (₹)', c.q.eps, 2) + '</tbody></table></div>' : '') +
+        '<div class="report-cols"><div><h2>Red-flag scan: ' + r.score + '/100 (' + r.band + ')</h2>' + (r.flags.length ? '<ul>' + r.flags.slice(0, 6).map(fl => '<li><b>' + esc(fl.title) + '</b>: ' + esc(fl.detail) + '</li>').join('') + '</ul>' : '<p>No warning signs found.</p>') + '</div>' +
+        '<div><h2>Management guidance</h2>' + (g.rows.length ? '<ul>' + g.rows.slice(0, 6).map(x => '<li>' + esc(x.label) + ' ' + esc(x.p) + ': ' + esc(x.target) + ' <b>' + esc(x.status) + '</b>' + (x.actual != null ? ' (actual ' + num(x.actual, 1) + '%)' : '') + '</li>').join('') + '</ul>' : '<p class="sub">No numeric guidance extracted yet.</p>') +
+        (orders.length ? '<h2>Order wins (12 months)</h2><p>' + orders.length + ' announced' + (orders.some(o => o.amt) ? ', ₹ ' + num(orders.reduce((a, o) => a + (o.amt || 0), 0), 0) + ' Cr stated' : '') + '.</p>' : '') + '</div></div>' +
+        (note ? '<h2>Latest concall (' + docWhen(note.d) + ', tone: ' + esc(note.tone) + ')</h2>' + Object.keys(note.sections).slice(0, 4).map(k => '<h3>' + esc(k) + '</h3><ul>' + note.sections[k].slice(0, 2).map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>').join('') : '') +
+        '<footer class="report-foot">Sankhyas · India\'s AI-Powered Financial Research Terminal · ' + esc('@' + ((Account.config.business || {}).instagram || 'sankhyas.co')) + ' · ' + esc((Account.config.business || {}).email || '') +
+        '<br>Data: Yahoo Finance and NSE/BSE filings. For research and education only; not investment advice. Sankhyas is not a SEBI-registered adviser.</footer></div></div>';
+      $('#print-btn').onclick = () => window.print();
+    }).catch(() => { if (token === navToken) pageNotFound(); });
   }
 
   /* ---------- Themes ---------- */

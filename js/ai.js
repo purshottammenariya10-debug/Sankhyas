@@ -276,6 +276,15 @@
       if (locked && /red ?flags?|forensic|fraud|manipulat|accounting (issue|quality)|warning signs?|risk score|governance/.test(t)) return upsell('Red-flag scan');
       if (locked && /what('?s| has| have)? (changed|new)|changes? (since|this quarter|vs|from)|latest (update|changes)/.test(t)) return upsell('What changed');
       if (locked && /guidance|promis|track record|deliver(ed|y)? on|credib|execution/.test(t)) return upsell('Guidance tracker');
+      if (/sankhyas score|\bscore\b|rating out of|how (good|strong) is/.test(t) && Insights.scoreOf) {
+        const sc = Insights.scoreOf(c.symbol);
+        if (sc && sc.score != null) {
+          return '## Sankhyas Score: ' + sc.score + '/100 (' + Insights.scoreBand(sc.score) + ')\n' + (sc.sectorRank ? 'Ranked #' + sc.sectorRank + ' of ' + sc.sectorSize + ' in ' + c.sector + '.\n' : '') +
+            (locked ? '\nThe five pillars (quality, growth, value, momentum, safety) are part of **Sankhyas Pro**. [See Pro plans](#/premium)'
+              : Insights.PILLARS.map(([id, label]) => '- **' + label + '**: ' + (sc.pillars[id] == null ? 'n/a' : sc.pillars[id] + '/100')).join('\n')) +
+            '\n\n*Each pillar is a percentile rank against all listed companies; higher is better. It is a research aid, not a recommendation.*' + sourceNote(c);
+        }
+      }
       if (/red ?flags?|forensic|fraud|manipulat|accounting (issue|quality)|warning signs?|risk score|governance/.test(t)) return Insights.redFlagsMd(c) + sourceNote(c);
       if (/what('?s| has| have)? (changed|new)|changes? (since|this quarter|vs|from)|latest (update|changes)/.test(t)) return Insights.whatChangedMd(c) + sourceNote(c);
       if (/guidance|promis|track record|deliver(ed|y)? on|credib|execution/.test(t)) return Insights.guidanceMd(c) + sourceNote(c);
@@ -646,6 +655,8 @@
     if (lc) out.push('Latest concall (' + lc.n.d.slice(0, 10) + ', tone ' + lc.n.tone + '): ' +
       Object.keys(lc.n.sections).map(k => k + ': ' + lc.n.sections[k].join(' ')).join(' | ').slice(0, 2500));
     if (window.Insights && !(window.Account && !Account.isPro())) {
+      const sc = Insights.scoreOf ? Insights.scoreOf(c.symbol) : null;
+      if (sc && sc.score != null) out.push('Sankhyas Score ' + sc.score + '/100 (' + Insights.PILLARS.map(([id, l]) => l + ' ' + sc.pillars[id]).join(', ') + ')');
       const rf = Insights.redFlags(c);
       out.push('Sankhyas red-flag score: ' + rf.score + '/100 (' + rf.band + ')' + (rf.flags.length ? '; flags: ' + rf.flags.map(f => f.title + ' (' + f.detail + ')').join('; ').slice(0, 1200) : '; no flags'));
       const g = Insights.guidance(c);
