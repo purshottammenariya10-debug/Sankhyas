@@ -39,8 +39,20 @@ def parse_nse_csv(text):
         sym = r.get("SYMBOL")
         if not sym or r.get("SERIES", "EQ") not in ("EQ", "BE", "BZ", "SM", "ST"):
             continue
-        rows.append({"symbol": sym, "name": r.get("NAME OF COMPANY") or sym, "isin": r.get("ISIN NUMBER", "")})
+        rows.append({"symbol": sym, "name": r.get("NAME OF COMPANY") or sym, "isin": r.get("ISIN NUMBER", ""),
+                     "listed": listing_date(r.get("DATE OF LISTING", ""))})
     return rows
+
+
+def listing_date(s):
+    """'06-OCT-2008' -> '2008-10-06' ('' when missing or unparseable)."""
+    import datetime as dt
+    for fmt in ("%d-%b-%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return dt.datetime.strptime((s or "").strip(), fmt).date().isoformat()
+        except ValueError:
+            pass
+    return ""
 
 
 def fetch_nse_csv(url, label):
@@ -94,6 +106,8 @@ def merge(nse_rows, bse_rows, include_bse_only=True):
              "industry": b.get("industry", ""), "yahoo": r["symbol"] + ".NS"}
         if r.get("sme"):
             e["sme"] = True
+        if r.get("listed"):
+            e["listed"] = r["listed"]
         out.append(e)
         if r["isin"]:
             seen_isin.add(r["isin"])
@@ -189,11 +203,11 @@ def main(argv=None):
 
     nse_rows = fetch_nse_csv(NSE_EQUITY_CSV, "NSE equity list")
     if not nse_rows:
-        nse_rows = [{"symbol": c["symbol"], "name": c["name"], "isin": c.get("isin", "")} for c in prev if c["yahoo"].endswith(".NS") and not c.get("sme")]
+        nse_rows = [{"symbol": c["symbol"], "name": c["name"], "isin": c.get("isin", ""), "listed": c.get("listed", "")} for c in prev if c["yahoo"].endswith(".NS") and not c.get("sme")]
         print(f"Using previous NSE list ({len(nse_rows)} companies)")
     sme_rows = fetch_nse_csv(NSE_SME_CSV, "NSE Emerge SME list")
     if not sme_rows:
-        sme_rows = [{"symbol": c["symbol"], "name": c["name"], "isin": c.get("isin", "")} for c in prev if c.get("sme")]
+        sme_rows = [{"symbol": c["symbol"], "name": c["name"], "isin": c.get("isin", ""), "listed": c.get("listed", "")} for c in prev if c.get("sme")]
         print(f"Using previous SME list ({len(sme_rows)} companies)")
     main_syms = {r["symbol"] for r in nse_rows}
     nse_rows += [dict(r, sme=True) for r in sme_rows if r["symbol"] not in main_syms]

@@ -491,6 +491,8 @@
     out.metrics = computeMetrics(out, { quote: qt });
     out.metrics.sme = j.sme ? 1 : 0;
     out.sme = !!j.sme;
+    const sm = (typeof summaries !== 'undefined' && summaries[j.symbol]) || {};
+    out.listed = sm.listed || j.listed || ''; out.listPrice = sm.listPrice != null ? sm.listPrice : null; out.listPriceDate = sm.listPriceDate || '';
     if (window.Insights) out.metrics.riskScore = window.Insights.redFlags(out).score;
     out.lastQuarter = out.quarters[out.quarters.length - 1] || '';
     return out;
@@ -519,7 +521,8 @@
       (idx.companies || []).forEach(e => {
         const c = {
           symbol: e.s, name: e.n || e.s, sector: e.sec || 'Others', industry: e.ind || '', bseCode: e.bse || '', exchange: e.ex || 'NSE', sme: !!(e.m && e.m.sme), isin: e.isin || '',
-          live: true, summary: true, lastQuarter: e.q || '', updated: idx.updated, metrics: e.m || {}
+          live: true, summary: true, lastQuarter: e.q || '', updated: idx.updated, metrics: e.m || {},
+          listed: e.lst || '', listPrice: e.lp != null ? e.lp : null, listPriceDate: e.lpd || ''
         };
         summaries[c.symbol] = c;
         if (!bySymbol[c.symbol]) base.push(c);
@@ -571,6 +574,11 @@
     if (mode === 'sample') return Promise.resolve(null);
     return getJSON('data/filings/' + encodeURIComponent(String(sym).toUpperCase()) + '.json').catch(() => null);
   }
+  /** Upcoming board meetings (results calendar) built by scripts/build_index.mjs. */
+  function loadCalendar() {
+    if (mode === 'sample') return Promise.resolve(null);
+    return getJSON('data/yahoo/calendar.json').catch(() => null);
+  }
   function latestFilings() {
     if (mode === 'sample') return Promise.resolve(null);
     return getJSON('data/filings/latest.json').catch(() => null);
@@ -613,7 +621,7 @@
 
   window.Data = {
     TODAY, YEARS, QUARTERS: QUARTERS.map(q => q.label), SH_QUARTERS,
-    init, getCompany: getAny, loadCompany, loadFilings, latestFilings, listCompanies, search, median, cagr,
+    init, getCompany: getAny, loadCompany, loadFilings, loadCalendar, latestFilings, listCompanies, search, median, cagr,
     mode: () => mode,
     liveInfo: () => ({
       count: mode === 'summary' ? Object.keys(summaries).length : Object.keys(live).length,

@@ -472,3 +472,32 @@ table.data.ai-table th.l, table.data.ai-table td.l { text-align: left; }
 .social { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 14px; font-size: 14px; }
 .social a { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); text-decoration: none; }
 .social a:hover { color: var(--primary); }
+/* IPO hub, calendar, themes, social cards */
+.seg a.active { background: var(--primary-bg); color: var(--primary); }
+.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 4px 0 18px; }
+.stat { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; min-width: 0; }
+.stat b { display: block; font-size: 20px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stat b a { color: inherit; }
+.cal-day { margin-top: 18px; } .cal-day h3 { font-size: 15px; margin: 0 0 6px; color: var(--ink-2); }
+.cal-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius); }
+.cal-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 14px; padding: 10px 14px; border-top: 1px solid var(--line-2); font-size: 14px; }
+.cal-list li:first-child { border-top: 0; }
+.cal-tags { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.theme-card { color: inherit; margin: 0; display: flex; flex-direction: column; }
+.theme-card:hover { border-color: var(--primary); text-decoration: none; }
+.theme-card h3 { margin: 6px 0 4px; } .theme-card p { margin: 0 0 12px; font-size: 13.5px; }
+.theme-icon { font-size: 28px; }
+.theme-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: auto; }
+.theme-stats span { display: block; } .theme-stats b { font-size: 17px; }
+.rank-list { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+.rank-list li { display: flex; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line-2); }
+.modal.modal-wide { max-width: 760px; width: calc(100% - 32px); }
+.card-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.card-controls select { width: auto; margin-left: 6px; }
+.card-preview { display: flex; justify-content: center; align-items: center; min-height: 240px; background: var(--bg-2); border-radius: var(--radius); padding: 12px; margin-bottom: 12px; }
+.card-preview img { max-width: 100%; max-height: 56vh; border-radius: 8px; box-shadow: var(--shadow-lg); }
+.card-preview img.story { max-height: 60vh; }
+.card-studio textarea { width: 100%; font-family: inherit; font-size: 13px; }
+.studio-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
+.studio-form .search-wrap { position: relative; }
+@media (max-width: 720px) { .studio-grid { grid-template-columns: 1fr; } }

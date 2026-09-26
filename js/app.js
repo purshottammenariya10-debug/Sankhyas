@@ -184,6 +184,7 @@
       '': pageHome, company: pageCompany, screens: pageScreens, screen: pageScreen, feed: pageFeed, tools: pageTools,
       market: pageMarket, results: pageResults, compare: pageCompare, watchlist: pageWatchlist,
       login: pageLogin, register: pageRegister, premium: pagePremium, about: pageAbout, ai: pageAI,
+      ipo: pageIPO, calendar: pageCalendar, themes: pageThemes, theme: pageThemes, studio: pageStudio,
       account: pageAccount, forgot: pageForgot, reset: pageReset, terms: pageLegal, privacy: pageLegal, refunds: pageLegal, contact: pageLegal
     };
     const fn = routes[p0] || pageNotFound;
@@ -289,6 +290,7 @@
       c.dates[c.dates.length - 1].toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + ' - close price' + (c.live ? ' &middot; Yahoo Finance' : '') + '</span></div>' +
       '</div><div class="company-actions">' +
       '<button class="btn" id="export-btn">⤓ Export to Excel</button>' +
+      '<button class="btn" id="share-btn" title="Make an image for Instagram, X or WhatsApp">↗ Share card</button>' +
       '<button class="btn ' + (followed ? 'active' : 'btn-primary') + '" id="follow-btn">' + (followed ? '✓ Following' : '+ Follow') + '</button>' +
       '</div></div></div>' +
       '<div class="sub-nav" id="sub-nav"><div class="container"><span class="sub-nav-name">' + esc(c.symbol) + '</span>' +
@@ -307,6 +309,7 @@
       b.textContent = now ? '✓ Following' : '+ Follow';
     };
     $('#export-btn').onclick = () => exportCompany(c);
+    $('#share-btn').onclick = () => openCardModal(c.listed && c.listPrice != null ? ['results', 'snapshot', 'redflags', 'listing'] : ['results', 'snapshot', 'redflags'], () => Promise.resolve(c), c.symbol);
     $$('[data-view]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); routeKeepScroll = true; location.hash = a.getAttribute('href'); }));
 
     // sub nav
@@ -1283,7 +1286,11 @@
       ['#/compare', 'Compare companies', 'Put up to five companies side by side and compare their key metrics.'],
       ['#/market', 'Sectors & industries', 'Browse companies by sector with sector level medians.'],
       ['#/watchlist', 'Watchlist', 'Track companies you follow in one table.'],
-      ['#/screens', 'Popular screens', 'Ready-made screens such as Magic Formula and Coffee Can.']
+      ['#/screens', 'Popular screens', 'Ready-made screens such as Magic Formula and Coffee Can.'],
+      ['#/ipo', 'IPO & new listings', 'Every mainboard and SME listing of the last 3 years and how it has done since.'],
+      ['#/calendar', 'Results calendar', 'Upcoming board meetings for results, dividends and fund raising.'],
+      ['#/themes', 'Theme tracker', 'Defence, railways, EV, PSU banks, renewables and more, with leaders and laggards.'],
+      ['#/studio', 'Social post studio', 'Turn results, red flags, listings and themes into Instagram and X posts.']
     ];
     app.innerHTML = '<div class="container page"><h1>Tools</h1><p class="muted">Everything you need to research stocks.</p><div class="grid grid-3">' +
       tools.map(t => '<a class="card feature" href="' + t[0] + '" style="color:inherit;margin:0"><h3>' + esc(t[1]) + '</h3><p class="muted" style="margin:0">' + esc(t[2]) + '</p></a>').join('') + '</div></div>';
@@ -1318,13 +1325,198 @@
     setTitle('Latest results');
     const all = Data.listCompanies().slice().sort((a, b) => resultDate(b) - resultDate(a) || (b.metrics.marketCap || 0) - (a.metrics.marketCap || 0)).slice(0, 300);
     app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Latest Results</h1><p>Latest reported quarter &middot; figures in Rs. Cr.' + (Data.liveInfo().count ? ' &middot; result dates are estimated' : '') + '</p></div></div>' +
-      '<div class="table-wrap"><table class="data list"><thead><tr><th>S.No.</th><th>Name</th><th>Result date</th><th>Sales</th><th>YoY %</th><th>Operating Profit</th><th>OPM %</th><th>Net Profit</th><th>YoY %</th><th>EPS</th></tr></thead><tbody>' +
+      '<div class="table-wrap"><table class="data list"><thead><tr><th>S.No.</th><th>Name</th><th>Result date</th><th>Sales</th><th>YoY %</th><th>Operating Profit</th><th>OPM %</th><th>Net Profit</th><th>YoY %</th><th>EPS</th><th></th></tr></thead><tbody>' +
       all.map((c, i) => {
         const m = c.metrics;
         return '<tr><td>' + (i + 1) + '.</td><td><a href="#/company/' + esc(c.symbol) + '">' + esc(c.name) + '</a></td><td>' + resultDate(c).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) +
           '</td><td>' + num(m.qtrSales, 0) + '</td><td class="' + signCls(m.qtrSalesVar) + '">' + num(m.qtrSalesVar, 1) + '</td><td>' + num(m.qtrOp, 0) + '</td><td>' + num(m.qtrOpm, 0) +
-          '</td><td>' + num(m.qtrProfit, 0) + '</td><td class="' + signCls(m.qtrProfitVar) + '">' + num(m.qtrProfitVar, 1) + '</td><td>' + num(m.qtrEps, 2) + '</td></tr>';
+          '</td><td>' + num(m.qtrProfit, 0) + '</td><td class="' + signCls(m.qtrProfitVar) + '">' + num(m.qtrProfitVar, 1) + '</td><td>' + num(m.qtrEps, 2) +
+          '</td><td><button class="btn btn-small btn-plain card-btn" data-card="' + esc(c.symbol) + '" title="Share results card">↗ Card</button></td></tr>';
       }).join('') + '</tbody></table></div></div></div>';
+    $$('[data-card]').forEach(b => b.onclick = () => openCardModal(['results', 'snapshot'], () => Data.loadCompany(b.dataset.card), b.dataset.card));
+  }
+
+  /* ---------- Social cards (Instagram / X / WhatsApp) ---------- */
+  function openCardModal(kinds, loadData, name) {
+    let kind = kinds[0], format = 'square', data = null, canvas = null, seq = 0;
+    const bd = modal('Share card', '<div class="card-studio">' +
+      '<div class="card-controls">' + (kinds.length > 1 ? '<label>Template <select id="cm-kind">' + kinds.map(k => '<option value="' + k + '">' + esc(Cards.kinds[k]) + '</option>').join('') + '</select></label>' : '') +
+      '<div class="seg" role="tablist"><button type="button" class="active" data-fmt="square">Post 1:1</button><button type="button" data-fmt="story">Story 9:16</button></div></div>' +
+      '<div class="card-preview"><div class="muted">Drawing…</div></div>' +
+      '<label class="sub" for="cm-cap">Caption</label><textarea id="cm-cap" rows="6"></textarea>' +
+      '<p class="table-note">Download the image and paste the caption into Instagram, X or LinkedIn. On phones, Share opens your apps directly.</p></div>',
+      [{ label: 'Copy caption', onClick: () => { copyText($('#cm-cap', bd).value); toast('Caption copied'); return false; } },
+       { label: 'Share…', onClick: () => { if (canvas) Cards.share(canvas, $('#cm-cap', bd).value, fname()).then(ok => { if (!ok) { Cards.download(canvas, fname()); copyText($('#cm-cap', bd).value); toast('Image downloaded and caption copied'); } }).catch(() => {}); return false; } },
+       { label: 'Download PNG', primary: true, onClick: () => { if (canvas) Cards.download(canvas, fname()); return false; } }]);
+    bd.querySelector('.modal').classList.add('modal-wide');
+    const fname = () => 'sankhyas-' + String(name || kind).toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-' + kind + (format === 'story' ? '-story' : '');
+    async function draw() {
+      const my = ++seq, box = $('.card-preview', bd);
+      box.innerHTML = '<div class="muted">Drawing…</div>';
+      try {
+        if (!data) data = await loadData();
+        canvas = await Cards.render(kind, data, format);
+        if (my !== seq) return;
+        const img = new Image();
+        img.src = canvas.toDataURL('image/png');
+        img.alt = Cards.kinds[kind] + ' preview';
+        img.className = format === 'story' ? 'story' : '';
+        box.innerHTML = ''; box.appendChild(img);
+        $('#cm-cap', bd).value = Cards.caption(kind, data);
+      } catch (e) {
+        console.error(e);
+        box.innerHTML = '<div class="error-box">Could not draw this card.</div>';
+      }
+    }
+    if ($('#cm-kind', bd)) $('#cm-kind', bd).onchange = e => { kind = e.target.value; draw(); };
+    $$('[data-fmt]', bd).forEach(b => b.onclick = () => { $$('[data-fmt]', bd).forEach(x => x.classList.toggle('active', x === b)); format = b.dataset.fmt; draw(); });
+    draw();
+  }
+  function copyText(t) {
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).catch(() => {});
+  }
+
+  /* ---------- IPO & new listings ---------- */
+  function pageIPO(parts, params) {
+    setTitle('IPO & new listings');
+    const all = Data.listCompanies().filter(c => c.listed);
+    const board = params.board || 'all', period = params.period || '1y';
+    const DAYS = { '3m': 92, '6m': 183, '1y': 366, '3y': 1096 };
+    const since = Date.now() - DAYS[period] * 864e5;
+    const list = all.filter(c => Date.parse(c.listed) >= since && (board === 'all' || (board === 'sme' ? c.sme : !c.sme)))
+      .map(c => Object.assign(c, { _ret: c.listPrice && c.metrics.price ? (c.metrics.price / c.listPrice - 1) * 100 : null }))
+      .sort((a, b) => b.listed.localeCompare(a.listed));
+    const rets = list.map(c => c._ret).filter(v => v != null);
+    const best = list.filter(c => c._ret != null).sort((a, b) => b._ret - a._ret)[0], worst = list.filter(c => c._ret != null).sort((a, b) => a._ret - b._ret)[0];
+    const link = (b, p) => '#/ipo?board=' + b + '&period=' + p;
+    const seg = (items, cur, mk) => '<div class="seg">' + items.map(([k, l]) => '<a class="' + (k === cur ? 'active' : '') + '" href="' + mk(k) + '">' + l + '</a>').join('') + '</div>';
+    const tileH = (label, value, sub) => '<div class="stat"><div class="sub">' + label + '</div><b>' + value + '</b>' + (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div>';
+    app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>IPO &amp; new listings</h1><p>Mainboard and SME companies listed on NSE, and how they have traded since their first day.</p></div>' +
+      '<a class="btn" href="#/studio?kind=listing">↗ Make a post</a></div>' +
+      '<div class="flex flex-wrap" style="gap:12px;margin-bottom:16px">' + seg([['all', 'All'], ['main', 'Mainboard'], ['sme', 'SME']], board, b => link(b, period)) +
+      seg([['3m', '3 months'], ['6m', '6 months'], ['1y', '1 year'], ['3y', '3 years']], period, p => link(board, p)) + '</div>' +
+      (all.length ? '<div class="stats-row">' + tileH('Listings', list.length) + tileH('Median return since listing', rets.length ? '<span class="' + signCls(Data.median(rets)) + '">' + num(Data.median(rets), 1) + '%</span>' : '-') +
+        tileH('Trading above first close', rets.length ? Math.round(rets.filter(v => v > 0).length / rets.length * 100) + '%' : '-') +
+        tileH('Best', best ? '<a href="#/company/' + esc(best.symbol) + '">' + esc(best.name) + '</a>' : '-', best ? '<span class="' + signCls(best._ret) + '">' + (best._ret > 0 ? '+' : '') + num(best._ret, 0) + '%</span>' : '') +
+        tileH('Worst', worst ? '<a href="#/company/' + esc(worst.symbol) + '">' + esc(worst.name) + '</a>' : '-', worst ? '<span class="' + signCls(worst._ret) + '">' + num(worst._ret, 0) + '%</span>' : '') + '</div>' +
+        '<div class="table-wrap"><table class="data list"><thead><tr><th>S.No.</th><th>Name</th><th class="l">Board</th><th>Listed on</th><th>First close ₹</th><th>Price ₹</th><th>Since listing %</th><th>Mar Cap Rs.Cr.</th><th class="l">Sector</th><th></th></tr></thead><tbody>' +
+        (list.length ? list.map((c, i) => '<tr><td>' + (i + 1) + '.</td><td><a href="#/company/' + esc(c.symbol) + '">' + esc(c.name) + '</a></td><td class="l">' + (c.sme ? '<span class="sme-badge">SME</span>' : 'Main') + '</td><td>' +
+          new Date(c.listed).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '</td><td>' + num(c.listPrice, 2) + '</td><td>' + num(c.metrics.price, 2) + '</td><td class="' + signCls(c._ret) + '">' + num(c._ret, 1) +
+          '</td><td>' + num(c.metrics.marketCap, 0) + '</td><td class="l">' + esc(c.sector || '') + '</td><td><button class="btn btn-small btn-plain" data-lcard="' + esc(c.symbol) + '">↗ Card</button></td></tr>').join('')
+          : '<tr><td colspan="10" class="muted" style="text-align:center;padding:24px">No listings in this period.</td></tr>') + '</tbody></table></div>' +
+        '<p class="table-note">"First close" is the closing price on the first trading day (the IPO issue price is not in the data yet). Listing dates come from NSE\'s equity and SME lists.</p>'
+      : '<p class="muted">Listing dates appear with the live market data. They come from NSE\'s equity and SME lists in the daily data update.</p>') +
+      '</div><div class="card"><h2>Upcoming IPOs</h2><p class="muted">Open and upcoming issues, with dates, price bands and lot sizes, are published by the exchanges:</p><div class="flex flex-wrap">' +
+      '<a class="btn" target="_blank" rel="noopener noreferrer" href="https://www.nseindia.com/market-data/all-upcoming-issues-ipo">NSE: upcoming issues ↗</a>' +
+      '<a class="btn" target="_blank" rel="noopener noreferrer" href="https://www.nseindia.com/market-data/sme-market">NSE Emerge (SME) ↗</a>' +
+      '<a class="btn" target="_blank" rel="noopener noreferrer" href="https://www.bseindia.com/publicissue.html">BSE public issues ↗</a></div></div></div>';
+    $$('[data-lcard]').forEach(b => b.onclick = () => openCardModal(['listing', 'snapshot'], () => Data.loadCompany(b.dataset.lcard), b.dataset.lcard));
+  }
+
+  /* ---------- Results calendar ---------- */
+  function pageCalendar(parts, params) {
+    setTitle('Results calendar');
+    const mine = params.mine === '1';
+    app.innerHTML = LOADING;
+    const token = navToken;
+    Data.loadCalendar().then(cal => {
+      if (token !== navToken) return;
+      const today = new Date().toISOString().slice(0, 10), wl = watchlist();
+      let ev = (cal && cal.events) || [];
+      if (mine) ev = ev.filter(e => wl.indexOf(e.s) >= 0);
+      const up = ev.filter(e => e.d >= today), past = ev.filter(e => e.d < today).reverse();
+      const dayLabel = d => {
+        const t = new Date(d + 'T00:00:00'), diff = Math.round((t - new Date(today + 'T00:00:00')) / 864e5);
+        return (diff === 0 ? 'Today, ' : diff === 1 ? 'Tomorrow, ' : '') + t.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      };
+      const gcal = e => 'https://calendar.google.com/calendar/render?action=TEMPLATE&text=' + encodeURIComponent(e.n + ': board meeting (' + e.p.join(', ') + ')') +
+        '&dates=' + e.d.replace(/-/g, '') + '/' + new Date(Date.parse(e.d) + 864e5).toISOString().slice(0, 10).replace(/-/g, '') + '&details=' + encodeURIComponent('Via Sankhyas. Exchange filing: ' + e.u);
+      const group = list => {
+        const by = {}, order = [];
+        list.forEach(e => { if (!by[e.d]) { by[e.d] = []; order.push(e.d); } by[e.d].push(e); });
+        return order.map(d => '<div class="cal-day"><h3>' + esc(dayLabel(d)) + ' <span class="sub">' + by[d].length + '</span></h3><ul class="cal-list">' + by[d].map(e => {
+          const known = Data.exists(e.s);
+          return '<li><div>' + (known ? '<a href="#/company/' + encodeURIComponent(e.s) + '"><b>' + esc(e.n) + '</b></a>' : '<b>' + esc(e.n) + '</b>') + ' <span class="sub">' + esc(e.s) + '</span></div>' +
+            '<div class="cal-tags">' + e.p.map(p => '<span class="mv ' + (p === 'Results' ? 'mv-new' : '') + '">' + esc(p) + '</span>').join('') +
+            ' <a class="sub" target="_blank" rel="noopener noreferrer" href="' + esc(e.u) + '">filing ↗</a> <a class="sub" target="_blank" rel="noopener noreferrer" href="' + gcal(e) + '">+ Google Calendar</a></div></li>';
+        }).join('') + '</ul></div>').join('');
+      };
+      app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Results calendar</h1><p>Board meetings announced to the exchanges for results, dividends and fund raising' +
+        (cal ? ' &middot; updated ' + new Date(cal.updated).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '') + '</p></div>' +
+        '<div class="flex flex-wrap"><div class="seg"><a class="' + (mine ? '' : 'active') + '" href="#/calendar">All companies</a><a class="' + (mine ? 'active' : '') + '" href="#/calendar?mine=1">My watchlist</a></div>' +
+        '<a class="btn" href="#/results/latest">Latest results</a></div></div>' +
+        (!cal ? '<p class="muted">The calendar is built from live exchange filings and appears on the live site.</p>'
+          : up.length ? group(up) : '<p class="muted">' + (mine ? 'No upcoming board meetings for companies in your watchlist.' : 'No upcoming board meetings announced yet.') + '</p>') +
+        (past.length ? '<h2 style="margin-top:28px">Held in the last 7 days</h2>' + group(past) : '') +
+        '<p class="table-note">Companies must tell the exchange at least 5 working days before a results board meeting. The list grows as new intimations are filed. Dates can change: check the filing.</p></div></div>';
+    });
+  }
+
+  /* ---------- Themes ---------- */
+  function pageThemes(parts) {
+    const all = Data.listCompanies();
+    const theme = parts[0] ? Themes.get(parts[0]) : null;
+    if (parts[0] && !theme) return pageNotFound();
+    const stats = list => ({ n: list.length, mcap: list.reduce((a, c) => a + (c.metrics.marketCap || 0), 0), pe: Data.median(list.map(c => c.metrics.pe)),
+      roce: Data.median(list.map(c => c.metrics.roce)), ret: Data.median(list.map(c => c.metrics.ret1y)),
+      top: list.filter(c => c.metrics.ret1y != null).sort((a, b) => b.metrics.ret1y - a.metrics.ret1y) });
+    if (!theme) {
+      setTitle('Theme tracker');
+      const rows = Themes.list.map(t => Object.assign({ t }, stats(Themes.members(t, all)))).filter(r => r.n);
+      app.innerHTML = '<div class="container page"><div class="section-head"><div><h1>Theme tracker</h1><p class="muted">Follow India\'s big investment themes: who leads, who lags, and what they cost.</p></div>' +
+        '<a class="btn" href="#/studio?kind=theme">↗ Make a post</a></div><div class="grid grid-3">' +
+        rows.map(r => '<a class="card theme-card" href="#/theme/' + r.t.slug + '"><div class="theme-icon" aria-hidden="true">' + r.t.icon + '</div><h3>' + esc(r.t.name) + '</h3><p class="muted">' + esc(r.t.desc) + '</p>' +
+          '<div class="theme-stats"><div><span class="sub">Companies</span><b>' + r.n + '</b></div><div><span class="sub">Median 1Y</span><b class="' + signCls(r.ret) + '">' + num(r.ret, 1) + '%</b></div><div><span class="sub">Median P/E</span><b>' + num(r.pe, 1) + '</b></div></div>' +
+          (r.top[0] ? '<div class="sub" style="margin-top:8px">Leader: ' + esc(r.top[0].name) + ' <span class="' + signCls(r.top[0].metrics.ret1y) + '">' + num(r.top[0].metrics.ret1y, 0) + '%</span></div>' : '') + '</a>').join('') +
+        '</div>' + (rows.length ? '' : '<p class="muted">Themes appear once company data has loaded.</p>') + '</div>';
+      return;
+    }
+    const list = Themes.members(theme, all), st = stats(list);
+    setTitle(theme.name + ' stocks');
+    const mini = arr => arr.map(c => '<li><a href="#/company/' + esc(c.symbol) + '">' + esc(c.name) + '</a><span class="' + signCls(c.metrics.ret1y) + '">' + num(c.metrics.ret1y, 1) + '%</span></li>').join('');
+    app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>' + theme.icon + ' ' + esc(theme.name) + '</h1><p>' + esc(theme.desc) + ' &middot; <a href="#/themes">All themes</a></p></div>' +
+      '<button class="btn" id="theme-share">↗ Share leaderboard</button></div>' +
+      '<div class="stats-row"><div class="stat"><div class="sub">Companies</div><b>' + st.n + '</b></div><div class="stat"><div class="sub">Total market cap</div><b>₹ ' + num(st.mcap, 0) + ' Cr</b></div>' +
+      '<div class="stat"><div class="sub">Median 1Y return</div><b class="' + signCls(st.ret) + '">' + num(st.ret, 1) + '%</b></div><div class="stat"><div class="sub">Median P/E</div><b>' + num(st.pe, 1) + '</b></div><div class="stat"><div class="sub">Median ROCE</div><b>' + num(st.roce, 1) + '%</b></div></div>' +
+      '<div class="grid grid-2" style="margin:8px 0 20px"><div><h3>Leaders (1 year)</h3><ul class="rank-list">' + mini(st.top.slice(0, 5)) + '</ul></div><div><h3>Laggards (1 year)</h3><ul class="rank-list">' + mini(st.top.slice(-5).reverse()) + '</ul></div></div>' +
+      '<div id="theme-list"></div></div></div>';
+    sortableList($('#theme-list'), list, ['price', 'marketCap', 'pe', 'roce', 'ret1y', 'qtrSalesVar', 'qtrProfitVar'], { median: true, sortKey: 'marketCap' });
+    $('#theme-share').onclick = () => openCardModal(['theme'], () => Promise.resolve({ theme, list }), theme.slug);
+  }
+
+  /* ---------- Social post studio ---------- */
+  function pageStudio(parts, params) {
+    setTitle('Social post studio');
+    const kinds = Object.keys(Cards.kinds);
+    const kind0 = kinds.indexOf(params.kind) >= 0 ? params.kind : 'results';
+    const all = Data.listCompanies();
+    const recentListings = all.filter(c => c.listed && c.listPrice != null).sort((a, b) => b.listed.localeCompare(a.listed)).slice(0, 12);
+    app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Social post studio</h1><p>Turn Sankhyas data into ready-to-post images and captions for Instagram, X, LinkedIn and WhatsApp. Every card carries the Sankhyas brand and ' +
+      esc('@' + ((Account.config.business || {}).instagram || 'sankhyas.co')) + '.</p></div></div>' +
+      '<div class="studio-grid"><div class="studio-form">' +
+      '<div class="field"><label for="st-kind">Template</label><select id="st-kind">' + kinds.map(k => '<option value="' + k + '"' + (k === kind0 ? ' selected' : '') + '>' + esc(Cards.kinds[k]) + '</option>').join('') + '</select></div>' +
+      '<div class="field" id="st-co-wrap"><label for="st-co">Company</label><div class="search-wrap"><input id="st-co" type="search" placeholder="Search a company" autocomplete="off"></div>' +
+      (recentListings.length ? '<div class="sub" id="st-recent" style="margin-top:6px">Recent listings: ' + recentListings.slice(0, 6).map(c => '<a href="" data-pick="' + esc(c.symbol) + '">' + esc(c.symbol) + '</a>').join(', ') + '</div>' : '') + '</div>' +
+      '<div class="field" id="st-theme-wrap" hidden><label for="st-theme">Theme</label><select id="st-theme">' + Themes.list.map(t => '<option value="' + t.slug + '">' + t.icon + ' ' + esc(t.name) + '</option>').join('') + '</select></div>' +
+      '<button class="btn btn-primary" id="st-make">Create post</button>' +
+      '<p class="table-note">Tip: post results cards on results day, red-flag scans for trending stocks, and theme leaderboards weekly. Automatic posting to Instagram needs a Meta business app and can be added later.</p></div>' +
+      '<div class="studio-help"><h3>What you get</h3><ul class="feat-list"><li>A 1080×1080 feed image or a 1080×1920 story</li><li>A caption with key numbers, hashtags and a disclaimer</li><li>Download, copy, or share straight to apps on your phone</li></ul></div></div></div></div>';
+    let picked = null;
+    const sync = () => { const k = $('#st-kind').value; $('#st-theme-wrap').hidden = k !== 'theme'; $('#st-co-wrap').hidden = k === 'theme'; };
+    $('#st-kind').onchange = sync; sync();
+    attachSearch($('#st-co'), c => { picked = c; $('#st-co').value = c.name; }, { keepValue: true, footer: false });
+    $$('[data-pick]').forEach(a => a.onclick = e => { e.preventDefault(); picked = Data.getCompany(a.dataset.pick); $('#st-co').value = picked ? picked.name : ''; if ($('#st-kind').value !== 'listing') { $('#st-kind').value = 'listing'; sync(); } });
+    if (params.s && Data.exists(params.s)) { picked = Data.getCompany(params.s); $('#st-co').value = picked.name; }
+    $('#st-make').onclick = () => {
+      const k = $('#st-kind').value;
+      if (k === 'theme') {
+        const t = Themes.get($('#st-theme').value);
+        return openCardModal(['theme'], () => Promise.resolve({ theme: t, list: Themes.members(t, all) }), t.slug);
+      }
+      if (!picked) { toast('Pick a company first'); $('#st-co').focus(); return; }
+      if (k === 'listing' && !picked.listed) { toast('No listing data for ' + picked.name + ' (only companies listed in the last 5 years)'); return; }
+      openCardModal([k], () => Data.loadCompany(picked.symbol), picked.symbol);
+    };
   }
 
   /* ---------- Compare ---------- */
