@@ -270,6 +270,12 @@
   function answerCompany(c, q) {
     const t = q.toLowerCase();
     if (window.Insights) {
+      const locked = window.Account && !Account.isPro();
+      const upsell = what => '## ' + what + ' (Sankhyas Pro)\n' + what + ' for ' + c.name + ' is part of **Sankhyas Pro**.' +
+        (what === 'Red-flag scan' ? ' Free preview: the red-flag score is **' + Insights.redFlags(c).score + '/100**.' : '') + '\n\n[See Pro plans](#/premium)';
+      if (locked && /red ?flags?|forensic|fraud|manipulat|accounting (issue|quality)|warning signs?|risk score|governance/.test(t)) return upsell('Red-flag scan');
+      if (locked && /what('?s| has| have)? (changed|new)|changes? (since|this quarter|vs|from)|latest (update|changes)/.test(t)) return upsell('What changed');
+      if (locked && /guidance|promis|track record|deliver(ed|y)? on|credib|execution/.test(t)) return upsell('Guidance tracker');
       if (/red ?flags?|forensic|fraud|manipulat|accounting (issue|quality)|warning signs?|risk score|governance/.test(t)) return Insights.redFlagsMd(c) + sourceNote(c);
       if (/what('?s| has| have)? (changed|new)|changes? (since|this quarter|vs|from)|latest (update|changes)/.test(t)) return Insights.whatChangedMd(c) + sourceNote(c);
       if (/guidance|promis|track record|deliver(ed|y)? on|credib|execution/.test(t)) return Insights.guidanceMd(c) + sourceNote(c);
@@ -639,7 +645,7 @@
     const lc = latestConcall(c);
     if (lc) out.push('Latest concall (' + lc.n.d.slice(0, 10) + ', tone ' + lc.n.tone + '): ' +
       Object.keys(lc.n.sections).map(k => k + ': ' + lc.n.sections[k].join(' ')).join(' | ').slice(0, 2500));
-    if (window.Insights) {
+    if (window.Insights && !(window.Account && !Account.isPro())) {
       const rf = Insights.redFlags(c);
       out.push('Sankhyas red-flag score: ' + rf.score + '/100 (' + rf.band + ')' + (rf.flags.length ? '; flags: ' + rf.flags.map(f => f.title + ' (' + f.detail + ')').join('; ').slice(0, 1200) : '; no flags'));
       const g = Insights.guidance(c);

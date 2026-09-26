@@ -452,3 +452,20 @@ table.data.ai-table th.l, table.data.ai-table td.l { text-align: left; }
 .mv-raised, .mv-new { color: var(--green); background: var(--green-bg); }
 .mv-lowered, .mv-not-repeated { color: var(--red); background: var(--red-bg); }
 @media (max-width: 900px) { .ins-grid { grid-template-columns: minmax(0, 1fr); grid-template-areas: "risk" "changed" "guide"; } }
+/* accounts and Pro */
+.btn-google { width: 100%; justify-content: center; gap: 10px; background: var(--bg); }
+.or-line { display: flex; align-items: center; gap: 10px; color: var(--ink-3); font-size: 12px; margin: 16px 0; }
+.or-line::before, .or-line::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+.ok-box { background: var(--green-bg); color: var(--ink); padding: 12px 14px; border-radius: 6px; font-size: 14px; margin: 10px 0; }
+.acct-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin: 12px 0 8px; }
+.plans .card { display: flex; flex-direction: column; position: relative; }
+.plans .card > .btn:last-child, .plans .card > span.btn { margin-top: auto; justify-content: center; }
+.plans .price { font-size: 30px; font-weight: 700; margin: 0; }
+.plan-best { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.plan-ribbon { position: absolute; top: -11px; right: 16px; background: var(--primary); color: #fff; font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 10px; }
+.feat-list { padding-left: 18px; font-size: 14px; margin: 14px 0 20px; } .feat-list li { margin-bottom: 7px; }
+.pro-status { margin-top: 8px; }
+.ins-card.locked { position: relative; }
+.lock-cta { margin-top: 12px; padding: 14px; border: 1px dashed var(--primary); border-radius: 8px; background: var(--primary-bg); text-align: center; font-size: 14px; }
+.lock-cta .sub { margin: 4px 0 10px; }
+.legal h3 { margin-top: 22px; font-size: 16px; } .legal p, .legal li { font-size: 14.5px; line-height: 1.6; }

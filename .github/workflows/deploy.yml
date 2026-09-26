@@ -99,6 +99,32 @@ jobs:
           [ -d data/filings ] && cp -r data/filings _site/data/ || true
           du -sh _site
 
+      # Accounts and payments: public keys come from repository variables (Settings > Secrets and
+      # variables > Actions > Variables). Without SUPABASE_URL the site runs without real accounts.
+      - name: Site settings (accounts and payments)
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          RAZORPAY_KEY_ID: ${{ vars.RAZORPAY_KEY_ID }}
+          PRO_FREE_DURING_BETA: ${{ vars.PRO_FREE_DURING_BETA }}
+          BUSINESS_NAME: ${{ vars.BUSINESS_NAME }}
+          BUSINESS_EMAIL: ${{ vars.BUSINESS_EMAIL }}
+          BUSINESS_PHONE: ${{ vars.BUSINESS_PHONE }}
+          BUSINESS_ADDRESS: ${{ vars.BUSINESS_ADDRESS }}
+        run: |
+          if [ -n "$SUPABASE_URL" ]; then
+            node -e '
+              const e = process.env, s = v => JSON.stringify(v || "");
+              const cfg = { supabaseUrl: e.SUPABASE_URL, supabaseAnonKey: e.SUPABASE_ANON_KEY, razorpayKeyId: e.RAZORPAY_KEY_ID,
+                proFreeDuringBeta: /^(1|true|yes)$/i.test(e.PRO_FREE_DURING_BETA || ""),
+                business: { name: e.BUSINESS_NAME || "Sankhyas", email: e.BUSINESS_EMAIL || "", phone: e.BUSINESS_PHONE || "", address: e.BUSINESS_ADDRESS || "" } };
+              require("fs").writeFileSync("_site/js/config.js", "window.SANKHYAS_CONFIG = " + JSON.stringify(cfg, null, 2) + ";\n");
+            '
+            echo "Accounts and payments: on ($SUPABASE_URL)"
+          else
+            echo "Accounts and payments: off (set the SUPABASE_URL repository variable to switch them on)"
+          fi
+
       - name: Publish to gh-pages
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

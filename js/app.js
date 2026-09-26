@@ -12,7 +12,7 @@
     get(k, def) { try { const v = localStorage.getItem('sankhyas_' + k); return v == null ? def : JSON.parse(v); } catch (e) { return def; } },
     set(k, v) { try { localStorage.setItem('sankhyas_' + k, JSON.stringify(v)); } catch (e) { /* ignore */ } }
   };
-  const user = () => store.get('user', null);
+  const user = () => Account.user();
   const watchlist = () => store.get('watchlist', []);
   const inWatchlist = s => watchlist().indexOf(s) >= 0;
   function toggleWatch(sym) {
@@ -140,16 +140,17 @@
       slot.innerHTML = '<a href="#/login" class="btn btn-small">Login</a><a href="#/register" class="btn btn-small btn-primary">Get free account</a>';
       return;
     }
-    slot.innerHTML = '<div class="user-menu"><button class="btn btn-small" id="user-btn">' + esc(u.name.split(' ')[0]) + ' ▾</button></div>';
+    slot.innerHTML = '<div class="user-menu"><button class="btn btn-small" id="user-btn">' + esc((u.name || u.email || 'Account').split(' ')[0]) +
+      (Account.cloud && Account.isPro() ? ' ' + PRO_TAG : '') + ' ▾</button></div>';
     $('#user-btn').onclick = e => {
       e.stopPropagation();
       const existing = $('.user-menu .dropdown');
       if (existing) { existing.remove(); return; }
       const dd = document.createElement('div');
       dd.className = 'dropdown';
-      dd.innerHTML = '<a href="#/watchlist">Watchlist</a><a href="#/screens">My screens</a><a href="#/premium">Sankhyas Pro</a><button id="logout-btn">Logout</button>';
+      dd.innerHTML = '<a href="#/account">My account</a><a href="#/watchlist">Watchlist</a><a href="#/screens">My screens</a><a href="#/premium">Sankhyas Pro</a><button id="logout-btn">Logout</button>';
       $('.user-menu').appendChild(dd);
-      $('#logout-btn').onclick = () => { store.set('user', null); renderAuth(); toast('Logged out'); location.hash = '#/'; };
+      $('#logout-btn').onclick = () => { Account.signOut().then(() => { renderAuth(); toast('Logged out'); location.hash = '#/'; }); };
       setTimeout(() => document.addEventListener('click', () => dd.remove(), { once: true }));
     };
   }
@@ -182,7 +183,8 @@
     const routes = {
       '': pageHome, company: pageCompany, screens: pageScreens, screen: pageScreen, feed: pageFeed, tools: pageTools,
       market: pageMarket, results: pageResults, compare: pageCompare, watchlist: pageWatchlist,
-      login: pageLogin, register: pageRegister, premium: pagePremium, about: pageAbout, ai: pageAI
+      login: pageLogin, register: pageRegister, premium: pagePremium, about: pageAbout, ai: pageAI,
+      account: pageAccount, forgot: pageForgot, reset: pageReset, terms: pageLegal, privacy: pageLegal, refunds: pageLegal, contact: pageLegal
     };
     const fn = routes[p0] || pageNotFound;
     const prevY = window.scrollY;
@@ -453,9 +455,27 @@
     }
     return '<div class="ins-card ins-changed"><div class="ins-head"><h3>What changed</h3>' + PRO_TAG + '</div>' + (html || '<p class="muted">Not enough history yet to compare the latest quarter and concall with the previous ones.</p>') + '</div>';
   }
+  // free users see the score and what is inside, with the details behind Pro
+  function lockedCard(cls, title, teaser) {
+    return '<div class="ins-card ' + cls + ' locked"><div class="ins-head"><h3>' + title + '</h3>' + PRO_TAG + '</div>' + teaser +
+      '<div class="lock-cta"><span aria-hidden="true">🔒</span> <b>Unlock with Sankhyas Pro</b><div class="sub">From ₹ 208 a month on the yearly plan.</div>' +
+      '<a class="btn btn-primary btn-small" href="#/premium">See Pro plans</a></div></div>';
+  }
   function insightsSection(c) {
-    return '<section class="section card" id="insights"><div class="section-head"><div><h2>Sankhyas Insights</h2><p>Forensic red flags, management\'s promises vs delivery, and what changed this quarter. Free during beta.</p></div></div>' +
-      '<div class="ins-grid">' + riskCard(c) + guidanceCard(c) + changedCard(c) + '</div></section>';
+    const open = Account.isPro();
+    const note = !Account.cloud || Account.config.proFreeDuringBeta ? 'Free during beta.' : open ? 'Included in your Pro plan.' : 'The red-flag score is free; the details are part of Sankhyas Pro.';
+    let cards;
+    if (open) cards = riskCard(c) + guidanceCard(c) + changedCard(c);
+    else {
+      const r = Insights.redFlags(c), g = Insights.guidance(c), w = Insights.whatChanged(c);
+      const cls = r.band === 'High' ? 'risk-high' : r.band === 'Moderate' ? 'risk-mid' : 'risk-low';
+      cards = lockedCard('ins-risk', 'Red-flag scan', '<div class="risk-meter ' + cls + '"><div class="risk-score"><b>' + r.score + '</b><span>/100</span></div><div><div class="risk-band">' + r.band + ' risk</div>' +
+          '<div class="risk-bar"><span style="width:' + Math.max(3, r.score) + '%"></span></div></div></div><p class="muted">' + (r.flags.length ? r.flags.length + ' warning sign' + (r.flags.length > 1 ? 's' : '') + ' found' : 'No warning signs found') + '. See each one and the filing behind it with Pro.</p>') +
+        lockedCard('ins-changed', 'What changed', '<p class="muted">' + (w.results ? 'Results for ' + esc(w.results.quarter) + ' vs the previous quarter and a year ago' : 'Latest results vs the previous quarter') + (w.concall ? ', concall tone and guidance changes' : '') + (w.filings.length ? ', and ' + w.filings.length + ' important filing' + (w.filings.length > 1 ? 's' : '') : '') + '.</p>') +
+        lockedCard('ins-guide', 'Guidance tracker', '<p class="muted">' + (g.rows.length ? g.rows.length + ' management target' + (g.rows.length > 1 ? 's' : '') + ' tracked from ' + g.calls + ' concall' + (g.calls > 1 ? 's' : '') + '. See what was promised and what was delivered.' : 'Management\'s concall promises, scored against what was actually delivered.') + '</p>');
+    }
+    return '<section class="section card" id="insights"><div class="section-head"><div><h2>Sankhyas Insights</h2><p>Forensic red flags, management\'s promises vs delivery, and what changed this quarter. ' + note + '</p></div></div>' +
+      '<div class="ins-grid">' + cards + '</div></section>';
   }
   function refreshInsights(c) {
     const el = $('#insights');
@@ -1405,52 +1425,178 @@
   }
 
   /* ---------- Auth ---------- */
+  const GOOGLE_ICON = '<svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>';
+  const errBox = m => '<div class="error-box">' + esc(m) + '</div>';
+  const okBox = m => '<div class="ok-box">' + m + '</div>';
   function authPage(isRegister, params) {
     setTitle(isRegister ? 'Register' : 'Login');
+    const next = params.next || '#/feed';
+    if (user()) { location.hash = next; return; }
     app.innerHTML = '<div class="container page"><div class="card auth-card"><h1>' + (isRegister ? 'Create a free account' : 'Welcome back') + '</h1>' +
-      '<p class="muted" style="text-align:center">' + (isRegister ? 'Save screens, follow companies and get a personalised feed.' : 'Login to your Sankhyas account') + '</p>' +
-      '<form id="auth-form">' + (isRegister ? '<div class="field"><label for="a-name">Full name</label><input type="text" id="a-name" required></div>' : '') +
-      '<div class="field"><label for="a-email">Email</label><input type="email" id="a-email" required></div>' +
-      '<div class="field"><label for="a-pass">Password</label><input type="password" id="a-pass" minlength="6" required></div>' +
-      '<div id="auth-err"></div><button class="btn btn-primary" style="width:100%;justify-content:center" type="submit">' + (isRegister ? 'Register' : 'Login') + '</button></form>' +
-      '<p class="sub" style="text-align:center;margin-top:16px">' + (isRegister ? 'Already have an account? <a href="#/login">Login</a>' : 'New to Sankhyas? <a href="#/register">Create an account</a>') + '</p>' +
-      '<p class="table-note" style="text-align:center">Your account is saved securely in this browser.</p></div></div>';
-    $('#auth-form').onsubmit = e => {
+      '<p class="muted" style="text-align:center">' + (isRegister ? 'Save screens, follow companies and unlock Sankhyas Pro.' : 'Login to your Sankhyas account') + '</p>' +
+      (Account.cloud ? '<button class="btn btn-google" id="google-btn" type="button">' + GOOGLE_ICON + ' Continue with Google</button><div class="or-line"><span>or</span></div>' : '') +
+      '<form id="auth-form">' + (isRegister ? '<div class="field"><label for="a-name">Full name</label><input type="text" id="a-name" autocomplete="name" required></div>' : '') +
+      '<div class="field"><label for="a-email">Email</label><input type="email" id="a-email" autocomplete="email" required></div>' +
+      '<div class="field"><label for="a-pass">Password</label><input type="password" id="a-pass" minlength="' + (Account.cloud ? 8 : 6) + '" autocomplete="' + (isRegister ? 'new-password' : 'current-password') + '" required></div>' +
+      (!isRegister && Account.cloud ? '<p class="sub" style="text-align:right;margin:-8px 0 12px"><a href="#/forgot">Forgot password?</a></p>' : '') +
+      '<div id="auth-err">' + (Account.error ? errBox(Account.error) : '') + '</div><button class="btn btn-primary" style="width:100%;justify-content:center" type="submit">' + (isRegister ? 'Create account' : 'Login') + '</button></form>' +
+      '<p class="sub" style="text-align:center;margin-top:16px">' + (isRegister ? 'Already have an account? <a href="#/login' + (params.next ? '?next=' + encodeURIComponent(params.next) : '') + '">Login</a>'
+        : 'New to Sankhyas? <a href="#/register' + (params.next ? '?next=' + encodeURIComponent(params.next) : '') + '">Create an account</a>') + '</p>' +
+      '<p class="table-note" style="text-align:center">' + (Account.cloud ? 'By continuing you agree to the <a href="#/terms">Terms</a> and <a href="#/privacy">Privacy policy</a>.' : 'Your account is saved in this browser.') + '</p></div></div>';
+    if ($('#google-btn')) $('#google-btn').onclick = async () => {
+      try { sessionStorage.setItem('sankhyas_next', next); } catch (e) { /* ignore */ }
+      const r = await Account.google();
+      if (r.error) $('#auth-err').innerHTML = errBox(r.error);
+    };
+    $('#auth-form').onsubmit = async e => {
       e.preventDefault();
-      const email = $('#a-email').value.trim().toLowerCase();
-      const pass = $('#a-pass').value;
-      const accounts = store.get('accounts', {});
-      const hashPw = s => { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; return h.toString(36); };
-      if (isRegister) {
-        if (accounts[email]) { $('#auth-err').innerHTML = '<div class="error-box">An account with this email already exists.</div>'; return; }
-        accounts[email] = { name: $('#a-name').value.trim(), pw: hashPw(pass) };
-        store.set('accounts', accounts);
-      } else if (!accounts[email] || accounts[email].pw !== hashPw(pass)) {
-        $('#auth-err').innerHTML = '<div class="error-box">Invalid email or password.</div>';
+      const btn = $('#auth-form button[type=submit]');
+      const email = $('#a-email').value.trim().toLowerCase(), pass = $('#a-pass').value;
+      btn.disabled = true;
+      const r = isRegister ? await Account.signUp($('#a-name').value.trim(), email, pass) : await Account.signIn(email, pass);
+      btn.disabled = false;
+      if (r.error) { $('#auth-err').innerHTML = errBox(r.error); return; }
+      if (r.needsConfirm) {
+        $('#auth-form').outerHTML = okBox('Almost done! We sent a confirmation link to <b>' + esc(email) + '</b>. Open it to activate your account, then log in.');
         return;
       }
-      store.set('user', { name: accounts[email].name, email });
       renderAuth();
-      toast('Welcome, ' + accounts[email].name.split(' ')[0]);
-      location.hash = params.next || '#/feed';
+      toast('Welcome, ' + ((user() && user().name) || '').split(' ')[0]);
+      location.hash = next;
     };
+  }
+  function pageForgot() {
+    setTitle('Reset password');
+    app.innerHTML = '<div class="container page"><div class="card auth-card"><h1>Reset your password</h1><p class="muted" style="text-align:center">We will email you a link to set a new password.</p>' +
+      '<form id="forgot-form"><div class="field"><label for="f-email">Email</label><input type="email" id="f-email" autocomplete="email" required></div><div id="auth-err"></div>' +
+      '<button class="btn btn-primary" style="width:100%;justify-content:center" type="submit">Send reset link</button></form><p class="sub" style="text-align:center;margin-top:16px"><a href="#/login">Back to login</a></p></div></div>';
+    $('#forgot-form').onsubmit = async e => {
+      e.preventDefault();
+      const email = $('#f-email').value.trim().toLowerCase();
+      const r = await Account.resetPassword(email);
+      if (r.error) { $('#auth-err').innerHTML = errBox(r.error); return; }
+      $('#forgot-form').outerHTML = okBox('If an account exists for <b>' + esc(email) + '</b>, a reset link is on its way. Check your inbox.');
+    };
+  }
+  function pageReset() {
+    setTitle('Set a new password');
+    if (!user()) { app.innerHTML = '<div class="container page"><div class="card auth-card"><h1>Link expired</h1><p class="muted" style="text-align:center">Open the reset link from your email again, or <a href="#/forgot">request a new one</a>.</p></div></div>'; return; }
+    app.innerHTML = '<div class="container page"><div class="card auth-card"><h1>Set a new password</h1>' +
+      '<form id="reset-form"><div class="field"><label for="r-pass">New password</label><input type="password" id="r-pass" minlength="8" autocomplete="new-password" required></div><div id="auth-err"></div>' +
+      '<button class="btn btn-primary" style="width:100%;justify-content:center" type="submit">Save password</button></form></div></div>';
+    $('#reset-form').onsubmit = async e => {
+      e.preventDefault();
+      const r = await Account.setPassword($('#r-pass').value);
+      if (r.error) { $('#auth-err').innerHTML = errBox(r.error); return; }
+      toast('Password updated');
+      location.hash = '#/account';
+    };
+  }
+  function pageAccount() {
+    setTitle('My account');
+    const u = user();
+    if (!u) { location.hash = '#/login?next=' + encodeURIComponent('#/account'); return; }
+    const pro = Account.isPro(), until = Account.proUntil();
+    const planHtml = !Account.cloud ? '<p><b>Sankhyas Pro</b> ' + PRO_TAG + ' is free for everyone during beta.</p>'
+      : pro && until ? '<p><b>Sankhyas Pro</b> ' + PRO_TAG + ' active until <b>' + until.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) + '</b>.</p><a class="btn" href="#/premium">Extend Pro</a>'
+      : pro ? '<p><b>Sankhyas Pro</b> ' + PRO_TAG + ' is free during beta.</p>'
+      : '<p>You are on the <b>Free</b> plan.' + (until ? ' Pro expired on ' + until.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '.' : '') + '</p><a class="btn btn-primary" href="#/premium">Upgrade to Pro</a>';
+    app.innerHTML = '<div class="container page"><div class="card" style="max-width:720px;margin:0 auto"><h1>My account</h1>' +
+      '<div class="acct-grid"><div><div class="sub">Name</div><b>' + esc(u.name || '-') + '</b></div><div><div class="sub">Email</div><b>' + esc(u.email || '-') + '</b></div></div>' +
+      '<h3>Plan</h3>' + planHtml +
+      (Account.cloud ? '<h3>Payments</h3><div id="pay-list" class="muted">Loading…</div>' : '') +
+      '<div class="flex flex-wrap" style="margin-top:24px">' + (Account.cloud ? '<a class="btn" href="#/forgot">Change password</a>' : '') +
+      '<button class="btn" id="acct-logout">Logout</button></div></div></div>';
+    $('#acct-logout').onclick = () => Account.signOut().then(() => { renderAuth(); location.hash = '#/'; });
+    if (Account.cloud) {
+      Account.payments().then(list => {
+        const el = $('#pay-list');
+        if (!el) return;
+        el.innerHTML = list.length ? '<div class="table-wrap"><table class="data"><thead><tr><th class="l">Date</th><th class="l">Plan</th><th>Amount</th><th class="l">Status</th><th class="l">Payment ID</th></tr></thead><tbody>' +
+          list.map(x => '<tr><td class="l">' + new Date(x.paid_at || x.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '</td><td class="l">' +
+            (x.plan === 'pro_yearly' ? 'Pro, 1 year' : 'Pro, 1 month') + '</td><td>₹ ' + num(x.amount / 100, 0) + '</td><td class="l">' + esc(x.status === 'created' ? 'not completed' : x.status) + '</td><td class="l">' + esc(x.payment_id || '-') + '</td></tr>').join('') +
+          '</tbody></table></div>' : 'No payments yet.';
+      });
+    }
   }
   const pageLogin = (p, params) => authPage(false, params);
   const pageRegister = (p, params) => authPage(true, params);
 
-  function pagePremium() {
+  function pagePremium(p, params) {
     setTitle('Sankhyas Pro');
-    const feat = (list) => '<ul style="padding-left:18px;font-size:14px">' + list.map(f => '<li style="margin-bottom:6px">' + f + '</li>').join('') + '</ul>';
-    app.innerHTML = '<div class="container page"><div style="text-align:center;margin-bottom:28px"><h1>Sankhyas Pro</h1><p class="muted">The AI that reads every concall, annual report and filing for you. All Pro features are free during beta.</p></div>' +
-      '<div class="grid grid-2" style="max-width:820px;margin:0 auto">' +
-      '<div class="card"><h2>Free</h2><p style="font-size:28px;font-weight:700;margin:0">₹ 0</p><p class="muted">forever</p>' +
-      feat(['Financials, ratios, charts and peers for every NSE, BSE and SME company', 'Custom stock screens in plain English', 'Sankhyas AI (built-in, on-device and Claude)', 'Watchlist, feed and compare', 'Export to Excel']) + '<a class="btn" href="#/register">Get started</a></div>' +
-      '<div class="card" style="border-color:var(--primary)"><h2>Pro ' + PRO_TAG + '</h2><p style="font-size:28px;font-weight:700;margin:0">₹ 2,499</p><p class="muted">per year, or ₹ 299 a month &middot; <b>free during beta</b></p>' +
-      feat(['<b>Red-flag scan</b>: forensic score from the financials and filings (auditor exits, pledges, defaults, downgrades)', '<b>Guidance tracker</b>: management\'s promises vs what it delivered',
-        '<b>What changed</b>: every quarter\'s results, concall tone, guidance and new risks vs the last one', 'AI summaries of concall transcripts, investor presentations and annual reports',
-        'Screens on red-flag score and guidance delivery (e.g. Clean Compounders)']) + '<button class="btn btn-primary" id="buy">Use Pro free during beta</button></div>' +
-      '</div></div>';
-    $('#buy').onclick = () => { location.hash = '#/company/' + ((Data.listCompanies()[0] || {}).symbol || 'TCS'); toast('Pro features are free during beta: see Sankhyas Insights on any company page.'); };
+    const feat = (list) => '<ul class="feat-list">' + list.map(f => '<li>' + f + '</li>').join('') + '</ul>';
+    const paid = Account.cloud && !Account.config.proFreeDuringBeta;
+    const pro = Account.isPro(), until = Account.proUntil();
+    const status = !paid ? '<p class="pro-status">All Pro features are <b>free during beta</b>.</p>'
+      : pro && until ? '<p class="pro-status">You have Pro until <b>' + until.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) + '</b>. Buying again extends it.</p>' : '';
+    const buy = (plan, label, primary) => paid ? '<button class="btn ' + (primary ? 'btn-primary' : '') + ' buy-btn" data-plan="' + plan + '">' + label + '</button>'
+      : '<a class="btn ' + (primary ? 'btn-primary' : '') + '" href="#/company/' + encodeURIComponent((Data.listCompanies()[0] || {}).symbol || 'TCS') + '">Try Pro free</a>';
+    app.innerHTML = '<div class="container page"><div style="text-align:center;margin-bottom:28px"><h1>Sankhyas Pro</h1><p class="muted">The AI that reads every concall, annual report and filing for you.</p>' + status + '</div>' +
+      '<div class="grid grid-3 plans" style="max-width:1040px;margin:0 auto">' +
+      '<div class="card"><h2>Free</h2><p class="price">₹ 0</p><p class="muted">forever</p>' +
+      feat(['Financials, ratios, charts and peers for every NSE, BSE and SME company', 'Plain-English stock screens', 'Sankhyas AI (built-in, on-device and Claude)', 'Red-flag score for every company', 'Watchlist, feed, compare and Excel export']) +
+      (user() ? '<span class="btn" aria-disabled="true">Your plan' + (pro && paid ? ' before Pro' : '') + '</span>' : '<a class="btn" href="#/register">Get started</a>') + '</div>' +
+      '<div class="card"><h2>Pro monthly ' + PRO_TAG + '</h2><p class="price">₹ 299</p><p class="muted">per month &middot; one-time payment, no auto-renewal</p>' +
+      feat(['Everything in Free', '<b>Full red-flag scan</b> with every warning and the filing behind it', '<b>Guidance tracker</b>: management\'s promises vs delivery', '<b>What changed</b> every quarter: results, tone, guidance, new risks', 'Sankhyas AI answers on red flags, guidance and changes']) +
+      buy('pro_monthly', 'Buy 1 month', false) + '</div>' +
+      '<div class="card plan-best"><div class="plan-ribbon">Save 30%</div><h2>Pro yearly ' + PRO_TAG + '</h2><p class="price">₹ 2,499</p><p class="muted">per year (₹ 208/month) &middot; one-time payment</p>' +
+      feat(['Everything in Pro monthly', '12 months for the price of about 8', 'New Pro features as they launch']) +
+      buy('pro_yearly', 'Buy 1 year', true) + '</div>' +
+      '</div><p class="table-note" style="text-align:center;margin-top:18px">Payments are processed securely by Razorpay (UPI, cards, net banking, wallets). Prices include applicable taxes. ' +
+      'See <a href="#/refunds">refunds &amp; cancellation</a> and <a href="#/terms">terms</a>. Sankhyas is a research tool, not investment advice.</p></div>';
+    $$('.buy-btn').forEach(b => b.onclick = async () => {
+      if (!user()) { toast('Please create an account or log in first'); location.hash = '#/register?next=' + encodeURIComponent('#/premium'); return; }
+      const all = $$('.buy-btn');
+      all.forEach(x => { x.disabled = true; });
+      const label = b.textContent;
+      b.textContent = 'Opening payment…';
+      try {
+        const r = await Account.checkout(b.dataset.plan, { onVerifying: () => { b.textContent = 'Confirming payment…'; }, onFailed: msg => toast(msg) });
+        renderAuth();
+        modal('Welcome to Sankhyas Pro', '<p>Your payment was successful. Pro is active until <b>' + new Date(r.pro_until).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) + '</b>.</p><p>Open any company page to see the full <b>Sankhyas Insights</b>.</p>',
+          [{ label: 'My account', onClick: () => { location.hash = '#/account'; } }, { label: 'Start exploring', primary: true, onClick: () => { location.hash = '#/company/' + encodeURIComponent((Data.listCompanies()[0] || {}).symbol || 'TCS'); } }]);
+      } catch (e) {
+        if (e.code === 'login') { location.hash = '#/login?next=' + encodeURIComponent('#/premium'); return; }
+        if (e.code !== 'dismissed') modal(e.code === 'verify' ? 'Confirming your payment' : 'Payment not completed', '<p>' + esc(e.message) + '</p>');
+      } finally {
+        all.forEach(x => { x.disabled = false; });
+        b.textContent = label;
+      }
+    });
+    if (params && params.plan && paid) { const b = $('.buy-btn[data-plan="' + params.plan + '"]'); if (b) b.focus(); }
+  }
+
+  /* Pages Razorpay asks every merchant website to have. */
+  function pageLegal(p) {
+    const kind = (location.hash.match(/^#\/(\w+)/) || [])[1];
+    const B = Account.config.business || {}, name = esc(B.name || 'Sankhyas');
+    const email = B.email ? '<a href="mailto:' + esc(B.email) + '">' + esc(B.email) + '</a>' : '<i>(support email: set business.email in js/config.js)</i>';
+    const contactLines = '<p><b>' + name + '</b><br>' + (B.address ? esc(B.address) + '<br>' : '<i>(address: set business.address in js/config.js)</i><br>') +
+      'Email: ' + email + (B.phone ? '<br>Phone: ' + esc(B.phone) : '') + '</p>';
+    const updated = '<p class="sub">Last updated: 26 September 2026</p>';
+    const pages = {
+      contact: ['Contact & support', '<p>We are happy to help with your account, payments or data questions. We usually reply within 1–2 working days.</p>' + contactLines],
+      terms: ['Terms of use', updated +
+        '<h3>1. The service</h3><p>' + name + ' provides stock market data, screens, analytics and AI-generated summaries for research and education. Data comes from public sources (such as Yahoo Finance and NSE/BSE filings) and may be delayed, incomplete or wrong.</p>' +
+        '<h3>2. Not investment advice</h3><p>Nothing on ' + name + ' is a recommendation to buy, sell or hold any security. ' + name + ' is not a SEBI-registered investment adviser or research analyst. Do your own research or consult a SEBI-registered adviser before investing. You are solely responsible for your investment decisions.</p>' +
+        '<h3>3. Accounts</h3><p>Keep your login details safe. You are responsible for activity on your account. We may suspend accounts that misuse the service, scrape it in bulk or break the law.</p>' +
+        '<h3>4. Sankhyas Pro</h3><p>Pro is sold as a one-time purchase for a fixed period (1 month or 1 year) and does not renew automatically. Features may change as the product improves. Refunds follow our <a href="#/refunds">Refund &amp; cancellation policy</a>.</p>' +
+        '<h3>5. Liability</h3><p>The service is provided "as is". To the extent permitted by law, ' + name + ' is not liable for losses arising from use of the data, analytics or AI output, and total liability is limited to the amount you paid in the last 12 months.</p>' +
+        '<h3>6. Governing law</h3><p>These terms are governed by the laws of India. Contact us first to resolve any dispute.</p>' + contactLines],
+      privacy: ['Privacy policy', updated +
+        '<h3>What we collect</h3><ul><li>Account details: name, email and login method.</li><li>Payment records: plan, amount, status and Razorpay order/payment IDs. Card, UPI and bank details are handled by Razorpay and never reach us.</li><li>Your watchlist, saved screens and notes are stored in your browser.</li></ul>' +
+        '<h3>How we use it</h3><p>To run your account, provide Pro features, process payments, send service emails (such as login links and receipts) and prevent abuse. We do not sell your personal data.</p>' +
+        '<h3>Service providers</h3><p>Supabase (accounts and database), Razorpay (payments) and GitHub Pages (hosting). If you use an optional third-party AI engine in Sankhyas AI (such as Claude via Puter), your question and the page\'s data go to that provider. The on-device and built-in engines send nothing.</p>' +
+        '<h3>Your rights</h3><p>You can ask us to access, correct or delete your data, as provided under India\'s Digital Personal Data Protection Act, 2023. Write to us at ' + email + '.</p>' + contactLines],
+      refunds: ['Refund & cancellation policy', updated +
+        '<ul><li><b>No auto-renewal:</b> Pro is a one-time payment for 1 month or 1 year. Nothing is charged again unless you buy again, so there is nothing to cancel.</li>' +
+        '<li><b>7-day refund:</b> if Pro is not right for you, email us within 7 days of payment with your registered email and payment ID for a full refund.</li>' +
+        '<li><b>Failed or duplicate payments:</b> if money was deducted but Pro did not activate, or you were charged twice, contact us and we will activate Pro or refund the extra amount.</li>' +
+        '<li><b>Timeline:</b> approved refunds are processed within 5–7 working days to the original payment method, via Razorpay.</li></ul>' + contactLines]
+    };
+    const pg = pages[kind] || pages.contact;
+    setTitle(pg[0]);
+    app.innerHTML = '<div class="container page"><div class="card legal" style="max-width:820px;margin:0 auto"><h1>' + esc(pg[0]) + '</h1>' + pg[1] + '</div></div>';
   }
 
   function pageAbout() {
@@ -1481,7 +1627,23 @@
   });
   renderAuth();
   app.innerHTML = '<div class="container page muted">Loading market data…</div>';
-  Data.init().then(() => {
+  let booted = false;
+  Account.onChange(() => {
+    if (!booted) return;
+    renderAuth();
+    const p0 = parseHash().parts[0] || '';
+    if (['account', 'premium', 'login', 'register'].indexOf(p0) >= 0) route();
+    else if (p0 === 'company' && currentCompany) refreshInsights(currentCompany);
+  });
+  Promise.all([Data.init(), Account.ready]).then(() => {
+    booted = true;
+    renderAuth();
+    if (Account.inRecovery()) location.hash = '#/reset';
+    else {
+      let next = null;
+      try { next = sessionStorage.getItem('sankhyas_next'); sessionStorage.removeItem('sankhyas_next'); } catch (e) { /* ignore */ }
+      if (next && user() && /^#\//.test(next)) location.hash = next;
+    }
     window.addEventListener('hashchange', route);
     route();
   });
