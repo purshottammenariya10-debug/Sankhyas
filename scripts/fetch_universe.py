@@ -4,8 +4,12 @@
 Sources:
   - NSE equity list (EQUITY_L.csv): symbol, name, ISIN for every NSE-listed company.
   - BSE active scrip list: BSE code, name, ISIN, industry for every BSE-listed equity.
-Companies are matched on ISIN. NSE-listed companies use SYMBOL.NS on Yahoo; BSE-only
-companies use CODE.BO and their BSE code as the Sankhyas symbol.
+  - Yahoo Finance equity screener (region India, exchanges NSI and BSE): every Indian company
+    Yahoo covers. This fills in BSE-only companies when BSE's own list is blocked (it refuses
+    cloud servers).
+Companies are matched on ISIN (exchange lists) or on symbol/name (Yahoo). NSE-listed companies
+use SYMBOL.NS on Yahoo; BSE-only companies use their Yahoo .BO ticker, and their BSE code or
+BSE ticker is the Sankhyas symbol.
 
 If a source fails, the previous universe.json is kept for that exchange's entries.
 """
@@ -13,7 +17,9 @@ import argparse
 import csv
 import io
 import json
+import re
 import sys
+import time
 from pathlib import Path
 
 from exchange import BSE_API, bse_session, fetch_text, nse_session
@@ -75,9 +81,70 @@ def merge(nse_rows, bse_rows, include_bse_only=True):
     return out
 
 
+def norm_name(n):
+    n = re.sub(r"[^a-z0-9 ]", " ", (n or "").lower().replace("&", " and "))
+    n = re.sub(r"\b(limited|ltd|the|india|co|company|corporation|corp|inc|pvt|private)\b", " ", n)
+    return re.sub(r"\s+", "", n)
+
+
+def yahoo_listing(max_rows=20000):
+    """Every Indian equity on Yahoo's screener: [{ticker, name, exchange}] (exchange NSI or BSE)."""
+    import yfinance as yf
+    from yfinance import EquityQuery
+    out = {}
+    for ex in ("NSI", "BSE"):
+        q = EquityQuery("and", [EquityQuery("eq", ["region", "in"]), EquityQuery("eq", ["exchange", ex])])
+        offset, total = 0, None
+        while offset < max_rows:
+            r = None
+            for attempt in range(3):
+                try:
+                    r = yf.screen(q, offset=offset, size=250, sortField="intradaymarketcap", sortAsc=False)
+                    break
+                except Exception as e:  # noqa: BLE001
+                    print(f"Yahoo screener {ex} offset {offset} failed ({e}); retrying", file=sys.stderr)
+                    time.sleep(3 * (attempt + 1))
+            quotes = (r or {}).get("quotes") or []
+            total = (r or {}).get("total", total)
+            for x in quotes:
+                t = x.get("symbol") or ""
+                if t.endswith((".NS", ".BO")):
+                    out[t] = {"ticker": t, "name": x.get("longName") or x.get("shortName") or t[:-3], "exchange": ex}
+            offset += len(quotes)
+            if not quotes or (total is not None and offset >= total):
+                break
+            time.sleep(0.4)
+        print(f"Yahoo screener {ex}: {sum(1 for v in out.values() if v['exchange'] == ex)} companies (Yahoo reports {total})")
+    return list(out.values())
+
+
+def add_yahoo(companies, listing):
+    """Add Yahoo-listed companies the exchange lists missed (mostly BSE-only ones)."""
+    have_sym = {c["symbol"] for c in companies}
+    have_yahoo = {c["yahoo"] for c in companies}
+    have_name = {norm_name(c["name"]) for c in companies if c.get("name")}
+    added = 0
+    for y in sorted(listing, key=lambda y: (not y["ticker"].endswith(".NS"), y["ticker"])):
+        t, base = y["ticker"], y["ticker"][:-3]
+        if t in have_yahoo:
+            continue
+        if t.endswith(".NS"):
+            if base in have_sym:
+                continue
+        elif base in have_sym or (norm_name(y["name"]) and norm_name(y["name"]) in have_name):
+            continue   # listed on NSE too: keep the NSE entry
+        companies.append({"symbol": base, "name": y["name"], "isin": "", "bse": base if base.isdigit() else "",
+                          "industry": "", "yahoo": t})
+        have_sym.add(base); have_yahoo.add(t); have_name.add(norm_name(y["name"]))
+        added += 1
+    companies.sort(key=lambda r: r["symbol"])
+    return added
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--nse-only", action="store_true", help="skip BSE-only companies")
+    ap.add_argument("--no-yahoo", action="store_true", help="skip the Yahoo screener listing")
     args = ap.parse_args(argv)
 
     previous = json.loads(OUT.read_text()) if OUT.exists() else {"companies": []}
@@ -116,6 +183,20 @@ def main(argv=None):
         print(f"Using previous BSE list ({len(bse_rows)} companies)")
 
     companies = merge(nse_rows, bse_rows, include_bse_only=not args.nse_only)
+    if not args.no_yahoo:
+        try:
+            listing = yahoo_listing()
+            if args.nse_only:
+                listing = [y for y in listing if y["ticker"].endswith(".NS")]
+            print(f"Yahoo listing added {add_yahoo(companies, listing)} companies missing from the exchange lists")
+        except Exception as e:  # noqa: BLE001
+            print("Yahoo screener listing failed:", e, file=sys.stderr)
+            # keep BSE-only companies found by an earlier run
+            known = {c["yahoo"] for c in companies}
+            kept = [c for c in prev if c.get("yahoo", "").endswith(".BO") and c["yahoo"] not in known and not args.nse_only]
+            companies.extend(kept)
+            if kept:
+                print(f"Kept {len(kept)} Yahoo-listed companies from the previous universe")
     if not companies:
         # both exchanges refused and there is no earlier list: start from the built-in symbols so
         # the rest of the pipeline (Yahoo data) still runs; the full list is picked up once reachable

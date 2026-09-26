@@ -476,7 +476,7 @@
       // with Yahoo data, prefer Yahoo's classification so every company uses the same sector names
       sector: j.sector || known.sector || 'Others', industry: j.industry || known.industry || '',
       website: (j.website || known.website || '').replace(/^https?:\/\//, '').replace(/\/$/, ''),
-      bseCode: j.bse || known.bseCode || '', isin: j.isin || '', faceValue: known.faceValue != null ? known.faceValue : null,
+      bseCode: j.bse || known.bseCode || '', exchange: /\.BO$/i.test(j.yahoo || '') ? 'BSE' : 'NSE', yahoo: j.yahoo || '', isin: j.isin || '', faceValue: known.faceValue != null ? known.faceValue : null,
       psu: !!known.psu, promoter: ins || 0, shares, about: j.about || '',
       standalone: false, live: true, updated: j.updated,
       years: a.periods, quarters: qq.periods, shQuarters: ['Latest'],
@@ -512,7 +512,7 @@
       if (liveMeta.liveOnly) { base.length = 0; Object.keys(bySymbol).forEach(k => delete bySymbol[k]); }
       (idx.companies || []).forEach(e => {
         const c = {
-          symbol: e.s, name: e.n || e.s, sector: e.sec || 'Others', industry: e.ind || '', bseCode: e.bse || '', isin: e.isin || '',
+          symbol: e.s, name: e.n || e.s, sector: e.sec || 'Others', industry: e.ind || '', bseCode: e.bse || '', exchange: e.ex || 'NSE', isin: e.isin || '',
           live: true, summary: true, lastQuarter: e.q || '', updated: idx.updated, metrics: e.m || {}
         };
         summaries[c.symbol] = c;

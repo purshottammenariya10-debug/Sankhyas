@@ -277,8 +277,9 @@
       '<div class="company-title"><div>' +
       '<h1>' + esc(c.name) + '</h1>' +
       '<div class="company-links">' +
-      '<a href="https://' + esc(c.website) + '" target="_blank" rel="noopener">🔗 ' + esc(c.website) + '</a>' +
-      '<span>BSE: ' + esc(c.bseCode) + '</span><span>NSE: ' + esc(c.symbol) + '</span>' +
+      (c.website ? '<a href="https://' + esc(c.website) + '" target="_blank" rel="noopener">🔗 ' + esc(c.website) + '</a>' : '') +
+      (c.exchange === 'BSE' ? '<span>BSE: ' + esc(c.bseCode || c.symbol) + '</span>'
+        : (c.bseCode ? '<span>BSE: ' + esc(c.bseCode) + '</span>' : '') + '<span>NSE: ' + esc(c.symbol) + '</span>') +
       '<a href="#/market/' + encodeURIComponent(c.sector) + '">' + esc(c.sector) + '</a><span>' + esc(c.industry) + '</span>' +
       '</div>' +
       '<div class="price-line"><span class="price">₹ ' + num(m.price, 0) + '</span><span class="chg ' + signCls(m.change) + '">' +
@@ -725,14 +726,17 @@
   /* Documents: exact filing PDFs when the data pipeline has fetched them, otherwise the company's
      own filing pages on NSE / BSE (every panel always links somewhere useful). */
   function exchangePages(c) {
-    const nseSym = /^\d+$/.test(c.symbol) ? null : c.symbol;
+    const nseSym = /^\d+$/.test(c.symbol) || c.exchange === 'BSE' ? null : c.symbol;
     const n = nseSym ? encodeURIComponent(nseSym) : null;
     const nl = page => 'https://www.nseindia.com/companies-listing/corporate-filings-' + page + '?symbol=' + n;
     const bseBase = c.bseCode ? 'https://www.bseindia.com/stock-share-price/' + encodeURIComponent((c.name || 'company').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')) +
       '/' + encodeURIComponent(nseSym || c.symbol) + '/' + encodeURIComponent(c.bseCode) + '/' : null;
     return {
       nse: n ? { ann: nl('announcements'), ar: nl('annual-reports'), res: nl('financial-results'), bm: nl('board-meetings'), quote: 'https://www.nseindia.com/get-quotes/equity?symbol=' + n } : null,
-      bse: bseBase ? { ann: bseBase + 'corp-announcements/', ar: bseBase + 'financials-annual-reports/', res: bseBase + 'financials-results/', quote: bseBase } : null
+      bse: bseBase ? { ann: bseBase + 'corp-announcements/', ar: bseBase + 'financials-annual-reports/', res: bseBase + 'financials-results/', quote: bseBase }
+        // BSE-only company known only by its BSE ticker (from Yahoo): BSE's own filing search pages
+        : !n ? { ann: 'https://www.bseindia.com/corporates/ann.html', ar: 'https://www.bseindia.com/corporates/HistoricalAnnualreport.aspx',
+            res: 'https://www.bseindia.com/corporates/Comp_Resultsnew.aspx', quote: 'https://www.bseindia.com/' } : null
     };
   }
   const ext = (u, label, cls, title) => '<a class="' + (cls || '') + '" target="_blank" rel="noopener noreferrer" href="' + esc(u) + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + label + '</a>';

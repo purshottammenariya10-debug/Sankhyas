@@ -622,7 +622,7 @@
     ['Qtr profit YoY %', 'qtrProfitVar'], ['Free cash flow Cr', 'fcf'], ['52w high', 'high52'], ['52w low', 'low52'], ['1y return %', 'ret1y'],
     ['Promoter/insider %', 'promoter'], ['FII/institutions %', 'fii']];
   function companyContext(c) {
-    const m = c.metrics, out = ['Company: ' + c.name + ' (NSE: ' + c.symbol + ')', 'Sector: ' + c.sector + ' | Industry: ' + c.industry,
+    const m = c.metrics, out = ['Company: ' + c.name + ' (' + (c.exchange === 'BSE' ? 'BSE' : 'NSE') + ': ' + c.symbol + ')', 'Sector: ' + c.sector + ' | Industry: ' + c.industry,
       'Data source: ' + (c.live ? 'Yahoo Finance end-of-day data via Sankhyas' : 'SAMPLE data for illustration, not real figures'),
       'Key metrics: ' + KEYS.map(([l, k]) => l + ' ' + r2(m[k])).join('; ')];
     const ser = (label, per, vals, n) => label + ': ' + (per || []).slice(-n).map((p, i, a) => p + ' ' + r2((vals || []).slice(-a.length)[i])).join(', ');

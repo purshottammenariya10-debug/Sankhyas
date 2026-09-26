@@ -35,7 +35,7 @@ for (const f of files) {
     const c = Data._buildLive(j);
     const m = {};
     for (const k of KEYS) { const v = round(c.metrics[k]); if (v != null) m[k] = v; }
-    companies.push({ s: c.symbol, n: c.name, sec: c.sector, ind: c.industry, bse: c.bseCode || undefined, isin: c.isin || undefined, q: c.lastQuarter || undefined, m });
+    companies.push({ s: c.symbol, n: c.name, sec: c.sector, ind: c.industry, bse: c.bseCode || undefined, ex: c.exchange === 'BSE' ? 'BSE' : undefined, isin: c.isin || undefined, q: c.lastQuarter || undefined, m });
   } catch (e) {
     skipped++;
     console.error('skip', f, e.message);
