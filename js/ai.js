@@ -661,18 +661,98 @@
   let claudeSample = null;
   const claudeReady = (window.claude && typeof window.claude.use === 'function')
     ? window.claude.use('sample').then(s => (claudeSample = s || null), () => null) : Promise.resolve(null);
+  const inClaudeView = !!(window.claude && typeof window.claude.use === 'function');
   const claude = {
     available: () => !!claudeSample,
-    enabled: () => !!claudeSample && LS.get('ai_engine') === 'claude',
     disable: () => { claudeSample = null; }
   };
-  async function claudeAsk({ data, turns, onText, signal }) {
+  const chatInput = (data, turns) => {
     const rules = SYSTEM + '\n\n<DATA from Sankhyas>\n' + (data || 'No page data.').slice(0, 30000) + '\n</DATA>';
     const hist = turns.slice(-10);
     while (hist.length && hist[0].role !== 'user') hist.shift();
-    const { text, truncated } = await claudeSample([{ role: 'user', content: rules }].concat(hist), { cache: false, signal, onText: u => onText(u.text) });
+    return [{ role: 'user', content: rules }].concat(hist);
+  };
+  async function claudeAsk({ data, turns, onText, signal }) {
+    const { text, truncated } = await claudeSample(chatInput(data, turns), { cache: false, signal, onText: u => onText(u.text) });
     return truncated ? text + '\n\n_(Answer cut short: ask for less at a time.)_' : text;
   }
+
+  /* ---------- Free Claude on the public site, via Puter.js ----------
+     Puter.js (https://puter.com) runs Claude with no API key: each visitor signs in to a free Puter
+     account once and Puter covers their usage, so Sankhyas pays nothing. The script is loaded only
+     when a visitor picks this engine. Not offered inside claude.ai, which blocks outside scripts. */
+  const PUTER_SRC = 'https://js.puter.com/v2/';
+  const PUTER_MODELS = ['claude-sonnet-5', 'claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-sonnet-4', 'claude-3-7-sonnet'];
+  let puterLoading = null;
+  function loadPuter() {
+    if (window.puter && window.puter.ai) return Promise.resolve(window.puter);
+    if (!puterLoading) {
+      puterLoading = new Promise((res, rej) => {
+        const sc = document.createElement('script');
+        sc.src = PUTER_SRC; sc.async = true;
+        sc.onload = () => (window.puter && window.puter.ai ? res(window.puter) : rej({ code: 'puter_load' }));
+        sc.onerror = () => { puterLoading = null; sc.remove(); rej({ code: 'puter_load' }); };
+        document.head.appendChild(sc);
+      });
+    }
+    return puterLoading;
+  }
+  const puterMsg = e => String((e && ((e.error && (e.error.message || e.error)) || e.message)) || (typeof e === 'string' ? e : '') || '');
+  async function puterAsk({ data, turns, onText, signal }) {
+    const puter = await loadPuter();
+    const msgs = chatInput(data, turns);
+    const saved = LS.get('puter_model');
+    const models = [saved].filter(Boolean).concat(PUTER_MODELS.filter(m => m !== saved));
+    const stopped = new Promise((_, rej) => signal.addEventListener('abort', () => rej({ code: 'cancelled' }), { once: true }));
+    stopped.catch(() => {});
+    let lastErr;
+    for (const model of models) {
+      let text = '';
+      try {
+        const resp = await Promise.race([puter.ai.chat(msgs, { model, stream: true }), stopped]);
+        if (resp && typeof resp[Symbol.asyncIterator] === 'function') {
+          for await (const part of resp) {
+            if (signal.aborted) throw { code: 'cancelled', text };
+            const piece = part && (part.text || '');
+            if (piece) { text += piece; onText(text); }
+          }
+        } else {
+          const c = resp && resp.message && resp.message.content;
+          text = String((Array.isArray(c) ? c.map(x => x.text || '').join('') : c) || resp || '');
+          if (text) onText(text);
+        }
+        if (signal.aborted) throw { code: 'cancelled', text };
+        if (!text.trim()) throw { code: 'empty', message: 'Empty answer' };
+        LS.set('puter_model', model);
+        return text;
+      } catch (e) {
+        if (e && (e.code === 'cancelled' || text)) throw Object.assign({ text }, e);
+        lastErr = e;
+        if (/model|not (found|available|supported)|unknown/i.test(puterMsg(e))) continue;
+        throw e;
+      }
+    }
+    throw lastErr || { code: 'empty' };
+  }
+  function puterError(e) {
+    const c = e && e.code, m = puterMsg(e);
+    if (c === 'puter_load') return 'Could not load the free Claude service (Puter). Check your connection or ad blocker, or use "Ask Claude ↗".';
+    if (/sign|auth|login|popup|cancel/i.test(m)) return 'Sign in to Puter (free) in the pop-up to use Claude here. If no pop-up appeared, allow pop-ups for this site and ask again.';
+    if (/limit|quota|credit|insufficient|funds|429/i.test(m)) return 'Your free Puter allowance is used up for now. Try again later, switch to Built-in, or use "Ask Claude ↗".';
+    return 'Could not get an answer from free Claude' + (m ? ' (' + m.slice(0, 120) + ')' : '') + '. Try again or use "Ask Claude ↗".';
+  }
+
+  /* engine choice: 'builtin' (default), 'claude' (claude.ai view) or 'puter' (public site) */
+  const ENGINES = {
+    builtin: { label: 'Built-in', badge: 'Free', note: 'Built-in analysis generated instantly in your browser from Sankhyas data. Free, rule-based, and it can be wrong. Not investment advice.' },
+    claude: { label: 'Claude (ask anything)', badge: 'Claude', thinking: 'Claude is thinking…', ask: o => claudeAsk(o), err: e => claudeError(e),
+      note: 'Answers by Claude on your own Claude account, with Sankhyas data as context. It can be wrong. Not investment advice.' },
+    puter: { label: 'Free Claude (ask anything)', badge: 'Claude · free', thinking: 'Asking free Claude… (sign in to Puter if a pop-up opens)', ask: o => puterAsk(o), err: e => puterError(e),
+      note: 'Answers by Claude through Puter.js: free with a Puter account, no API key. Your question and this page\'s data are sent to Puter. It can be wrong. Not investment advice.' }
+  };
+  const engines = () => ['builtin'].concat(claude.available() ? ['claude'] : [], inClaudeView ? [] : ['puter']);
+  const engine = () => { const e = LS.get('ai_engine'); return engines().indexOf(e) > 0 ? e : 'builtin'; };
+
   function claudeError(e) {
     const c = e && e.code;
     if (c === 'not_granted' || c === 'sampling_disabled' || c === 'not_declared' || c === 'capability_disabled' || c === 'capability_removed') {
@@ -713,16 +793,14 @@
       '<p class="ai-note"></p></div>';
     const log = el.querySelector('.ai-log'), form = el.querySelector('form'), ta = form.querySelector('textarea'), btn = form.querySelector('button');
     const renderEngine = () => {
-      const g = claude.enabled();
-      el.querySelector('.ai-engine').textContent = g ? 'Claude' : 'Free';
-      el.querySelector('.ai-engine-ctl').innerHTML = claude.available()
-        ? '<select class="ai-engine-select" aria-label="AI engine"><option value="claude"' + (g ? ' selected' : '') + '>Claude (ask anything)</option><option value="builtin"' + (g ? '' : ' selected') + '>Built-in</option></select>'
+      const cur = engine(), list = engines();
+      el.querySelector('.ai-engine').textContent = ENGINES[cur].badge;
+      el.querySelector('.ai-engine-ctl').innerHTML = list.length > 1
+        ? '<select class="ai-engine-select" aria-label="AI engine">' + list.map(k => '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' + esc(ENGINES[k].label) + '</option>').join('') + '</select>'
         : '';
-      el.querySelector('.ai-note').textContent = g
-        ? 'Answers by Claude on your own Claude account, with Sankhyas data as context. It can be wrong. Not investment advice.'
-        : 'Built-in analysis generated instantly in your browser from Sankhyas data. Free, rule-based, and it can be wrong. Not investment advice.';
+      el.querySelector('.ai-note').textContent = ENGINES[cur].note;
       const sel = el.querySelector('.ai-engine-select');
-      if (sel) sel.onchange = () => { LS.set('ai_engine', sel.value); renderEngine(); };
+      if (sel) sel.onchange = () => { LS.set('ai_engine', sel.value); if (sel.value === 'puter') loadPuter().catch(() => {}); renderEngine(); };
     };
     renderEngine();
     claudeReady.then(renderEngine);
@@ -745,19 +823,20 @@
       bubble('user', esc(q));
       const out = bubble('assistant', '');
       btn.textContent = 'Stop'; btn.classList.remove('btn-primary'); ta.value = ''; autosize();
-      if (claude.enabled()) {
+      const eng = ENGINES[engine()];
+      if (eng.ask) {
         turns.push({ role: 'user', content: q });
         ctl = new AbortController();
-        out.innerHTML = '<span class="ai-thinking">Claude is thinking…</span>';
+        out.innerHTML = '<span class="ai-thinking">' + esc(eng.thinking) + '</span>';
         try {
-          const text = await claudeAsk({ data: dataOf(), turns: turns.slice(-12), signal: ctl.signal, onText: t => { out.innerHTML = md(t); scroll(); } });
+          const text = await eng.ask({ data: dataOf(), turns: turns.slice(-12), signal: ctl.signal, onText: t => { out.innerHTML = md(t); scroll(); } });
           out.innerHTML = md(text);
           turns.push({ role: 'assistant', content: text });
         } catch (e) {
-          if (e && e.code === 'cancelled') { out.innerHTML = md(e.text || '') + '<p class="sub">Stopped.</p>'; turns.pop(); }
+          turns.pop();
+          if (e && e.code === 'cancelled') out.innerHTML = md(e.text || '') + '<p class="sub">Stopped.</p>';
           else {
-            out.innerHTML = (e && e.text ? md(e.text) : '') + '<p class="ai-err">' + esc(claudeError(e)) + '</p>';
-            turns.pop();
+            out.innerHTML = (e && e.text ? md(e.text) : '') + '<p class="ai-err">' + esc(eng.err(e)) + '</p>';
             renderEngine();
           }
         }
@@ -798,5 +877,5 @@
   function errorCopy(e) { return (e && e.message) || 'Something went wrong.'; }
 
   window.AI = { ready, md, mount, answerCompany, answerMarket, answerCompare, screenQuery, parseConditions, errorCopy,
-    companyContext, tableContext, marketContext, claude, kind: () => (claude.enabled() ? 'claude' : 'local') };
+    companyContext, tableContext, marketContext, engine, kind: () => (engine() === 'builtin' ? 'local' : engine()) };
 })();
