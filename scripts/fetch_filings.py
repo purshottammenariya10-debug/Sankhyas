@@ -39,11 +39,12 @@ IMPORTANT = re.compile(r"financial result|outcome of board|dividend|bonus|split|
 def classify(text):
     """Return the filing kind used by the site."""
     t = text.lower()
-    if "transcript" in t:
+    agm = re.search(r"annual general meeting|\bagm\b|general meeting|postal ballot|e-voting|proceedings", t)
+    if "transcript" in t and not agm:
         return "transcript"
-    if re.search(r"audio|recording|webcast|video", t) and re.search(r"call|meet|earnings|conference", t):
+    if re.search(r"audio|recording|webcast", t) and re.search(r"call|meet|earnings|conference", t) and not agm and "video conferenc" not in t:
         return "audio"
-    if re.search(r"investor presentation|earnings presentation|analyst presentation|\bppt\b|presentation", t):
+    if re.search(r"investor presentation|earnings presentation|analyst presentation|\bppt\b|presentation", t) and not agm:
         return "ppt"
     if re.search(r"credit rating|\brating", t) and not re.search(r"rating agenc(y|ies)'? ?meet", t):
         return "rating"
@@ -163,6 +164,9 @@ def nse_annual_reports(nse, symbol):
 # ---------- NSE archive RSS (served from nsearchives, which answers cloud servers) ----------
 NSE_RSS = [
     "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml",
+    # NSE lists more feeds on nseindia.com/rss-feed; these are tried and skipped quietly if absent
+    "https://nsearchives.nseindia.com/content/RSS/Analysts_Institutional_Investor_Meet.xml",
+    "https://nsearchives.nseindia.com/content/RSS/Investor_Meet.xml",
     "https://nsearchives.nseindia.com/content/RSS/Financial_Results.xml",
     "https://nsearchives.nseindia.com/content/RSS/Board_Meetings.xml",
     "https://nsearchives.nseindia.com/content/RSS/Corporate_action.xml",
@@ -210,8 +214,32 @@ def nse_rss_sweep():
                     a["annual"] = True
             items += got
         except Exception as e:  # noqa: BLE001
-            print(f"NSE RSS {url.rsplit('/', 1)[-1]} failed: {e}", file=sys.stderr)
+            print(f"NSE RSS {url.rsplit('/', 1)[-1]} unavailable: {str(e)[:80]}", file=sys.stderr)
     return items
+
+
+DOC_LINK = re.compile(r"https?://[^\s<>\"']+?\.(?:pdf|mp3|m4a|mp4|wav)(?=[\s<>\"']|$)", re.I)
+
+
+def resolve_xbrl_links(items, limit=150):
+    """NSE files some transcripts and presentations as XBRL (.xml) summaries that point to the
+    real document. Replace the .xml link with the PDF/recording it names (the .xml is kept in 'src')."""
+    done = 0
+    for a in items:
+        if done >= limit or not a["u"].lower().endswith(".xml") or a.get("k") not in ("transcript", "ppt", "audio"):
+            continue
+        done += 1
+        try:
+            text = fetch_text(a["u"])
+        except Exception as e:  # noqa: BLE001
+            print(f"  XBRL {a['u'].rsplit('/', 1)[-1]}: could not read ({str(e)[:60]})", file=sys.stderr)
+            continue
+        links = DOC_LINK.findall(text) or re.findall(r"https?://(?!www\.w3\.org|www\.xbrl)[^\s<>\"']+", text)
+        links = [l.replace("&amp;", "&") for l in links if "nseindia.com/corporate/xbrl" not in l]
+        if links:
+            a["src"], a["u"] = a["u"], links[0]
+    if done:
+        print(f"XBRL filings resolved to documents: {sum(1 for a in items if a.get('src'))} of {done}")
 
 
 def match_company(a, by_nse, by_name):
@@ -272,6 +300,39 @@ def save(doc):
     (OUT / f"{doc['symbol']}.json").write_text(json.dumps(doc, separators=(",", ":")))
 
 
+def tidy_stored(xml_limit=150):
+    """Apply the current classification to every stored filing and resolve XBRL (.xml) links
+    to their documents, so older data benefits from fixes too."""
+    changed = pending = 0
+    xml_items = []
+    docs = []
+    for f in sorted(OUT.glob("*.json")):
+        if f.name == "latest.json":
+            continue
+        try:
+            doc = json.loads(f.read_text())
+        except ValueError:
+            continue
+        dirty = False
+        for a in doc.get("announcements", []):
+            k = classify(a.get("t", "") + " " + (a.get("c") or ""))
+            if k != a.get("k"):
+                a["k"], dirty = k, True
+            if a["u"].lower().endswith(".xml") and k in ("transcript", "ppt", "audio") and not a.get("xml_tried"):
+                xml_items.append((doc, a))
+        docs.append((f, doc, dirty))
+    for doc, a in xml_items[:xml_limit]:
+        resolve_xbrl_links([a])
+        a["xml_tried"] = True
+    pending = max(0, len(xml_items) - xml_limit)
+    touched_ids = {id(d) for d, _ in xml_items[:xml_limit]}
+    for f, doc, dirty in docs:
+        if dirty or id(doc) in touched_ids:
+            f.write_text(json.dumps(doc, separators=(",", ":")))
+            changed += 1
+    print(f"Tidied stored filings: {changed} files updated, {pending} XBRL links left for later runs")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("symbols", nargs="*", help="limit to these Sankhyas symbols")
@@ -326,6 +387,7 @@ def main(argv=None):
             a["_c"] = c
             matched += 1
     print(f"NSE RSS: {len(rss)} items, {matched} matched to companies")
+    resolve_xbrl_links([a for a in rss if a.get("_c")])
     sweep += [a for a in rss if a.get("_c")]
     for a in sweep:
         c = a.pop("_c", None) or by_bse.get(a.get("bse")) or by_nse.get(a.get("nse"))
@@ -385,6 +447,7 @@ def main(argv=None):
 
     for doc in touched.values():
         save(doc)
+    tidy_stored()
 
     # market-wide latest feed, merged with the previous one
     lf = OUT / "latest.json"

@@ -913,29 +913,32 @@
           return '<li>' + ext(a.u, 'Rating update', '', cleanTitle(a.t)) + '<div class="doc-meta">' + docWhen(a.d) + ' from ' + esc(ag ? ag[1].toLowerCase() : (a.x || exName)) + '</div></li>'; }).join('')
       : '<li>' + ext(P.ann, 'Rating updates') + '<div class="doc-meta">in ' + exName.toUpperCase() + ' filings</div></li>') + '</ul>';
 
-    // Concalls: one row per month with Transcript / AI Summary / PPT / REC
+    // Concalls: one row per results quarter with Transcript / AI Summary / PPT / REC. Documents we
+    // have link to the exchange filing; missing ones search the web for that exact quarter's document.
+    const qEndOf = d => { const t = new Date(d); const m = t.getMonth() - (t.getMonth() % 3) - 1; return new Date(t.getFullYear(), m, 1); };
+    const qLabel = qe => { const m = qe.getMonth(); return 'Q' + ({ 5: 1, 8: 2, 11: 3, 2: 4 })[m] + ' FY' + String((m === 2 ? qe.getFullYear() : qe.getFullYear() + 1) % 100).padStart(2, '0'); };
     const extra = store.get('cc_extra_' + c.symbol, []);
-    const rows = {}, order = [];
-    const row = key => { if (!rows[key]) { rows[key] = { key, t: 0 }; order.push(key); } return rows[key]; };
+    const rows = {};
+    const row = qe => { const k = monYear(qe); return rows[k] || (rows[k] = { qe, call: null }); };
+    recentQuarters(8).forEach(q => row(new Date(q + ' 1')));
     A.filter(a => /^(transcript|ppt|audio)$/.test(a.k)).forEach(a => {
-      const d = new Date(a.d), r = row(monYear(d));
-      r.t = Math.max(r.t, +new Date(d.getFullYear(), d.getMonth(), 1));
-      if (!r[a.k]) r[a.k] = a.u;
+      const r = row(qEndOf(a.d));
+      if (!r[a.k]) { r[a.k] = a.k === 'audio' && a.rec ? a.rec : a.u; r[a.k + 'Filed'] = a.u; }
+      if (!r.call || a.d < r.call) r.call = a.d;
     });
-    extra.forEach(e => { const r = row(e.m); r.t = r.t || +new Date(e.m + ' 1') || 0; if (!r[e.k]) { r[e.k] = e.u; r.mine = 1; } });
-    let ccBody;
-    if (order.length) {
-      ccBody = order.sort((a, b) => rows[b].t - rows[a].t).slice(0, 16).map(k => {
-        const r = rows[k], sums = [r.transcript, r.ppt].filter(noted);
-        return '<div class="cc-row"><span class="cc-period">' + esc(k) + '</span>' + pill(r.transcript, 'Transcript') +
-          (sums.length ? '<button type="button" class="doc-pill" data-sum="' + esc(sums.join(' ')) + '" data-sum-title="Concall ' + esc(k) + '">AI Summary</button>' : pill(null, 'AI Summary')) +
-          pill(r.ppt, 'PPT') + pill(r.audio, 'REC') + '</div>';
-      }).join('');
-    } else {
-      const tip = 'Opens ' + c.name + '\'s filings on ' + exName.toUpperCase() + ' (look for "Analysts/Institutional Investor Meet")';
-      ccBody = recentQuarters(8).map(q => '<div class="cc-row"><span class="cc-period">' + esc(q) + '</span>' + pill(P.ann, 'Transcript', tip) + pill(null, 'AI Summary') +
-        pill(P.ann, 'PPT', tip) + pill(P.ann, 'REC', tip) + '</div>').join('');
-    }
+    extra.forEach(e => { const r = row(qEndOf(new Date(e.m + ' 15'))); if (!r[e.k]) { r[e.k] = e.u; r.mine = 1; } });
+    const shortName = (c.name || c.symbol).replace(/\s+(limited|ltd\.?)$/i, '');
+    const find = (label, q, what) => ext('https://www.google.com/search?q=' + encodeURIComponent('"' + shortName + '" ' + q + ' ' + what), label, 'doc-pill find',
+      'Not in Sankhyas yet: search the web for ' + shortName + '\'s ' + q + ' ' + what.replace(/ filetype:pdf$/, ''));
+    const ccBody = Object.values(rows).sort((a, b) => b.qe - a.qe).slice(0, 16).map(r => {
+      const q = qLabel(r.qe), sums = [r.transcript, r.ppt].filter(noted);
+      const callMonth = r.call ? monYear(new Date(r.call)) : monYear(new Date(r.qe.getFullYear(), r.qe.getMonth() + 1, 1));
+      return '<div class="cc-row"><span class="cc-period" title="Results call for ' + q + '">' + esc(callMonth) + '<small>' + esc(q) + '</small></span>' +
+        (r.transcript ? pill(r.transcript, 'Transcript') : find('Transcript', q, 'earnings call transcript filetype:pdf')) +
+        (sums.length ? '<button type="button" class="doc-pill" data-sum="' + esc(sums.join(' ')) + '" data-sum-title="Concall ' + esc(q) + '">AI Summary</button>' : pill(null, 'AI Summary')) +
+        (r.ppt ? pill(r.ppt, 'PPT') : find('PPT', q, 'investor presentation filetype:pdf')) +
+        (r.audio ? pill(r.audio, 'REC', r.audio !== r.audioFiled ? 'Recording of the call' : 'Recording notice') : find('REC', q, 'earnings call audio recording')) + '</div>';
+    }).join('') + '<p class="cc-note">Solid = filed on the exchange (AI Summary when read). Dashed = not in Sankhyas yet, searches the web. New filings arrive every 2 hours.</p>';
     const ccHead = '<h3>Concalls</h3><button type="button" class="doc-add" id="cc-add"><svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path d="M3 15V2h9l-2 3 2 3H4" fill="currentColor"/></svg> Add Missing</button>';
 
     const from = A.length ? 'Filings from ' + (A.some(a => a.x === 'nse') && A.some(a => a.x === 'bse') ? 'NSE and BSE' : A.some(a => a.x === 'nse') ? 'NSE' : 'BSE') +

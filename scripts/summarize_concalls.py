@@ -265,6 +265,41 @@ def fiscal_year(d):
     return f"{end - 1}-{str(end)[-2:]}"
 
 
+REC_LINK = re.compile(r"https?://[^\s<>\"')\]]+", re.I)
+
+
+def find_recordings(requests, UA, limit=40):
+    """Recording notices are PDFs that give a link to the audio/video of the call. Read the link
+    out of the PDF and store it on the filing as 'rec', so the REC button opens the recording."""
+    done = found = 0
+    for f in sorted(FILINGS.glob("*.json")):
+        if f.name == "latest.json" or done >= limit:
+            continue
+        doc = json.loads(f.read_text())
+        dirty = False
+        for a in doc.get("announcements", []):
+            if done >= limit or a.get("k") != "audio" or a.get("rec") or a.get("rec_tried") or not a["u"].lower().endswith(".pdf"):
+                continue
+            done += 1
+            a["rec_tried"] = True
+            dirty = True
+            try:
+                r = requests.get(a["u"], headers={"User-Agent": UA, "Referer": "https://www.nseindia.com/"}, timeout=60)
+                r.raise_for_status()
+                text = pdf_text(r.content, max_pages=4).replace("\n", " ")
+                links = [l.rstrip(".,;") for l in REC_LINK.findall(text) if not re.search(r"nseindia|bseindia|sebi\.gov|mailto", l, re.I)]
+                links.sort(key=lambda l: 0 if re.search(r"youtu|\.mp3|\.m4a|\.mp4|audio|recording|webcast|chorus|vimeo", l, re.I) else 1)
+                if links:
+                    a["rec"] = links[0]
+                    found += 1
+            except Exception as e:  # noqa: BLE001
+                print(f"{f.stem}: recording link not read ({str(e)[:60]})", file=sys.stderr)
+        if dirty:
+            f.write_text(json.dumps(doc, separators=(",", ":")))
+    if done:
+        print(f"Recording links: {found} found in {done} notices")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--max", type=int, default=60, help="transcripts and presentations to process per run (default 60)")
@@ -287,7 +322,7 @@ def main(argv=None):
         doc = json.loads(f.read_text())
         notes = doc.get("notes") or {}
         for a in doc.get("announcements", []):
-            if a.get("k") in ("transcript", "ppt") and pending(notes, a["u"], a.get("k")):
+            if a.get("k") in ("transcript", "ppt") and not a["u"].lower().endswith(".xml") and pending(notes, a["u"], a.get("k")):
                 todo.append((a["d"], f, a["u"], a["k"]))
         # latest annual report only: from the annual-report list, else a Reg. 34 announcement
         reps = sorted(doc.get("annualReports", []), key=lambda r: r.get("y", ""), reverse=True)
@@ -300,6 +335,7 @@ def main(argv=None):
         if cand and pending(notes, cand[0][1]):
             ars.append((cand[0][0], f, cand[0][1], "ar"))
     todo.sort(key=lambda t: t[0], reverse=True)   # newest first
+    find_recordings(requests, UA)
     ars.sort(key=lambda t: t[0], reverse=True)
     work = todo[:args.max] + ars[:args.max_ar]
     done = failed = 0

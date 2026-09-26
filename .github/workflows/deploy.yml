@@ -10,8 +10,12 @@ name: Update data and deploy
 
 on:
   schedule:
-    # 11:30 UTC = 5:00 pm IST, after market close, Monday to Friday
+    # 11:30 UTC = 5:00 pm IST, after market close, Monday to Friday: full update (prices, financials, filings)
     - cron: "30 11 * * 1-5"
+    # every 2 hours, every day: filings only (concall transcripts, presentations, recordings, results,
+    # board meetings) and their AI summaries. NSE's feeds only hold the last day or so, so frequent
+    # sweeps are what catch every document.
+    - cron: "17 */2 * * *"
   push:
     branches: [main]
   workflow_dispatch:
@@ -60,19 +64,20 @@ jobs:
         run: pip install yfinance requests pypdf
 
       - name: Company list (NSE + BSE)
-        if: github.event_name != 'push'
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 11 * * 1-5'
         continue-on-error: true
         run: python scripts/fetch_universe.py
 
       - name: Yahoo Finance data
-        if: github.event_name != 'push'
+        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 11 * * 1-5'
         continue-on-error: true
         run: python scripts/fetch_yahoo.py --universe --max-full "${{ github.event.inputs.max_full || '1200' }}" --delay 0.5
 
       - name: NSE/BSE filings
         if: github.event_name != 'push'
         continue-on-error: true
-        run: python scripts/fetch_filings.py --max-backfill "${{ github.event.inputs.max_backfill || '150' }}"
+        # the 2-hourly sweep skips history backfill (NSE/BSE history APIs refuse GitHub's servers anyway)
+        run: python scripts/fetch_filings.py --max-backfill "${{ github.event.schedule == '17 */2 * * *' && '0' || github.event.inputs.max_backfill || '150' }}"
 
       - name: Concall summaries (free, rule-based)
         if: github.event_name != 'push'
