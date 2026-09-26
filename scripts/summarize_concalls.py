@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Free, rule-based concall summaries.
+"""Free, rule-based AI summaries of concall transcripts, investor presentations (PPT) and annual reports.
 
-For every earnings-call transcript listed in data/filings/<SYMBOL>.json, download the PDF,
-extract its text and write an extractive summary back into the same file under "notes":
+For every earnings-call transcript and investor presentation listed in data/filings/<SYMBOL>.json,
+and the latest annual report, download the PDF, extract its text and write an extractive summary
+back into the same file under "notes" (keyed by the document URL, with "kind": transcript|ppt|ar):
 
     "notes": { "<transcript url>": { "d": date, "tone": "Positive", "sections": { "Guidance & outlook": [...], ... } } }
 
@@ -11,7 +12,7 @@ remarks before the Q&A), boilerplate is dropped, and the best sentences per topi
 the order they were spoken. Only new transcripts are processed (--max per run).
 
     pip install pypdf requests
-    python scripts/summarize_concalls.py --max 60
+    python scripts/summarize_concalls.py --max 60 --max-ar 15
 """
 import argparse
 import io
@@ -42,10 +43,57 @@ NUMBER = re.compile(r"\d+(\.\d+)?\s*(%|percent|per cent|bps|basis points|crore|c
 SPEAKER = re.compile(r"^\s*([A-Z][A-Za-z.\-' ]{1,40}|Moderator|Management|Analyst|Participant)\s*:\s*")
 
 
-def pdf_text(data):
+def pdf_text(data, max_pages=None, max_chars=None):
     from pypdf import PdfReader
     reader = PdfReader(io.BytesIO(data))
-    return "\n".join((page.extract_text() or "") for page in reader.pages)
+    out, n = [], 0
+    for i, page in enumerate(reader.pages):
+        if max_pages and i >= max_pages:
+            break
+        t = page.extract_text() or ""
+        out.append(t)
+        n += len(t)
+        if max_chars and n >= max_chars:
+            break
+    return "\n".join(out)
+
+
+KEY_METRIC = re.compile(r"revenue|sales|income|ebitda|\bpat\b|profit|margin|order ?book|order inflow|volume|\baum\b|deposits|advances|loan book|disbursement|\bnim\b|gnpa|nnpa|\beps\b|roce|roe|capacity|market share|guidance|dividend", re.I)
+PPT_NOISE = re.compile(r"safe harbo|disclaimer|forward[- ]looking|thank you|agenda|contents|www\.|@|investor relations|this presentation|not an offer|confidential", re.I)
+
+
+def summarize_ppt(text, per_topic=4):
+    """Investor presentations are bullet points, not prose: rank lines instead of sentences."""
+    lines, seen = [], set()
+    for i, ln in enumerate(text.replace("\u2019", "'").splitlines()):
+        ln = re.sub(r"\s+", " ", ln).strip(" •▪●○■-–·*>")
+        key = re.sub(r"\W+", "", ln.lower())
+        if not (25 <= len(ln) <= 240) or key in seen or PPT_NOISE.search(ln) or not re.search(r"[a-z]{3}", ln):
+            continue
+        seen.add(key)
+        lines.append((i, ln))
+    picked, used = {}, set()
+    topics = [("Key numbers", None)] + TOPICS
+    for topic, pat in topics:
+        cands = []
+        for i, ln in lines:
+            if i in used:
+                continue
+            if pat is None:
+                if NUMBER.search(ln) and KEY_METRIC.search(ln):
+                    cands.append((len(KEY_METRIC.findall(ln)) + 2, i, ln))
+            else:
+                hits = len(re.findall(pat, ln, re.I))
+                if hits:
+                    cands.append((hits + (1 if NUMBER.search(ln) else 0), i, ln))
+        best = sorted(cands, key=lambda c: (-c[0], c[1]))[:per_topic]
+        for c in best:
+            used.add(c[1])
+        if best:
+            picked[topic] = [c[2] for c in sorted(best, key=lambda c: c[1])]
+    pos, neg = len(POSITIVE.findall(text)), len(NEGATIVE.findall(text))
+    tone = "Positive" if pos > neg * 1.6 else "Cautious" if neg > pos else "Neutral"
+    return {"tone": tone, "sections": picked, "words": len(text.split())}
 
 
 def sentences(text):
@@ -100,47 +148,80 @@ def summarize(text, per_topic=3):
     return {"tone": tone, "sections": picked, "words": len(text.split())}
 
 
+def fiscal_year(d):
+    """An annual report filed Jul 2026 covers the year ending Mar 2026, labelled '2025-26' like fetch_filings."""
+    y, m = int(d[:4]), int(d[5:7])
+    end = y if m >= 4 else y - 1
+    return f"{end - 1}-{str(end)[-2:]}"
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--max", type=int, default=60, help="transcripts to process per run (default 60)")
+    ap.add_argument("--max", type=int, default=60, help="transcripts and presentations to process per run (default 60)")
+    ap.add_argument("--max-ar", type=int, default=15, help="annual reports to process per run (default 15)")
     args = ap.parse_args(argv)
     import requests
     from exchange import UA
 
-    todo = []
+    def pending(notes, u):
+        n = notes.get(u)
+        return n is None or (n.get("failed") and n.get("tries", 0) < 3)
+
+    todo, ars = [], []
     for f in sorted(FILINGS.glob("*.json")):
         if f.name == "latest.json":
             continue
         doc = json.loads(f.read_text())
         notes = doc.get("notes") or {}
         for a in doc.get("announcements", []):
-            n = notes.get(a["u"])
-            if a.get("k") == "transcript" and (n is None or (n.get("failed") and n.get("tries", 0) < 3)):
-                todo.append((a["d"], f, a))
-    todo.sort(key=lambda t: t[0], reverse=True)   # newest calls first
+            if a.get("k") in ("transcript", "ppt") and pending(notes, a["u"]):
+                todo.append((a["d"], f, a["u"], a["k"]))
+        # latest annual report only: from the annual-report list, else a Reg. 34 announcement
+        reps = sorted(doc.get("annualReports", []), key=lambda r: r.get("y", ""), reverse=True)
+        cand = [(r.get("y", ""), r["u"]) for r in reps[:1]]
+        for a in doc.get("announcements", []):
+            if re.search(r"annual report", a.get("t", "") + " " + a.get("c", ""), re.I) and a["u"].lower().endswith(".pdf"):
+                cand.append((fiscal_year(a["d"]), a["u"]))
+                break
+        cand.sort(reverse=True)
+        if cand and pending(notes, cand[0][1]):
+            ars.append((cand[0][0], f, cand[0][1], "ar"))
+    todo.sort(key=lambda t: t[0], reverse=True)   # newest first
+    ars.sort(key=lambda t: t[0], reverse=True)
+    work = todo[:args.max] + ars[:args.max_ar]
     done = failed = 0
-    for d, f, a in todo[:args.max]:
+    for d, f, url, kind in work:
         try:
-            r = requests.get(a["u"], headers={"User-Agent": UA, "Referer": "https://www.nseindia.com/"}, timeout=60)
+            r = requests.get(url, headers={"User-Agent": UA, "Referer": "https://www.nseindia.com/"}, timeout=90)
             r.raise_for_status()
-            text = pdf_text(r.content)
-            if len(text.split()) < 300:
+            if kind == "ar":
+                text = pdf_text(r.content, max_pages=80, max_chars=400000)
+                note = summarize(text, per_topic=3)
+            elif kind == "ppt":
+                text = pdf_text(r.content)
+                note = summarize_ppt(text)
+            else:
+                text = pdf_text(r.content)
+                note = summarize(text)
+            if len(text.split()) < (80 if kind == "ppt" else 300):
                 raise ValueError("too little text (scanned PDF?)")
-            note = summarize(text)
-            note["d"] = a["d"]
+            if not note["sections"]:
+                raise ValueError("nothing to summarise")
+            note["d"], note["kind"] = d, kind
             doc = json.loads(f.read_text())
-            doc.setdefault("notes", {})[a["u"]] = note
+            doc.setdefault("notes", {})[url] = note
             f.write_text(json.dumps(doc, separators=(",", ":")))
             done += 1
-            print(f"{f.stem}: {a['d'][:10]} {note['tone']}, {sum(len(v) for v in note['sections'].values())} points")
+            print(f"{f.stem}: {kind} {d[:10]} {note['tone']}, {sum(len(v) for v in note['sections'].values())} points")
         except Exception as e:  # noqa: BLE001
             failed += 1
-            print(f"{f.stem}: {a['u']} failed ({e})", file=sys.stderr)
+            print(f"{f.stem}: {kind} {url} failed ({e})", file=sys.stderr)
             doc = json.loads(f.read_text())
-            prev = (doc.get("notes") or {}).get(a["u"]) or {}
-            doc.setdefault("notes", {})[a["u"]] = {"failed": str(e)[:120], "tries": prev.get("tries", 0) + 1, "d": a["d"]}
+            prev = (doc.get("notes") or {}).get(url) or {}
+            doc.setdefault("notes", {})[url] = {"failed": str(e)[:120], "tries": prev.get("tries", 0) + 1, "d": d, "kind": kind}
             f.write_text(json.dumps(doc, separators=(",", ":")))
-    print(f"Concall summaries: {done} written, {failed} failed, {max(0, len(todo) - args.max)} left for later runs")
+    left = max(0, len(todo) - args.max) + max(0, len(ars) - args.max_ar)
+    print(f"AI summaries: {done} written, {failed} failed, {left} left for later runs")
     return 0
 
 

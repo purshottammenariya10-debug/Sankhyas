@@ -747,7 +747,7 @@
     let m = d.getMonth() - (d.getMonth() % 3) - 1, y = d.getFullYear(); // last completed quarter end
     if (m < 0) { m += 12; y--; }
     for (let i = 0; i < k; i++) {
-      out.push(new Date(y, m, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }));
+      out.push(monYear(new Date(y, m, 1)));
       m -= 3; if (m < 0) { m += 12; y--; }
     }
     return out;
@@ -758,84 +758,165 @@
     return s ? s.charAt(0).toUpperCase() + s.slice(1) : String(t || '');
   }
   const IMPORTANT_FILING = /financial result|outcome of board|dividend|bonus|split|sub-division|buy ?back|acquisition|amalgamation|merger|demerger|resignation|appointment of (managing|chief|ceo|cfo|md)|credit rating|rights issue|preferential|qip|fund ?rais/i;
+  const RATING_AGENCY = /\b(crisil|icra|care|fitch|india ratings|brickwork|acuite|acuité|infomerics|moody'?s|s&p)\b/i;
+  const CHEVRON = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monYear = t => MON[t.getMonth()] + ' ' + t.getFullYear();
+  function docWhen(d) {
+    const t = new Date(d), h = (Date.now() - t) / 36e5;
+    if (h >= 0 && h < 24) return Math.max(1, Math.round(h)) + 'h';
+    return t.getDate() + ' ' + MON[t.getMonth()] + (t.getFullYear() === new Date().getFullYear() ? '' : ' ' + t.getFullYear());
+  }
+  // "2025-26" or "2026" -> 2026 (the year the financial year ends)
+  function fyEnd(y) {
+    const n = String(y || '').match(/\d{4}|\d{2}/g) || [];
+    if (n.length >= 2 && n[0].length === 4) return +n[0] + 1;
+    return n.length ? +n[0] : null;
+  }
+  const fyOfFiling = d => { const t = new Date(d); return t.getMonth() >= 3 ? t.getFullYear() : t.getFullYear() - 1; };
+  function docPanel(cls, head, body) {
+    return '<div class="doc-panel ' + cls + '"><div class="doc-head">' + head + '</div><div class="doc-scroll">' + body + '</div>' +
+      '<button type="button" class="doc-more" aria-label="Show more" title="Show more">' + CHEVRON + '</button></div>';
+  }
+  const pill = (u, label, title) => (u ? ext(u, label, 'doc-pill', title) : '<span class="doc-pill off" aria-disabled="true" title="Not available">' + label + '</span>');
+
   function documentsSection(c, f) {
     const X = exchangePages(c), P = X.nse || X.bse;
-    const A = (f && f.announcements) || [], R = (f && f.annualReports) || [];
-    const day = d => new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-    const both = key => (X.nse ? srcBadge('nse', X.nse[key]) : '') + (X.bse ? ' ' + srcBadge('bse', X.bse[key] || X.bse.ann) : '');
+    const A = (f && f.announcements) || [], R = (f && f.annualReports) || [], notes = (f && f.notes) || {};
+    const noted = u => !!(u && notes[u] && notes[u].sections);
+    const exName = X.nse && X.bse ? 'nse' : X.nse ? 'nse' : 'bse';
     if (!P) return '<section class="section card" id="documents"><h2>Documents</h2><p class="muted">No exchange listing found for this company.</p></section>';
 
     // Announcements
-    const annHtml = A.length
-      ? '<ul class="doc-list" id="ann-list">' + A.slice(0, 80).map(a => '<li data-imp="' + (IMPORTANT_FILING.test(a.t + ' ' + a.c) ? 1 : 0) + '"><span>' + ext(a.u, esc(cleanTitle(a.t))) +
-          (a.c ? '<br><span class="sub">' + esc(a.c) + '</span>' : '') + '</span><span class="date">' + day(a.d) + ' ' + srcBadge(a.x) + '</span></li>').join('') + '</ul>'
-      : '<ul class="doc-list" id="ann-list">' + [
+    const annBody = A.length
+      ? '<ul class="doc-items" id="ann-list">' + A.slice(0, 100).map(a => '<li data-imp="' + (IMPORTANT_FILING.test(a.t + ' ' + a.c) ? 1 : 0) + '" data-q="' + esc((cleanTitle(a.t) + ' ' + (a.c || '')).toLowerCase()) + '">' +
+          ext(a.u, esc(cleanTitle(a.t))) + '<div class="doc-meta">' + docWhen(a.d) + (a.c && a.c !== a.t ? ' - ' + esc(a.c) : '') + '</div></li>').join('') + '</ul>'
+      : '<ul class="doc-items" id="ann-list">' + [
           ['Latest announcements', 'ann', 0], ['Financial results', 'res', 1], ['Board meetings &amp; outcomes', 'bm', 1],
           ['Dividends, bonus &amp; corporate actions', 'ann', 1], ['Shareholding &amp; insider disclosures', 'ann', 0]
-        ].map(([label, key, imp]) => '<li data-imp="' + imp + '"><span>' + ext(P[key] || P.ann, label) + '</span><span class="date">' + both(key) + '</span></li>').join('') + '</ul>';
+        ].map(([label, key, imp]) => '<li data-imp="' + imp + '" data-q="' + label.toLowerCase() + '">' + ext(P[key] || P.ann, label) +
+          '<div class="doc-meta">on ' + (X.nse ? ext(X.nse[key] || X.nse.ann, 'NSE') : '') + (X.nse && X.bse ? ' &middot; ' : '') + (X.bse ? ext(X.bse[key] || X.bse.ann, 'BSE') : '') + '</div></li>').join('') + '</ul>';
+    const annHead = '<h3>Announcements</h3><div class="seg" role="tablist"><button type="button" class="active" data-ann="recent">Recent</button><button type="button" data-ann="important">Important</button>' +
+      '<button type="button" data-ann="search">Search</button>' + ext((X.nse || X.bse).ann, 'All <span aria-hidden="true">↗</span>', '', 'All announcements on ' + exName.toUpperCase()) + '</div>' +
+      '<input type="search" class="doc-search" id="ann-search" placeholder="Search announcements" hidden>';
 
-    // Annual reports
-    const arHtml = R.length
-      ? '<ul class="doc-list">' + R.map(r => '<li>' + ext(r.u, 'Financial Year ' + esc(r.y || '')) + '<span class="date">' + srcBadge(r.x) + '</span></li>').join('') + '</ul>'
-      : '<ul class="doc-list">' + Array.from({ length: 8 }, (_, i) => new Date().getFullYear() - (new Date().getMonth() < 6 ? 1 : 0) - i)
-          .map(y => '<li>' + ext(P.ar, 'Financial Year ' + y) + '<span class="date">' + both('ar') + '</span></li>').join('') + '</ul>';
+    // Annual reports: the report list, plus Reg. 34 annual-report filings among the announcements
+    const reps = [], seenY = {};
+    R.forEach(r => { const y = fyEnd(r.y); if (y && !seenY[y]) { seenY[y] = 1; reps.push({ y, u: r.u, x: r.x }); } });
+    A.forEach(a => {
+      if (!/annual report/i.test(a.t + ' ' + (a.c || '')) || !/\.pdf($|\?)/i.test(a.u)) return;
+      const y = fyOfFiling(a.d);
+      if (!seenY[y]) { seenY[y] = 1; reps.push({ y, u: a.u, x: a.x }); }
+    });
+    reps.sort((a, b) => b.y - a.y);
+    const arBody = '<ul class="doc-items">' + (reps.length
+      ? reps.map(r => '<li>' + ext(r.u, 'Annual Report ' + r.y) + '<div class="doc-meta">from ' + esc(r.x || exName) +
+          (noted(r.u) ? ' <button type="button" class="doc-pill" data-sum="' + esc(r.u) + '" data-sum-title="Annual Report ' + r.y + '">AI Summary</button>' : '') + '</div></li>').join('')
+      : Array.from({ length: 8 }, (_, i) => new Date().getFullYear() - (new Date().getMonth() < 6 ? 1 : 0) - i)
+          .map(y => '<li>' + ext(P.ar, 'Annual Report ' + y) + '<div class="doc-meta">from ' + (X.nse ? ext(X.nse.ar, 'nse') : '') + (X.nse && X.bse ? ' &middot; ' : '') + (X.bse ? ext(X.bse.ar, 'bse') : '') + '</div></li>').join('')) + '</ul>';
 
     // Credit ratings
-    const ratings = A.filter(a => a.k === 'rating').slice(0, 12);
-    const crHtml = ratings.length
-      ? '<ul class="doc-list">' + ratings.map(a => '<li>' + ext(a.u, esc(cleanTitle(a.t))) + '<span class="date">' + day(a.d) + '</span></li>').join('') + '</ul>'
-      : '<ul class="doc-list"><li>' + ext(P.ann, 'Credit rating filings') + '<span class="date">' + both('ann') + '</span></li></ul>';
+    const ratings = A.filter(a => a.k === 'rating').slice(0, 20);
+    const crBody = '<ul class="doc-items">' + (ratings.length
+      ? ratings.map(a => { const ag = (a.t + ' ' + (a.c || '')).match(RATING_AGENCY);
+          return '<li>' + ext(a.u, 'Rating update', '', cleanTitle(a.t)) + '<div class="doc-meta">' + docWhen(a.d) + ' from ' + esc(ag ? ag[1].toLowerCase() : (a.x || exName)) + '</div></li>'; }).join('')
+      : '<li>' + ext(P.ann, 'Rating updates') + '<div class="doc-meta">in ' + exName.toUpperCase() + ' filings</div></li>') + '</ul>';
 
-    // Concalls: Transcript / PPT / REC per quarter
-    const KIND = { transcript: 'Transcript', ppt: 'PPT', audio: 'REC', concall: 'Notes' };
-    const ORDER = ['transcript', 'ppt', 'audio', 'concall'];
-    const calls = A.filter(a => /transcript|ppt|audio|concall/.test(a.k));
-    let ccHtml;
-    if (calls.length) {
-      const groups = [], by = {};
-      calls.forEach(a => {
-        const key = new Date(a.d).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
-        if (!by[key]) { by[key] = []; groups.push(key); }
-        by[key].push(a);
-      });
-      ccHtml = groups.slice(0, 12).map(g => {
-        const items = by[g].slice().sort((a, b) => ORDER.indexOf(a.k) - ORDER.indexOf(b.k));
-        const notes = (f && f.notes) || {};
-        const noted = items.find(a => a.k === 'transcript' && notes[a.u] && notes[a.u].sections);
-        return '<div class="concall-row"><span class="period">' + esc(g) + '</span>' + items.slice(0, 6).map(a => ext(a.u, KIND[a.k], 'btn btn-small', a.t)).join('') +
-          (noted ? '<button class="btn btn-small btn-ai" data-note="' + esc(noted.u) + '">✦ AI Notes</button>' : '') + '</div>';
+    // Concalls: one row per month with Transcript / AI Summary / PPT / REC
+    const extra = store.get('cc_extra_' + c.symbol, []);
+    const rows = {}, order = [];
+    const row = key => { if (!rows[key]) { rows[key] = { key, t: 0 }; order.push(key); } return rows[key]; };
+    A.filter(a => /^(transcript|ppt|audio)$/.test(a.k)).forEach(a => {
+      const d = new Date(a.d), r = row(monYear(d));
+      r.t = Math.max(r.t, +new Date(d.getFullYear(), d.getMonth(), 1));
+      if (!r[a.k]) r[a.k] = a.u;
+    });
+    extra.forEach(e => { const r = row(e.m); r.t = r.t || +new Date(e.m + ' 1') || 0; if (!r[e.k]) { r[e.k] = e.u; r.mine = 1; } });
+    let ccBody;
+    if (order.length) {
+      ccBody = order.sort((a, b) => rows[b].t - rows[a].t).slice(0, 16).map(k => {
+        const r = rows[k], sums = [r.transcript, r.ppt].filter(noted);
+        return '<div class="cc-row"><span class="cc-period">' + esc(k) + '</span>' + pill(r.transcript, 'Transcript') +
+          (sums.length ? '<button type="button" class="doc-pill" data-sum="' + esc(sums.join(' ')) + '" data-sum-title="Concall ' + esc(k) + '">AI Summary</button>' : pill(null, 'AI Summary')) +
+          pill(r.ppt, 'PPT') + pill(r.audio, 'REC') + '</div>';
       }).join('');
     } else {
-      const tip = 'Opens ' + c.name + '\'s filings on ' + (X.nse ? 'NSE' : 'BSE') + ' (look for "Analysts/Institutional Investor Meet")';
-      ccHtml = recentQuarters(8).map(q => '<div class="concall-row"><span class="period">' + esc(q) + '</span>' +
-        ['Transcript', 'PPT', 'REC'].map(k => ext(P.ann, k, 'btn btn-small', tip)).join('') + '</div>').join('');
+      const tip = 'Opens ' + c.name + '\'s filings on ' + exName.toUpperCase() + ' (look for "Analysts/Institutional Investor Meet")';
+      ccBody = recentQuarters(8).map(q => '<div class="cc-row"><span class="cc-period">' + esc(q) + '</span>' + pill(P.ann, 'Transcript', tip) + pill(null, 'AI Summary') +
+        pill(P.ann, 'PPT', tip) + pill(P.ann, 'REC', tip) + '</div>').join('');
     }
+    const ccHead = '<h3>Concalls</h3><button type="button" class="doc-add" id="cc-add"><svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><path d="M3 15V2h9l-2 3 2 3H4" fill="currentColor"/></svg> Add Missing</button>';
 
     const from = A.length ? 'Filings from ' + (A.some(a => a.x === 'nse') && A.some(a => a.x === 'bse') ? 'NSE and BSE' : A.some(a => a.x === 'nse') ? 'NSE' : 'BSE') +
-      (f.updated ? ' &middot; updated ' + day(f.updated) : '') : 'Links open ' + esc(c.name) + '\'s filings on ' + (X.nse && X.bse ? 'NSE and BSE' : X.nse ? 'NSE' : 'BSE');
+      (f.updated ? ' &middot; updated ' + docWhen(f.updated) : '') + ' &middot; AI summaries are free and built in' : 'Links open ' + esc(c.name) + '\'s filings on ' + (X.nse && X.bse ? 'NSE and BSE' : X.nse ? 'NSE' : 'BSE');
     return '<section class="section card" id="documents"><div class="section-head"><div><h2>Documents</h2><p>' + from + '</p></div>' + exchangeLinks(c) + '</div><div class="docs-grid">' +
-      '<div><div class="flex space-between"><h3>Announcements</h3><span class="tabs"><button class="btn btn-small active" data-ann="recent">Recent</button><button class="btn btn-small" data-ann="important">Important</button></span></div>' + annHtml + '</div>' +
-      '<div><h3>Annual reports</h3>' + arHtml + '</div>' +
-      '<div><h3>Credit ratings</h3>' + crHtml + '</div>' +
-      '<div><h3>Concalls</h3>' + ccHtml + '</div>' +
+      docPanel('doc-ann', annHead, annBody) + docPanel('doc-ar', '<h3>Annual reports</h3>', arBody) +
+      docPanel('doc-cr', '<h3>Credit ratings</h3>', crBody) + docPanel('doc-cc', ccHead, ccBody) +
       '</div></section>';
   }
+  const NOTE_KIND = { transcript: ['Concall transcript', 'Read full transcript'], ppt: ['Investor presentation (PPT)', 'Open presentation'], ar: ['Annual report', 'Open annual report'] };
   function concallNoteHtml(n, url) {
-    const day = new Date(n.d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-    return '<p class="sub">Call filed ' + day + ' &middot; tone: <b class="tone-' + esc(n.tone).toLowerCase() + '">' + esc(n.tone) + '</b> &middot; ' +
-      '<a target="_blank" rel="noopener noreferrer" href="' + esc(url) + '">Read full transcript</a></p>' +
-      Object.keys(n.sections).map(k => '<h4>' + esc(k) + '</h4><ul>' + n.sections[k].map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>').join('') +
-      '<p class="table-note">Free built-in AI summary: key sentences picked from the transcript by topic, in management\'s own words. It can miss context; read the transcript before acting on it.</p>';
+    const k = NOTE_KIND[n.kind] || NOTE_KIND.transcript;
+    const when = n.kind === 'ar' ? 'FY ' + esc(n.d) : 'Filed ' + (t => t.getDate() + ' ' + monYear(t))(new Date(n.d));
+    return '<h3 class="note-kind">' + k[0] + '</h3><p class="sub">' + when + ' &middot; tone: <b class="tone-' + esc(n.tone).toLowerCase() + '">' + esc(n.tone) + '</b> &middot; ' +
+      '<a target="_blank" rel="noopener noreferrer" href="' + esc(url) + '">' + k[1] + ' ↗</a></p>' +
+      Object.keys(n.sections).map(s => '<h4>' + esc(s) + '</h4><ul>' + n.sections[s].map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>').join('');
+  }
+  const NOTE_FOOT = '<p class="table-note">Free built-in AI summary: the key points picked from the document by topic, in the company\'s own words. It can miss context, so read the document before acting on it.</p>';
+  function addMissingConcall() {
+    const c = currentCompany;
+    if (!c) return;
+    const months = recentQuarters(12).concat(Array.from({ length: 12 }, (_, i) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i); return monYear(d); }))
+      .filter((m, i, a) => a.indexOf(m) === i).sort((a, b) => new Date(b + ' 1') - new Date(a + ' 1'));
+    modal('Add a missing concall document', '<p class="sub">Paste a link to a transcript, presentation or recording on the NSE, BSE or company website. It is saved in this browser only.</p>' +
+      '<div class="field"><label for="cc-m">Month</label><select id="cc-m">' + months.map(m => '<option>' + esc(m) + '</option>').join('') + '</select></div>' +
+      '<div class="field"><label for="cc-k">Document</label><select id="cc-k"><option value="transcript">Transcript</option><option value="ppt">PPT</option><option value="audio">REC (recording)</option></select></div>' +
+      '<div class="field"><label for="cc-u">Link</label><input id="cc-u" type="url" placeholder="https://…"></div><p class="form-error" id="cc-err" hidden></p>',
+      [{ label: 'Cancel' }, { label: 'Add', primary: true, onClick: bd => {
+        const u = $('#cc-u', bd).value.trim();
+        if (!/^https?:\/\/[^\s]+\.[^\s]+/i.test(u)) { const e = $('#cc-err', bd); e.hidden = false; e.textContent = 'Enter a full link starting with https://'; return false; }
+        const list = store.get('cc_extra_' + c.symbol, []);
+        list.push({ m: $('#cc-m', bd).value, k: $('#cc-k', bd).value, u });
+        store.set('cc_extra_' + c.symbol, list);
+        refreshDocuments();
+        toast('Added to Concalls');
+      } }]);
+  }
+  function refreshDocuments() {
+    const c = currentCompany, el = $('#documents');
+    if (!c || !el) return;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = documentsSection(c, c._filings);
+    el.replaceWith(tmp.firstChild);
+    bindDocuments();
   }
   function bindDocuments() {
-    $$('[data-note]').forEach(b => b.onclick = () => {
-      const c = currentCompany, n = c && c._filings && c._filings.notes && c._filings.notes[b.dataset.note];
-      if (n) modal('Concall AI Notes: ' + c.name, '<div class="ai-assistant note-body">' + concallNoteHtml(n, b.dataset.note) + '</div>');
+    $$('#documents [data-sum]').forEach(b => b.onclick = () => {
+      const c = currentCompany, N = (c && c._filings && c._filings.notes) || {};
+      const us = b.dataset.sum.split(' ').filter(u => N[u] && N[u].sections);
+      if (us.length) modal('AI Summary: ' + c.name + ' · ' + b.dataset.sumTitle, '<div class="ai-assistant note-body">' + us.map(u => concallNoteHtml(N[u], u)).join('<hr>') + NOTE_FOOT + '</div>');
     });
-    $$('[data-ann]').forEach(b => b.onclick = () => {
-      $$('[data-ann]').forEach(x => x.classList.toggle('active', x === b));
-      const imp = b.dataset.ann === 'important';
-      $$('#ann-list li').forEach(li => { li.style.display = !imp || li.dataset.imp === '1' ? '' : 'none'; });
+    const list = $('#ann-list'), search = $('#ann-search');
+    const apply = () => {
+      const mode = ($('#documents [data-ann].active') || {}).dataset;
+      const imp = mode && mode.ann === 'important', q = mode && mode.ann === 'search' ? search.value.trim().toLowerCase() : '';
+      if (list) $$('li', list).forEach(li => { li.style.display = (!imp || li.dataset.imp === '1') && (!q || li.dataset.q.indexOf(q) >= 0) ? '' : 'none'; });
+    };
+    $$('#documents [data-ann]').forEach(b => b.onclick = () => {
+      $$('#documents [data-ann]').forEach(x => x.classList.toggle('active', x === b));
+      search.hidden = b.dataset.ann !== 'search';
+      if (!search.hidden) search.focus();
+      apply();
+    });
+    if (search) search.oninput = apply;
+    const add = $('#cc-add');
+    if (add) add.onclick = addMissingConcall;
+    $$('#documents .doc-panel').forEach(p => {
+      const box = $('.doc-scroll', p), more = $('.doc-more', p);
+      const fits = () => box.scrollHeight <= box.clientHeight + 4;
+      const upd = () => p.classList.toggle('fits', !p.classList.contains('open') && fits());
+      more.onclick = () => { p.classList.toggle('open'); more.setAttribute('aria-label', p.classList.contains('open') ? 'Show less' : 'Show more'); upd(); };
+      upd();
     });
   }
 

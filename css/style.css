@@ -239,7 +239,40 @@ table.data.list tr.median td { font-weight: 600; background: var(--bg-3); }
 .chart-legend label { display: inline-flex; gap: 6px; align-items: center; font-weight: 500; margin: 0; cursor: pointer; }
 .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
 
-.docs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.docs-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, .75fr) minmax(0, .6fr) minmax(0, 1.45fr); gap: 24px; align-items: stretch; }
+.doc-panel { position: relative; border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 14px 26px; background: var(--bg); min-width: 0; }
+.doc-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.doc-head h3 { margin: 0; font-size: 16px; font-weight: 600; width: auto; }
+.doc-ann .doc-head h3 { width: 100%; }
+.doc-scroll { max-height: 210px; overflow: hidden; position: relative; }
+.doc-scroll::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 44px; background: linear-gradient(transparent, var(--bg)); pointer-events: none; }
+.doc-panel.open .doc-scroll { max-height: 560px; overflow: auto; }
+.doc-panel.open .doc-scroll::after, .doc-panel.fits .doc-scroll::after, .doc-panel.fits .doc-more { display: none; }
+.doc-panel.fits { padding-bottom: 14px; }
+.doc-more { position: absolute; left: 50%; bottom: 4px; transform: translateX(-50%); border: 0; background: none; color: var(--ink-2); cursor: pointer; padding: 2px 8px; line-height: 0; }
+.doc-panel.open .doc-more svg { transform: rotate(180deg); }
+.doc-items { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+.doc-items li { padding: 0 0 14px; }
+.doc-items li > a { color: var(--primary); line-height: 1.45; }
+.doc-meta { color: var(--ink-3); font-size: 12.5px; margin-top: 3px; line-height: 1.45; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.doc-ann .doc-meta { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; padding: 2px; gap: 2px; font-size: 12.5px; }
+.seg button, .seg a { border: 0; background: none; padding: 3px 9px; border-radius: 4px; color: var(--ink-2); cursor: pointer; font: inherit; text-decoration: none; }
+.seg button.active { background: var(--primary-bg); color: var(--primary); }
+.seg button:hover, .seg a:hover { color: var(--primary); }
+.doc-search { margin-top: 8px; width: 100%; padding: 5px 8px; font-size: 13px; }
+.doc-pill { display: inline-flex; align-items: center; border: 1px solid var(--primary); color: var(--primary); background: var(--bg); border-radius: 5px; padding: 3px 7px;
+  font-size: 11.5px; font-weight: 500; line-height: 1.2; white-space: nowrap; cursor: pointer; text-decoration: none; font-family: inherit; }
+.doc-pill:hover { background: var(--primary-bg); text-decoration: none; }
+.doc-pill.off { border-color: var(--line); color: var(--ink-3); opacity: .55; cursor: default; background: none; }
+.cc-row { display: flex; align-items: center; gap: 6px; padding: 5px 0 9px; flex-wrap: wrap; }
+.cc-period { width: 70px; font-size: 13.5px; color: var(--ink-2); font-weight: 500; }
+.doc-add { border: 0; background: none; color: var(--ink-2); font-size: 11.5px; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; display: inline-flex; gap: 4px; align-items: center; padding: 0; font-family: inherit; }
+.doc-add:hover { color: var(--primary); }
+.note-kind { font-size: 15px; margin: 4px 0 2px; }
+.note-body hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
+.form-error { color: var(--red); font-size: 13px; margin: 0; }
+@media (max-width: 1100px) { .docs-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 .doc-list { list-style: none; margin: 0; padding: 0; font-size: 14px; max-height: 360px; overflow: auto; }
 .doc-list li { padding: 8px 0; border-bottom: 1px solid var(--line-2); display: flex; justify-content: space-between; gap: 10px; }
 .doc-list .date { color: var(--ink-3); font-size: 12px; white-space: nowrap; }
