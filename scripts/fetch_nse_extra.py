@@ -32,7 +32,7 @@ SHP_DIR = ROOT / "data" / "shp"
 RES_DIR = ROOT / "data" / "results"
 FILINGS = ROOT / "data" / "filings"
 KEEP_SHP = 12       # quarters of shareholding history
-KEEP_RES = 8        # quarters of results
+KEEP_RES = 6        # quarters of results (enough for YoY and QoQ)
 HEADERS = {"User-Agent": UA, "Referer": "https://www.nseindia.com/"}
 FACT = re.compile(r"<([A-Za-z\-]+):([A-Za-z0-9]+)\b[^>]*?contextRef=\"([^\"]+)\"[^>]*>([^<]*)<")
 

@@ -99,8 +99,9 @@ class NseRelay:
         self.delay, self.timeout, self._last = delay, timeout, 0.0
 
     def get(self, url, params=None, retries=2, expect_json=True):
-        from urllib.parse import urlencode
-        path = url.replace(NSE_HOME, "", 1) + ("?" + urlencode(params or {}, safe=",") if params else "")
+        from urllib.parse import quote, urlencode
+        # %20 for spaces: the relay only accepts plain URL characters, not '+'
+        path = url.replace(NSE_HOME, "", 1) + ("?" + urlencode(params or {}, safe=",", quote_via=quote) if params else "")
         if "?" not in path:
             path += "?"
         for attempt in range(retries + 1):
@@ -110,13 +111,15 @@ class NseRelay:
             self._last = time.time()
             try:
                 r = self.s.post(self.endpoint, json={"paths": [path]}, timeout=self.timeout)
+                if r.status_code == 400:   # the relay refused the path: retrying cannot help
+                    raise ValueError(f"relay refused {path[:80]}: {r.text[:120]}")
                 r.raise_for_status()
                 res = r.json()[0]
                 if res.get("status") == 200:
                     return res.get("data")
                 raise requests.HTTPError(f"NSE answered {res.get('status')} via relay")
-            except (requests.RequestException, ValueError, IndexError, KeyError):
-                if attempt >= retries:
+            except (requests.RequestException, ValueError, IndexError, KeyError) as e:
+                if attempt >= retries or "relay refused" in str(e):
                     raise
                 time.sleep(2 ** (attempt + 1))
         return None
