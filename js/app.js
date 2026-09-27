@@ -396,6 +396,7 @@
 
     // actions
     $('#follow-btn').onclick = () => {
+      if (!requireLogin('follow companies')) return;
       const now = toggleWatch(sym);
       const b = $('#follow-btn');
       b.className = 'btn ' + (now ? 'active' : 'btn-primary');
@@ -1410,7 +1411,7 @@
       '<div class="flex" style="margin-top:10px"><button class="btn btn-primary btn-small" id="save-notes">Save notes</button></div></section>';
   }
   function bindNotes(c) {
-    $('#save-notes').onclick = () => { store.set('notes_' + c.symbol, $('#notes-text').value); toast('Notes saved'); };
+    $('#save-notes').onclick = () => { if (!requireLogin('save notes')) return; store.set('notes_' + c.symbol, $('#notes-text').value); toast('Notes saved'); };
   }
 
   function exportCompany(c) {
@@ -1574,7 +1575,7 @@
     $('#run-query').onclick = () => run(true);
     $('#query').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) run(true); });
     $('#save-screen').onclick = () => {
-      if (!user()) { toast('Please login to save screens'); location.hash = '#/login?next=' + encodeURIComponent(location.hash); return; }
+      if (!user()) { if (!requireLogin('save screens')) return; }
       const q = $('#query').value.trim();
       try { Screener.compile(q); } catch (e) { $('#query-error').innerHTML = '<div class="error-box">' + esc(e.message) + '</div>'; return; }
       const bd = modal('Save screen', '<div class="field"><label>Name</label><input type="text" id="sname" value="' + esc(meta ? meta.name : '') + '" placeholder="My screen"></div><div class="field"><label>Description</label><input type="text" id="sdesc" placeholder="Optional"></div>', [
@@ -2129,6 +2130,11 @@
   /* ---------- Watchlist ---------- */
   function pageWatchlist() {
     setTitle('Watchlist');
+    if (Account.cloud && !user()) {
+      app.innerHTML = loginGate('Your watchlist', 'Login to follow companies and see their prices, results and ratios in one list, synced on every device.', '#/watchlist');
+      socialButtons($('#gate-social'), '#/watchlist', 'Login');
+      return;
+    }
     const all = Data.listCompanies();
     const draw = () => {
       const w = watchlist();
@@ -2235,6 +2241,11 @@
   }
   function pagePortfolio() {
     setTitle('Portfolio X-ray');
+    if (Account.cloud && !user()) {
+      app.innerHTML = loginGate('Portfolio X-ray', 'Login to add your holdings or import your broker CSV, and see your portfolio\'s sectors, concentration, combined P/E and red flags.', '#/portfolio');
+      socialButtons($('#gate-social'), '#/portfolio', 'Login');
+      return;
+    }
     const all = Data.listCompanies();
     const draw = () => {
       const hold = portfolio();
@@ -2338,7 +2349,11 @@
     const u = user(), cfg = Account.config;
     const shell = body => { app.innerHTML = '<div class="container page"><div class="card" style="max-width:860px;margin:0 auto"><div class="section-head"><div><h1>Alerts ' + PRO_TAG + '</h1><p>Results, red-flag changes, insider buying, order wins and screen matches, sent to you by email, Telegram or WhatsApp.</p></div></div>' + body + '</div></div>'; };
     if (!Account.cloud) return shell('<div class="info-box">Alerts need Sankhyas accounts, which are not switched on for this site.</div>');
-    if (!u) return shell('<div class="info-box"><a href="#/login?next=%23%2Falerts">Log in</a> or <a href="#/register?next=%23%2Falerts">create a free account</a> to set up alerts.</div>');
+    if (!u) {
+      app.innerHTML = loginGate('Alerts', 'Login to get results, red-flag changes, insider buying and order wins for the companies you follow, by email, Telegram or WhatsApp.', '#/alerts');
+      socialButtons($('#gate-social'), '#/alerts', 'Login');
+      return;
+    }
     if (!Account.isPro()) return shell(lockedCard('alerts-lock', 'Alerts', '<p class="muted">Get told the moment results, red flags, insider buying or order wins land for the companies you follow.</p>'));
     const prof = Account.profile() || {};
     const screens = store.get('screens', []);
@@ -2450,36 +2465,47 @@
   ];
   const errBox = m => '<div class="error-box">' + esc(m) + '</div>';
   const okBox = m => '<div class="ok-box">' + m + '</div>';
+  /* social login buttons: Google always (the main way in); others once switched on in Supabase */
+  function socialButtons(el, next, verb) {
+    Account.providers().then(on => {
+      if (!el.isConnected) return;
+      const list = SOCIAL.filter(x => x[0] === 'google' || on[x[0]]);
+      el.innerHTML = list.map(x => '<button class="btn btn-social" type="button" data-provider="' + x[0] + '">' + x[2] + '<span>' + verb + ' using ' + x[1] + '</span></button>').join('');
+      $$('[data-provider]', el).forEach(b => b.onclick = async () => {
+        const errEl = $('#auth-err') || $('.gate-err', el.parentElement);
+        if (on[b.dataset.provider] === false) {
+          if (errEl) errEl.innerHTML = errBox('Google login is being switched on. Please use email for now; your account will work with Google later too.');
+          return;
+        }
+        try { sessionStorage.setItem('sankhyas_next', next); } catch (e) { /* ignore */ }
+        b.disabled = true;
+        const r = await Account.oauth(b.dataset.provider);
+        b.disabled = false;
+        if (r.error && errEl) errEl.innerHTML = errBox(r.error);
+      });
+    });
+  }
   function authPage(isRegister, params) {
     setTitle(isRegister ? 'Register' : 'Login');
     const next = params.next || '#/feed';
     if (user()) { location.hash = next; return; }
-    app.innerHTML = '<div class="container page"><div class="card auth-card"><h1>' + (isRegister ? 'Create a free account' : 'Welcome back') + '</h1>' +
-      '<p class="muted" style="text-align:center">' + (isRegister ? 'Save screens, follow companies and unlock Sankhyas Pro.' : 'Login to your Sankhyas account') + '</p>' +
-      (Account.cloud ? '<div id="social-btns" class="social-btns"></div><div class="or-line"><span>or</span></div>' : '') +
-      '<form id="auth-form">' + (isRegister ? '<div class="field"><label for="a-name">Full name</label><input type="text" id="a-name" autocomplete="name" required></div>' : '') +
-      '<div class="field"><label for="a-email">Email</label><input type="email" id="a-email" autocomplete="email" required></div>' +
+    const nq = params.next ? '?next=' + encodeURIComponent(params.next) : '';
+    const USER_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10zm0 2c-5 0-9 2.5-9 5.5V22h18v-2.5C21 16.5 17 14 12 14z"/></svg>';
+    app.innerHTML = '<div class="container page"><div class="auth-wrap">' +
+      '<h1 class="auth-title">' + (isRegister ? 'Create your free account' : 'Login to Sankhyas') + '</h1>' +
+      '<p class="muted auth-sub">' + (isRegister ? 'Follow companies, save screens, track your portfolio and get alerts on every device.' : 'Your watchlist, screens and portfolio, on every device.') + '</p>' +
+      (Account.cloud ? '<div id="social-btns" class="social-btns"></div><div class="or-line"><span>or using email</span></div>' : '') +
+      '<form id="auth-form" class="card auth-form">' +
+      (isRegister ? '<div class="field"><label for="a-name">Full name</label><input type="text" id="a-name" autocomplete="name" required></div>' : '') +
+      '<div class="field"><label for="a-email">Email</label><input type="email" id="a-email" autocomplete="email" required autofocus></div>' +
       '<div class="field"><label for="a-pass">Password</label><input type="password" id="a-pass" minlength="' + (Account.cloud ? 8 : 6) + '" autocomplete="' + (isRegister ? 'new-password' : 'current-password') + '" required></div>' +
-      (!isRegister && Account.cloud ? '<p class="sub" style="text-align:right;margin:-8px 0 12px"><a href="#/forgot">Forgot password?</a></p>' : '') +
-      '<div id="auth-err">' + (Account.error ? errBox(Account.error) : '') + '</div><button class="btn btn-primary" style="width:100%;justify-content:center" type="submit">' + (isRegister ? 'Create account' : 'Login') + '</button>' +
-      (Account.cloud ? '<button class="btn btn-plain" id="magic-btn" type="button" style="width:100%;justify-content:center;margin-top:8px">✉ Email me a one-time login link instead</button>' : '') + '</form>' +
-      '<p class="sub" style="text-align:center;margin-top:16px">' + (isRegister ? 'Already have an account? <a href="#/login' + (params.next ? '?next=' + encodeURIComponent(params.next) : '') + '">Login</a>'
-        : 'New to Sankhyas? <a href="#/register' + (params.next ? '?next=' + encodeURIComponent(params.next) : '') + '">Create an account</a>') + '</p>' +
+      '<div id="auth-err">' + (Account.error ? errBox(Account.error) : '') + '</div>' +
+      '<div class="auth-actions"><button class="btn btn-primary" type="submit">' + USER_ICON + ' ' + (isRegister ? 'Register' : 'Login') + '</button>' +
+      (!isRegister && Account.cloud ? '<a href="#/forgot">Lost password?</a>' : '') + '</div>' +
+      (Account.cloud ? '<button class="link-btn" id="magic-btn" type="button">✉ Email me a one-time login link instead</button>' : '') + '</form>' +
+      '<p class="auth-switch">' + (isRegister ? 'Already have an account? <a href="#/login' + nq + '">Login</a>' : 'Don\'t have an account? <a href="#/register' + nq + '">Register for free</a>.') + '</p>' +
       '<p class="table-note" style="text-align:center">' + (Account.cloud ? 'By continuing you agree to the <a href="#/terms">Terms</a> and <a href="#/privacy">Privacy policy</a>.' : 'Your account is saved in this browser.') + '</p></div></div>';
-    if ($('#social-btns')) {
-      Account.providers().then(on => {
-        const el = $('#social-btns');
-        if (!el) return;
-        // Google is always offered unless the server says it is off; the others only when switched on
-        const list = SOCIAL.filter(x => on[x[0]] || (x[0] === 'google' && on.google !== false));
-        el.innerHTML = list.map(x => '<button class="btn btn-google" type="button" data-provider="' + x[0] + '">' + x[2] + ' Continue with ' + x[1] + '</button>').join('');
-        $$('[data-provider]', el).forEach(b => b.onclick = async () => {
-          try { sessionStorage.setItem('sankhyas_next', next); } catch (e) { /* ignore */ }
-          const r = await Account.oauth(b.dataset.provider);
-          if (r.error) $('#auth-err').innerHTML = errBox(r.error);
-        });
-      });
-    }
+    if ($('#social-btns')) socialButtons($('#social-btns'), next, isRegister ? 'Sign up' : 'Login');
     if ($('#magic-btn')) $('#magic-btn').onclick = async () => {
       const email = $('#a-email').value.trim().toLowerCase();
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { $('#auth-err').innerHTML = errBox('Enter your email above first.'); $('#a-email').focus(); return; }
@@ -2499,13 +2525,34 @@
       btn.disabled = false;
       if (r.error) { $('#auth-err').innerHTML = errBox(r.error); return; }
       if (r.needsConfirm) {
-        $('#auth-form').outerHTML = okBox('Almost done! We sent a confirmation link to <b>' + esc(email) + '</b>. Open it to activate your account, then log in.');
+        $('#auth-form').outerHTML = okBox('Almost done! We sent a confirmation link to <b>' + esc(email) + '</b>. Open it to activate your account; you will be logged in straight away.');
+        try { sessionStorage.setItem('sankhyas_next', next); } catch (e2) { /* ignore */ }
         return;
       }
       renderAuth();
       toast('Welcome, ' + ((user() && user().name) || '').split(' ')[0]);
       location.hash = next;
     };
+  }
+
+  /* Features that belong to an account (watchlist, portfolio, notes, saved screens, alerts) ask
+     visitors to sign in first. Returns true when the visitor may go ahead. */
+  function requireLogin(what, next) {
+    if (user() || !Account.cloud) return true;
+    next = next || location.hash || '#/';
+    const nq = '?next=' + encodeURIComponent(next);
+    const bd = modal('Login to ' + what, '<p class="muted">Create a free Sankhyas account to ' + esc(what) + '. Your watchlist, screens, notes and portfolio stay in sync on every device.</p>' +
+      '<div class="social-btns gate-social"></div><div class="gate-err"></div><div class="or-line"><span>or using email</span></div>' +
+      '<div class="gate-links"><a class="btn btn-primary" href="#/login' + nq + '">Login with email</a><a class="btn" href="#/register' + nq + '">Register for free</a></div>', []);
+    $('.modal-foot', bd).remove();
+    socialButtons($('.gate-social', bd), next, 'Login');
+    $$('.gate-links a', bd).forEach(a => a.addEventListener('click', () => bd.remove()));
+    return false;
+  }
+  function loginGate(title, text, next) {
+    return '<div class="container page"><div class="card gate-card"><div class="gate-icon" aria-hidden="true">🔒</div><h1>' + esc(title) + '</h1><p class="muted">' + text + '</p>' +
+      '<div class="social-btns gate-social" id="gate-social"></div><div class="gate-err"></div><div class="or-line"><span>or using email</span></div>' +
+      '<div class="gate-links"><a class="btn btn-primary" href="#/login?next=' + encodeURIComponent(next) + '">Login with email</a><a class="btn" href="#/register?next=' + encodeURIComponent(next) + '">Register for free</a></div></div></div>';
   }
   function pageForgot() {
     setTitle('Reset password');

@@ -655,3 +655,27 @@ table.trades td.l { min-width: 110px; }
 .doc-pill.gen::before { content: "✦ "; }
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--primary); border-radius: 50%; vertical-align: -2px; margin-right: 6px; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* login / register (Screener-style) */
+.auth-wrap { max-width: 400px; margin: 24px auto 40px; }
+.auth-title { text-align: center; font-size: 26px; margin: 0 0 6px; }
+.auth-sub { text-align: center; margin: 0 0 20px; }
+.social-btns { display: grid; gap: 12px; }
+.btn-social { width: 100%; justify-content: center; gap: 12px; padding: 14px 16px; background: var(--bg); border: 1px solid var(--line); box-shadow: var(--shadow); border-radius: 10px; font-weight: 700; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink); }
+.btn-social:hover { border-color: var(--primary); }
+.btn-social svg { flex: none; }
+.auth-wrap .or-line, .gate-card .or-line, .modal .or-line { margin: 20px 0; font-size: 13px; }
+.auth-form { padding: 20px; margin: 0; }
+.auth-form .field label { font-weight: 600; color: var(--ink); }
+.auth-actions { display: flex; align-items: center; gap: 18px; margin-top: 6px; }
+.auth-actions .btn-primary { gap: 8px; padding: 10px 18px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; font-size: 13px; }
+.auth-actions a { color: var(--primary); }
+.link-btn { background: none; border: 0; padding: 0; margin-top: 14px; color: var(--ink-3); font-size: 13px; cursor: pointer; text-decoration: underline; }
+.link-btn:hover { color: var(--primary); }
+.auth-switch { text-align: center; margin-top: 18px; color: var(--ink-2); }
+.auth-switch a { color: var(--primary); }
+.gate-card { max-width: 460px; margin: 30px auto; text-align: center; }
+.gate-card h1 { margin: 6px 0; }
+.gate-icon { font-size: 30px; }
+.gate-links { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.gate-err .error-box { text-align: left; }
+@media (max-width: 560px) { .auth-wrap, .gate-card { margin-left: 16px; margin-right: 16px; } }
