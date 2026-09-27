@@ -1,7 +1,8 @@
 # Points sankhyas.com at GitHub Pages. Run it from Actions -> "Connect custom domain" -> Run workflow.
-# It always reports where the domain's DNS is hosted and what it points at now. With the
-# CLOUDFLARE_API_TOKEN secret (a Cloudflare API token with the "Edit zone DNS" template for the
-# domain), it also replaces the apex and www records with GitHub Pages ones (DNS only, grey cloud).
+# It always reports where the domain's DNS is hosted and what it points at now. Given access, it
+# replaces the apex and www records with GitHub Pages ones:
+#   GoDaddy DNS:    secrets GODADDY_API_KEY and GODADDY_API_SECRET (developer.godaddy.com/keys, Production)
+#   Cloudflare DNS: secret CLOUDFLARE_API_TOKEN (API token, "Edit zone DNS" template)
 name: Connect custom domain
 
 on:
@@ -20,6 +21,8 @@ jobs:
     env:
       DOMAIN: ${{ github.event.inputs.domain || 'sankhyas.com' }}
       CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      GD_KEY: ${{ secrets.GODADDY_API_KEY }}
+      GD_SECRET: ${{ secrets.GODADDY_API_SECRET }}
       PAGES_HOST: ${{ github.repository_owner }}.github.io
     steps:
       - name: Where the DNS is hosted now
@@ -31,6 +34,32 @@ jobs:
           echo "== registrar"; whois "$DOMAIN" 2>/dev/null | grep -iE "registrar:|registrar url|name server" | head -8 || true
           echo "== HTTP (where the domain goes today)"; curl -sIL -m 20 "http://$DOMAIN" | grep -iE "^(HTTP|location|server)" || true
           echo "== page title"; curl -sL -m 20 "http://$DOMAIN" | grep -io "<title>[^<]*" | head -1 || true
+
+      - name: Set GitHub Pages records on GoDaddy
+        if: env.GD_KEY != '' && env.GD_SECRET != ''
+        run: |
+          set -uo pipefail
+          AUTH="Authorization: sso-key $GD_KEY:$GD_SECRET"
+          API="https://api.godaddy.com/v1/domains/$DOMAIN"
+          echo "== records before"
+          curl -sS -H "$AUTH" "$API/records" | jq -r '.[]? | select(.type=="A" or .type=="AAAA" or .type=="CNAME") | "\(.type) \(.name) \(.data)"' || true
+          check() { code=$(tail -n1 <<<"$1"); body=$(sed '$d' <<<"$1"); echo "$2: HTTP $code $body"; [ "$code" -lt 300 ] || FAIL=1; }
+          FAIL=0
+          R=$(curl -sS -w '\n%{http_code}' -X PUT -H "$AUTH" -H "Content-Type: application/json" "$API/records/A/@" \
+            -d '[{"data":"185.199.108.153","ttl":600},{"data":"185.199.109.153","ttl":600},{"data":"185.199.110.153","ttl":600},{"data":"185.199.111.153","ttl":600}]')
+          check "$R" "A @ -> GitHub Pages"
+          # an AAAA record on the apex would still send IPv6 visitors to the old site
+          R=$(curl -sS -w '\n%{http_code}' -X DELETE -H "$AUTH" "$API/records/AAAA/@"); echo "AAAA @ removed: HTTP $(tail -n1 <<<"$R")"
+          R=$(curl -sS -w '\n%{http_code}' -X PUT -H "$AUTH" -H "Content-Type: application/json" "$API/records/CNAME/www" \
+            -d "[{\"data\":\"$PAGES_HOST\",\"ttl\":600}]")
+          check "$R" "CNAME www -> $PAGES_HOST"
+          echo "== records after"
+          curl -sS -H "$AUTH" "$API/records" | jq -r '.[]? | select(.type=="A" or .type=="AAAA" or .type=="CNAME") | "\(.type) \(.name) \(.data)"' || true
+          if [ "$FAIL" = 1 ]; then
+            echo "GoDaddy refused the change. GoDaddy only opens its DNS API to accounts with 10+ domains or a Domain Pro plan; if the answer above says ACCESS_DENIED, set the records by hand in GoDaddy (My Products -> DNS)."
+            exit 1
+          fi
+          echo "Done. The next site deploy detects the new DNS and switches the site to https://$DOMAIN/."
 
       - name: Set GitHub Pages records on Cloudflare
         if: env.CF_TOKEN != ''
