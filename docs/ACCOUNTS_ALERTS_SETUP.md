@@ -37,12 +37,17 @@ Then:
    - Set **Site URL** to `https://sankhyas.com/`.
    - Add `https://sankhyas.com/` and `https://www.sankhyas.com/` to **Redirect URLs**.
 3. Set up Google Search Console:
-   - Add the property `https://sankhyas.com`. Verify it with a DNS TXT record.
-   - Submit `https://sankhyas.com/sitemap.xml`.
+   - Open https://search.google.com/search-console, choose **Domain** and enter `sankhyas.com`.
+   - Copy the TXT value it shows (`google-site-verification=...`). Run Actions → **Connect custom domain** and paste the value into `txt_record`: the GoDaddy keys add the record. Then press **Verify**.
+   - Under Sitemaps, submit `sitemap.xml`.
+   - Bing and other IndexNow search engines are notified automatically on every daily run.
 
 Keeping Cloudflare's proxy (orange cloud) also works, but then the DNS check can't see GitHub, so it can't switch the domain on by itself. In that case add the repository variable `CUSTOM_DOMAIN_FORCE` = `1`, and set SSL/TLS to **Full**.
 
 ### 1. Login redirects (required: email links and Google return here)
+**Automated:** add the repository secret `SUPABASE_ACCESS_TOKEN` (a personal access token from
+https://supabase.com/dashboard/account/tokens). Then run Actions → **Supabase login settings**.
+It sets the Site URL to https://sankhyas.com/ and adds the redirect URLs. To do it by hand instead:
 In Supabase, open **Authentication → URL Configuration**:
 - **Site URL:** `https://purshottammenariya10-debug.github.io/Sankhyas/` (or your own domain later).
 - **Redirect URLs:** add the same URL. Add `https://sankhyas.com/` too if you move to that domain.

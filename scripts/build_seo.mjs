@@ -115,5 +115,10 @@ const urls = [origin].concat(companies.filter(c => c.s && c.n).map(c => urlOf(c.
 // sitemaps hold at most 50,000 URLs each
 fs.writeFileSync(path.join(site, 'sitemap.xml'), '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
   urls.map(u => `<url><loc>${esc(u)}</loc><lastmod>${today}</lastmod><changefreq>daily</changefreq></url>`).join('\n') + '\n</urlset>\n');
+// IndexNow (Bing, Yandex and others): a public key file proves the site owns the URLs it submits
+const INDEXNOW_KEY = 'e75c62e0ffa1fb81d6edb2177fbb2375';
+fs.writeFileSync(path.join(site, INDEXNOW_KEY + '.txt'), INDEXNOW_KEY);
+fs.writeFileSync(path.join(path.dirname(site), 'indexnow.json'),   // beside the site folder, not published
+   JSON.stringify({ host: new URL(origin).host, key: INDEXNOW_KEY, keyLocation: origin + INDEXNOW_KEY + '.txt', urlList: urls }));
 fs.writeFileSync(path.join(site, 'robots.txt'), `User-agent: *\nAllow: /\nSitemap: ${origin}sitemap.xml\n`);
 console.log(`build_seo: ${n} company pages, sitemap with ${urls.length} URLs (${origin})`);

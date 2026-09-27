@@ -11,6 +11,9 @@ on:
       domain:
         description: Domain to connect
         default: sankhyas.com
+      txt_record:
+        description: Optional TXT record to add on the domain (e.g. google-site-verification=...)
+        default: ''
 
 permissions:
   contents: read
@@ -24,6 +27,7 @@ jobs:
       GD_KEY: ${{ secrets.GODADDY_API_KEY }}
       GD_SECRET: ${{ secrets.GODADDY_API_SECRET }}
       PAGES_HOST: ${{ github.repository_owner }}.github.io
+      TXT: ${{ github.event.inputs.txt_record }}
     steps:
       - name: Where the DNS is hosted now
         run: |
@@ -56,8 +60,14 @@ jobs:
           R=$(curl -sS -w '\n%{http_code}' -X PUT -H "$AUTH" -H "Content-Type: application/json" "$API/records/CNAME/www" \
             -d "[{\"data\":\"$PAGES_HOST\",\"ttl\":600}]")
           check "$R" "CNAME www -> $PAGES_HOST"
+          if [ -n "${TXT:-}" ]; then
+            # PATCH adds records without touching the others
+            R=$(curl -sS -w '\n%{http_code}' -X PATCH -H "$AUTH" -H "Content-Type: application/json" "$API/records" \
+              -d "$(jq -n --arg d "$TXT" '[{type: "TXT", name: "@", data: $d, ttl: 600}]')")
+            check "$R" "TXT @ $TXT"
+          fi
           echo "== records after"
-          curl -sS -H "$AUTH" "$API/records" | jq -r '.[]? | select(.type=="A" or .type=="AAAA" or .type=="CNAME") | "\(.type) \(.name) \(.data)"' || true
+          curl -sS -H "$AUTH" "$API/records" | jq -r '.[]? | select(.type=="A" or .type=="AAAA" or .type=="CNAME" or .type=="TXT") | "\(.type) \(.name) \(.data)"' || true
           if [ "$FAIL" = 1 ]; then
             echo "GoDaddy refused the change. GoDaddy only opens its DNS API to accounts with 10+ domains or a Domain Pro plan; if the answer above says ACCESS_DENIED, set the records by hand in GoDaddy (My Products -> DNS)."
             exit 1

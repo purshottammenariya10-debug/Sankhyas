@@ -1,0 +1,39 @@
+# Points Supabase logins (email links, Google and other OAuth logins, password reset) at the live
+# site. Needs the SUPABASE_ACCESS_TOKEN secret: a personal access token from
+# https://supabase.com/dashboard/account/tokens. Run: Actions -> "Supabase login settings" -> Run workflow.
+name: Supabase login settings
+
+on:
+  workflow_dispatch:
+    inputs:
+      site_url:
+        description: Main site address
+        default: https://sankhyas.com/
+
+permissions:
+  contents: read
+
+jobs:
+  auth:
+    runs-on: ubuntu-latest
+    env:
+      TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SITE: ${{ github.event.inputs.site_url || 'https://sankhyas.com/' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update Site URL and redirect URLs
+        run: |
+          set -uo pipefail
+          TOKEN=$(printf '%s' "$TOKEN" | tr -d '[:space:]')
+          if [ -z "$TOKEN" ]; then echo "Add the SUPABASE_ACCESS_TOKEN repository secret first."; exit 1; fi
+          REF=$(grep -oE "https://[a-z0-9]+\.supabase\.co" js/config.js | head -1 | sed -E 's#https://([a-z0-9]+)\.supabase\.co#\1#')
+          API="https://api.supabase.com/v1/projects/$REF/config/auth"
+          HOST=$(echo "$SITE" | sed -E 's#https?://([^/]+)/?.*#\1#')
+          ALLOW="https://$HOST/,https://$HOST/**,https://www.$HOST/,https://www.$HOST/**,https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/**,http://localhost:8000/**"
+          echo "Project: $REF"
+          echo "== before"; curl -sS -H "Authorization: Bearer $TOKEN" "$API" | jq '{site_url, uri_allow_list}'
+          R=$(curl -sS -w '\n%{http_code}' -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" "$API" \
+            -d "$(jq -n --arg s "$SITE" --arg a "$ALLOW" '{site_url: $s, uri_allow_list: $a}')")
+          CODE=$(tail -n1 <<<"$R")
+          echo "== after (HTTP $CODE)"; sed '$d' <<<"$R" | jq '{site_url, uri_allow_list}' 2>/dev/null || sed '$d' <<<"$R" | head -c 400
+          [ "$CODE" -lt 300 ]
