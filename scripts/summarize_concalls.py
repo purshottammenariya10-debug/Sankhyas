@@ -471,6 +471,49 @@ def find_recordings(requests, UA, limit=40):
         print(f"Recording links: {found} found in {done} notices")
 
 
+def merge_shared_notes(requests):
+    """Copy summaries that visitors generated on the site (Supabase table doc_notes, filled by the
+    doc-ai Edge Function) into the filing files, so they are not made twice and reach every page."""
+    from exchange import _site_config
+    url, key = _site_config()
+    if not (url and key):
+        return
+    rows, offset = [], 0
+    try:
+        while True:
+            r = requests.get(f"{url}/rest/v1/doc_notes", params={"select": "url,symbol,note", "order": "created_at", "offset": offset, "limit": 1000},
+                             headers={"apikey": key, "Authorization": "Bearer " + key}, timeout=60)
+            r.raise_for_status()
+            page = r.json()
+            rows += page
+            if len(page) < 1000:
+                break
+            offset += 1000
+    except Exception as e:  # noqa: BLE001
+        print(f"Shared summaries unavailable ({str(e)[:80]})", file=sys.stderr)
+        return
+    by_sym = {}
+    for row in rows:
+        if row.get("symbol"):
+            by_sym.setdefault(row["symbol"], []).append(row)
+    added = 0
+    for sym, items in by_sym.items():
+        f = FILINGS / f"{sym}.json"
+        if not f.exists():
+            continue
+        doc = json.loads(f.read_text())
+        notes = doc.setdefault("notes", {})
+        dirty = False
+        for row in items:
+            if not notes.get(row["url"]) or notes[row["url"]].get("failed"):
+                notes[row["url"]] = row["note"]
+                dirty = True
+                added += 1
+        if dirty:
+            f.write_text(json.dumps(doc, separators=(",", ":")))
+    print(f"Shared summaries: {len(rows)} in Supabase, {added} added to filing files")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--max", type=int, default=60, help="transcripts and presentations to process per run (default 60)")
@@ -486,6 +529,7 @@ def main(argv=None):
         # transcripts summarised before guidance tracking existed are processed again once
         return kind == "transcript" and not n.get("failed") and n.get("v", 1) < NOTE_VERSION
 
+    merge_shared_notes(requests)
     todo, ars = [], []
     for f in sorted(FILINGS.glob("*.json")):
         if f.name == "latest.json":

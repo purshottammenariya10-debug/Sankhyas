@@ -650,3 +650,8 @@ table.trades td.l { min-width: 110px; }
 .seo-ratios dt { color: var(--ink-3); } .seo-ratios dd { margin: 0; font-weight: 600; }
 .seo-peers { columns: 2; padding-left: 18px; margin: 0; }
 @media (max-width: 560px) { .seo-peers { columns: 1; } }
+/* on-demand AI summary */
+.doc-pill.gen { border-style: solid; color: var(--primary); }
+.doc-pill.gen::before { content: "✦ "; }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--primary); border-radius: 50%; vertical-align: -2px; margin-right: 6px; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }

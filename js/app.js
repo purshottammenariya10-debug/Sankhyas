@@ -434,13 +434,18 @@
     if (c.live) {
       Data.loadFilings(sym).then(f => {
         if (token !== navToken || !$('#documents')) return;
-        const tmp = document.createElement('div');
-        if (!f || (!(f.announcements || []).length && !(f.annualReports || []).length)) return;
-        c._filings = f;
-        tmp.innerHTML = documentsSection(c, f);
-        $('#documents').replaceWith(tmp.firstChild);
-        bindDocuments();
-        refreshInsights(c);
+        if (f && ((f.announcements || []).length || (f.annualReports || []).length)) {
+          c._filings = f;
+          refreshDocuments();
+          refreshInsights(c);
+        }
+        // fill the gaps live: concall history for companies the data job has not reached yet, and
+        // summaries other visitors already generated
+        DocAI.complete(c, f).then(changed => {
+          if (!changed || token !== navToken || !$('#documents')) return;
+          refreshDocuments();
+          refreshInsights(c);
+        });
       });
       Data.loadActivity().then(act => {
         if (token !== navToken || !act) return;
@@ -1194,6 +1199,49 @@
   }
   const pill = (u, label, title) => (u ? ext(u, label, 'doc-pill', title) : '<span class="doc-pill off" aria-disabled="true" title="Not available">' + label + '</span>');
 
+  /* ---------- live documents and on-demand AI summaries (doc-ai Edge Function) ---------- */
+  const DocAI = (function () {
+    const cfg = Account.config || {};
+    const on = !!(cfg.supabaseUrl && cfg.supabaseAnonKey);
+    const base = on ? cfg.supabaseUrl.replace(/\/$/, '') : '';
+    const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.supabaseAnonKey, apikey: cfg.supabaseAnonKey };
+    async function call(body) {
+      const r = await fetch(base + '/functions/v1/doc-ai?forceFunctionRegion=ap-south-1', { method: 'POST', headers, body: JSON.stringify(body) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || 'Server error ' + r.status);
+      return j;
+    }
+    const hasCC = f => !!(f && (f.announcements || []).some(a => a.k === 'transcript' || a.k === 'ppt'));
+    return {
+      on,
+      /** Adds live NSE filings and shared summaries to c._filings. Resolves true when anything changed. */
+      async complete(c, f) {
+        if (!on || !c.live) return false;
+        f = c._filings = f || c._filings || { symbol: c.symbol, announcements: [], annualReports: [], notes: {} };
+        f.announcements = f.announcements || []; f.annualReports = f.annualReports || []; f.notes = f.notes || {};
+        let changed = false;
+        const jobs = [];
+        if (c.exchange !== 'BSE' && !/^\d+$/.test(c.symbol) && (!f.backfilled || !hasCC(f))) {
+          jobs.push(call({ action: 'filings', symbol: c.symbol }).then(live => {
+            const have = new Set(f.announcements.map(a => a.u));
+            const add = (live.announcements || []).filter(a => !have.has(a.u));
+            if (add.length) { f.announcements = f.announcements.concat(add).sort((a, b) => (a.d < b.d ? 1 : -1)); changed = true; }
+            const haveR = new Set(f.annualReports.map(r => r.u));
+            (live.annualReports || []).forEach(r => { if (!haveR.has(r.u)) { f.annualReports.push(r); changed = true; } });
+            Object.keys(live.notes || {}).forEach(u => { if (!f.notes[u]) { f.notes[u] = live.notes[u]; changed = true; } });
+            if (!f.updated) f.updated = live.updated;
+          }).catch(() => null));
+        }
+        // summaries generated on demand by any visitor (public table)
+        jobs.push(fetch(base + '/rest/v1/doc_notes?select=url,note&symbol=eq.' + encodeURIComponent(c.symbol), { headers })
+          .then(r => (r.ok ? r.json() : [])).then(rows => { (rows || []).forEach(r => { if (!f.notes[r.url]) { f.notes[r.url] = r.note; changed = true; } }); }).catch(() => null));
+        await Promise.all(jobs);
+        return changed;
+      },
+      summarize(c, url, kind, d) { return call({ action: 'summary', symbol: c.symbol, url, kind, d }); }
+    };
+  })();
+
   function documentsSection(c, f) {
     const X = exchangePages(c), P = X.nse || X.bse;
     const A = (f && f.announcements) || [], R = (f && f.annualReports) || [], notes = (f && f.notes) || {};
@@ -1255,10 +1303,13 @@
       'Not in Sankhyas yet: search the web for ' + shortName + '\'s ' + q + ' ' + what.replace(/ filetype:pdf$/, ''));
     const ccBody = Object.values(rows).sort((a, b) => b.qe - a.qe).slice(0, 16).map(r => {
       const q = qLabel(r.qe), sums = [r.transcript, r.ppt].filter(noted);
+      // documents we have but nobody has summarised yet: summarise on demand (exchange PDFs only)
+      const todo = DocAI.on ? [['transcript', r.transcriptFiled], ['ppt', r.pptFiled]].filter(x => x[1] && !noted(x[1]) && /\.pdf($|\?)/i.test(x[1])) : [];
       const callMonth = r.call ? monYear(new Date(r.call)) : monYear(new Date(r.qe.getFullYear(), r.qe.getMonth() + 1, 1));
       return '<div class="cc-row"><span class="cc-period" title="Results call for ' + q + '">' + esc(callMonth) + '<small>' + esc(q) + '</small></span>' +
         (r.transcript ? pill(r.transcript, 'Transcript') : find('Transcript', q, 'earnings call transcript filetype:pdf')) +
-        (sums.length ? '<button type="button" class="doc-pill" data-sum="' + esc(sums.join(' ')) + '" data-sum-title="Concall ' + esc(q) + '">AI Summary</button>' : pill(null, 'AI Summary')) +
+        (sums.length || todo.length ? '<button type="button" class="doc-pill' + (sums.length ? '' : ' gen') + '" data-sum="' + esc(sums.join(' ')) + '" data-sum-gen="' + esc(todo.map(x => x[0] + '|' + x[1] + '|' + (r.call || '')).join(' ')) +
+          '" data-sum-title="Concall ' + esc(q) + '"' + (sums.length ? '' : ' title="Read the document and summarise it now (takes a few seconds)"') + '>AI Summary</button>' : pill(null, 'AI Summary')) +
         (r.ppt ? pill(r.ppt, 'PPT') : find('PPT', q, 'investor presentation filetype:pdf')) +
         (r.audio ? pill(r.audio, 'REC', r.audio !== r.audioFiled ? 'Recording of the call' : 'Recording notice') : find('REC', q, 'earnings call audio recording')) + '</div>';
     }).join('') + '<p class="cc-note">Solid = filed on the exchange (AI Summary when read). Dashed = not in Sankhyas yet, searches the web. New filings arrive every 2 hours.</p>';
@@ -1308,10 +1359,26 @@
     bindDocuments();
   }
   function bindDocuments() {
-    $$('#documents [data-sum]').forEach(b => b.onclick = () => {
-      const c = currentCompany, N = (c && c._filings && c._filings.notes) || {};
-      const us = b.dataset.sum.split(' ').filter(u => N[u] && N[u].sections);
-      if (us.length) modal('AI Summary: ' + c.name + ' · ' + b.dataset.sumTitle, '<div class="ai-assistant note-body">' + us.map(u => concallNoteHtml(N[u], u)).join('<hr>') + NOTE_FOOT + '</div>');
+    $$('#documents [data-sum]').forEach(b => b.onclick = async () => {
+      const c = currentCompany, f = c && c._filings;
+      if (!f) return;
+      const N = f.notes = f.notes || {};
+      const gen = (b.dataset.sumGen || '').split(' ').filter(Boolean).map(x => x.split('|'));
+      const title = 'AI Summary: ' + c.name + ' · ' + b.dataset.sumTitle;
+      const show = errs => {
+        const us = b.dataset.sum.split(' ').concat(gen.map(g => g[1])).filter((u, i, a) => u && a.indexOf(u) === i && N[u] && N[u].sections);
+        return '<div class="ai-assistant note-body">' + (us.length ? us.map(u => concallNoteHtml(N[u], u)).join('<hr>') : '') +
+          (errs.length ? '<div class="info-box">' + errs.map(esc).join('<br>') + '</div>' : '') + (us.length ? NOTE_FOOT : '') + '</div>';
+      };
+      if (!gen.length) { modal(title, show([])); return; }
+      const bd = modal(title, '<div class="ai-assistant note-body"><p class="muted"><span class="spinner" aria-hidden="true"></span> Reading the ' + (gen.length > 1 ? 'transcript and presentation' : gen[0][0] === 'ppt' ? 'presentation' : 'transcript') +
+        ' from the exchange and summarising it. This takes a few seconds the first time; after that it is instant for everyone.</p></div>');
+      const errs = [];
+      await Promise.all(gen.map(([kind, url, d]) => DocAI.summarize(c, url, kind, d).then(j => { N[url] = j.note; })
+        .catch(e => errs.push((kind === 'ppt' ? 'Presentation' : 'Transcript') + ': ' + e.message))));
+      const body = $('.modal-body', bd);
+      if (body) body.innerHTML = show(errs);
+      refreshDocuments();
     });
     const list = $('#ann-list'), search = $('#ann-search');
     const apply = () => {
