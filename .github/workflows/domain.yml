@@ -39,10 +39,13 @@ jobs:
         if: env.GD_KEY != '' && env.GD_SECRET != ''
         run: |
           set -uo pipefail
+          # secrets pasted with a trailing newline or spaces would break the header
+          GD_KEY=$(printf '%s' "$GD_KEY" | tr -d '[:space:]'); GD_SECRET=$(printf '%s' "$GD_SECRET" | tr -d '[:space:]')
           AUTH="Authorization: sso-key $GD_KEY:$GD_SECRET"
           API="https://api.godaddy.com/v1/domains/$DOMAIN"
           echo "== records before"
-          curl -sS -H "$AUTH" "$API/records" | jq -r '.[]? | select(.type=="A" or .type=="AAAA" or .type=="CNAME") | "\(.type) \(.name) \(.data)"' || true
+          BEFORE=$(curl -sS -H "$AUTH" "$API/records")
+          echo "$BEFORE" | jq -r 'if type=="array" then (.[] | select(.type=="A" or .type=="AAAA" or .type=="CNAME") | "\(.type) \(.name) \(.data)") else "GoDaddy answered: \(.)" end' 2>/dev/null || echo "$BEFORE" | head -c 300
           check() { code=$(tail -n1 <<<"$1"); body=$(sed '$d' <<<"$1"); echo "$2: HTTP $code $body"; [ "$code" -lt 300 ] || FAIL=1; }
           FAIL=0
           R=$(curl -sS -w '\n%{http_code}' -X PUT -H "$AUTH" -H "Content-Type: application/json" "$API/records/A/@" \
@@ -65,6 +68,7 @@ jobs:
         if: env.CF_TOKEN != ''
         run: |
           set -euo pipefail
+          CF_TOKEN=$(printf '%s' "$CF_TOKEN" | tr -d '[:space:]')
           api() { curl -sS -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" "$@"; }
           ZONE=$(api "https://api.cloudflare.com/client/v4/zones?name=$DOMAIN" | jq -r '.result[0].id // empty')
           if [ -z "$ZONE" ]; then echo "The token cannot see a Cloudflare zone for $DOMAIN."; exit 1; fi
