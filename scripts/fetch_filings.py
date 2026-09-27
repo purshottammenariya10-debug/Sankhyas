@@ -27,7 +27,8 @@ from exchange import BSE_API, bse_session, fetch_text, nse_session
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "data" / "filings"
-KEEP_ANNOUNCEMENTS = 400
+KEEP_ANNOUNCEMENTS = 600   # hard cap per company
+KEEP_OTHER = 120           # routine filings kept (newest first)
 BSE_ATTACH = {0: "https://www.bseindia.com/xml-data/corpfiling/AttachLive/",
               1: "https://www.bseindia.com/xml-data/corpfiling/AttachHis/"}
 
@@ -296,7 +297,17 @@ def merge_into(doc, anns=(), reports=()):
         seen.add(a["u"]); seen.add(key2)
         doc["announcements"].append({k: a[k] for k in ("d", "t", "c", "u", "x", "k")})
     doc["announcements"].sort(key=lambda a: a["d"], reverse=True)
-    doc["announcements"] = doc["announcements"][:KEEP_ANNOUNCEMENTS]
+    # keep every concall, presentation, recording, result, rating, order and insider/SAST filing;
+    # routine ones ("other") only up to KEEP_OTHER, so files stay small with 3 years of history
+    others = 0
+    kept = []
+    for a in doc["announcements"]:
+        if a.get("k") == "other":
+            others += 1
+            if others > KEEP_OTHER:
+                continue
+        kept.append(a)
+    doc["announcements"] = kept[:KEEP_ANNOUNCEMENTS]
     have = {r["u"] for r in doc["annualReports"]} | {r.get("y") for r in doc["annualReports"] if r.get("y")}
     for r in reports:
         r = dict(r, y=fiscal_label(r.get("y", "")))
@@ -382,6 +393,7 @@ def main(argv=None):
     except Exception as e:  # noqa: BLE001
         print("BSE sweep failed:", e, file=sys.stderr)
         if "403" in str(e):
+            bse = None   # BSE blocks this server: skip BSE for the rest of the run
             print("BSE is refusing this server (403). BSE blocks many cloud IP ranges, including GitHub's;"
                   " run this script from another network or through a proxy to fetch BSE filings.", file=sys.stderr)
     if nse:
@@ -429,30 +441,35 @@ def main(argv=None):
             mcap = {r["s"]: r["m"].get("marketCap") or 0 for r in json.loads(mf.read_text())["companies"]}
         except (ValueError, KeyError):
             mcap = {}
-    queue = [c for c in universe if backfill_age(c) > 30]
+    # only companies an exchange will actually answer for on this run
+    queue = [c for c in universe if backfill_age(c) > 30 and ((bse and c.get("bse")) or (nse and c["yahoo"].endswith(".NS")))]
     queue.sort(key=lambda c: (-backfill_age(c), not c["yahoo"].endswith(".NS"), -mcap.get(c["symbol"], 0), c["symbol"]))
     queue = queue[:args.max_backfill]
     hist_start = today - dt.timedelta(days=365 * args.years)
     for i, c in enumerate(queue):
         doc = touched.get(c["symbol"]) or load(c["symbol"])
-        got = 0
-        if c.get("bse"):
+        got, ok = 0, False
+        if bse and c.get("bse"):
             try:
                 a = bse_announcements(bse, c["bse"], hist_start, today, max_pages=25)
                 r = bse_annual_reports(bse, c["bse"])
                 merge_into(doc, a, r)
                 got += len(a) + len(r)
+                ok = True
             except Exception as e:  # noqa: BLE001
                 print(f"  {c['symbol']}: BSE backfill failed ({e})", file=sys.stderr)
+                if "403" in str(e):
+                    bse = None
         if nse and c["yahoo"].endswith(".NS"):
             try:
                 a = nse_announcements(nse, c["symbol"], hist_start, today)
                 r = nse_annual_reports(nse, c["symbol"])
                 merge_into(doc, a, r)
                 got += len(a) + len(r)
+                ok = True
             except Exception as e:  # noqa: BLE001
                 print(f"  {c['symbol']}: NSE backfill failed ({e})", file=sys.stderr)
-        if got:
+        if ok:
             doc["backfilled"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
         touched[c["symbol"]] = doc
         print(f"[{i + 1}/{len(queue)}] {c['symbol']}: {len(doc['announcements'])} announcements, {len(doc['annualReports'])} annual reports")

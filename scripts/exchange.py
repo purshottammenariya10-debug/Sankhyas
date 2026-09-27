@@ -70,11 +70,75 @@ def fetch_text(url, referer="https://www.nseindia.com/", timeout=30):
     return r.text
 
 
+def _site_config():
+    """Supabase URL and public anon key from the environment or js/config.js."""
+    import os
+    import re
+    from pathlib import Path
+    url, key = os.environ.get("SUPABASE_URL", ""), os.environ.get("SUPABASE_ANON_KEY", "")
+    if not (url and key):
+        cfg = Path(__file__).resolve().parent.parent / "js" / "config.js"
+        text = cfg.read_text() if cfg.exists() else ""
+        m1 = re.search(r"supabaseUrl:\s*'([^']*)'", text)
+        m2 = re.search(r"supabaseAnonKey:\s*'([^']*)'", text)
+        url, key = url or (m1.group(1) if m1 else ""), key or (m2.group(1) if m2 else "")
+    return url.rstrip("/"), key
+
+
+class NseRelay:
+    """NSE's JSON APIs through the Sankhyas nse-proxy Edge Function (Supabase, Mumbai region).
+    NSE refuses GitHub's servers but answers there. Same get() interface as Throttled."""
+
+    def __init__(self, url, key, delay=0.3, timeout=120):
+        import os
+        self.endpoint = url + "/functions/v1/nse-proxy"
+        self.s = requests.Session()
+        self.s.headers.update({"Authorization": "Bearer " + key, "apikey": key, "Content-Type": "application/json", "x-region": "ap-south-1"})
+        if os.environ.get("NSE_PROXY_SECRET"):
+            self.s.headers["x-proxy-secret"] = os.environ["NSE_PROXY_SECRET"]
+        self.delay, self.timeout, self._last = delay, timeout, 0.0
+
+    def get(self, url, params=None, retries=2, expect_json=True):
+        from urllib.parse import urlencode
+        path = url.replace(NSE_HOME, "", 1) + ("?" + urlencode(params or {}, safe=",") if params else "")
+        if "?" not in path:
+            path += "?"
+        for attempt in range(retries + 1):
+            wait = self.delay - (time.time() - self._last)
+            if wait > 0:
+                time.sleep(wait)
+            self._last = time.time()
+            try:
+                r = self.s.post(self.endpoint, json={"paths": [path]}, timeout=self.timeout)
+                r.raise_for_status()
+                res = r.json()[0]
+                if res.get("status") == 200:
+                    return res.get("data")
+                raise requests.HTTPError(f"NSE answered {res.get('status')} via relay")
+            except (requests.RequestException, ValueError, IndexError, KeyError):
+                if attempt >= retries:
+                    raise
+                time.sleep(2 ** (attempt + 1))
+        return None
+
+
 def nse_session(delay=0.8):
-    """Return an NSE session primed with cookies, or None if NSE refuses us."""
+    """Return an NSE session: direct when NSE lets us in, else through the Sankhyas relay when
+    the site has a Supabase project, else None."""
     t = Throttled(NSE_HEADERS, delay=delay)
     try:
         t.get(NSE_HOME, expect_json=False, retries=1)
+        t.get(NSE_HOME + "/api/annual-reports", params={"index": "equities", "symbol": "TCS"}, retries=0)
         return t
-    except requests.RequestException:
-        return None
+    except (requests.RequestException, ValueError):
+        pass
+    url, key = _site_config()
+    if url and key:
+        relay = NseRelay(url, key)
+        try:
+            relay.get(NSE_HOME + "/api/annual-reports", params={"index": "equities", "symbol": "TCS"}, retries=1)
+            print("NSE: direct access refused; using the Sankhyas relay (Supabase, Mumbai)")
+            return relay
+        except Exception as e:  # noqa: BLE001
+            print(f"NSE relay unavailable: {str(e)[:100]}")
+    return None

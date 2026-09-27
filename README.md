@@ -72,7 +72,9 @@ The data is kept between runs in the Actions cache, not committed to git, so the
 
 **One-time setup:** the workflow publishes to the `gh-pages` branch. In Settings → Pages, set Source to **Deploy from a branch**, branch **gh-pages**, folder **/ (root)**. Then Actions → "Update data and deploy" → Run workflow.
 
-**Running the data job from India (needed for NSE/BSE filings):** NSE and BSE block GitHub's own servers (403). To fetch filings, run the job on a machine with an Indian IP address:
+**NSE filing history through Supabase:** NSE blocks GitHub's servers (403) but answers Supabase's Mumbai region, so `scripts/exchange.py` falls back to the `nse-proxy` Edge Function when direct access fails. Each run backfills 3 years of announcements for the next NSE companies: 80 every 2 hours and 300 on the daily run. That covers concall transcripts, investor presentations, recordings and annual reports. The concall summariser then works through every company's latest transcript and presentation first. The relay only forwards a fixed list of read-only NSE `/api/` paths.
+
+**Running the data job from India (only needed for BSE-only companies):** BSE blocks GitHub's servers and Supabase's alike (403). To fetch BSE filings, run the job on a machine with an Indian IP address:
 
 1. Get a machine: a small Ubuntu 22.04/24.04 VM in a Mumbai or Hyderabad region (AWS Lightsail, DigitalOcean Bangalore, Azure Central India, and similar, roughly ₹400–800 a month), or WSL on a Windows PC that stays on.
 2. Open Settings → Actions → Runners → **New self-hosted runner** and copy the token from the "Configure" step.

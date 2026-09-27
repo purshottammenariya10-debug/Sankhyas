@@ -492,9 +492,13 @@ def main(argv=None):
             continue
         doc = json.loads(f.read_text())
         notes = doc.get("notes") or {}
-        for a in doc.get("announcements", []):
-            if a.get("k") in ("transcript", "ppt") and not a["u"].lower().endswith(".xml") and pending(notes, a["u"], a.get("k")):
-                todo.append((a["d"], f, a["u"], a["k"]))
+        rank = {"transcript": 0, "ppt": 0}
+        for a in sorted(doc.get("announcements", []), key=lambda x: x["d"], reverse=True):
+            if a.get("k") in ("transcript", "ppt") and not a["u"].lower().endswith(".xml"):
+                r = rank[a["k"]]
+                rank[a["k"]] += 1
+                if pending(notes, a["u"], a.get("k")):
+                    todo.append((r, a["d"], f, a["u"], a["k"]))
         # latest annual report only: from the annual-report list, else a Reg. 34 announcement
         reps = sorted(doc.get("annualReports", []), key=lambda r: r.get("y", ""), reverse=True)
         cand = [(r.get("y", ""), r["u"]) for r in reps[:1]]
@@ -505,7 +509,11 @@ def main(argv=None):
         cand.sort(reverse=True)
         if cand and pending(notes, cand[0][1]):
             ars.append((cand[0][0], f, cand[0][1], "ar"))
-    todo.sort(key=lambda t: t[0], reverse=True)   # newest first
+    # every company's latest transcript and presentation first, then the one before, and so on;
+    # newest first within each round
+    todo.sort(key=lambda t: t[1], reverse=True)
+    todo.sort(key=lambda t: t[0])
+    todo = [t[1:] for t in todo]
     find_recordings(requests, UA)
     filing_details(requests, UA)
     ars.sort(key=lambda t: t[0], reverse=True)

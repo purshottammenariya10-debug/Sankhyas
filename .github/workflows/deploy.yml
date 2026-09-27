@@ -76,8 +76,10 @@ jobs:
       - name: NSE/BSE filings
         if: github.event_name != 'push'
         continue-on-error: true
-        # the 2-hourly sweep skips history backfill (NSE/BSE history APIs refuse GitHub's servers anyway)
-        run: python scripts/fetch_filings.py --max-backfill "${{ github.event.schedule == '17 */2 * * *' && '0' || github.event.inputs.max_backfill || '150' }}"
+        # NSE refuses GitHub's servers, so NSE history comes through the nse-proxy Edge Function
+        # (Supabase, Mumbai). Every run backfills 3 years of filings (concalls, PPTs, annual
+        # reports) for the next batch of companies until all NSE companies are covered.
+        run: python scripts/fetch_filings.py --max-backfill "${{ github.event.schedule == '17 */2 * * *' && '80' || github.event.inputs.max_backfill || '300' }}"
 
       - name: Bulk and block deals (NSE daily files)
         if: github.event_name != 'push'
@@ -87,7 +89,7 @@ jobs:
       - name: Concall summaries (free, rule-based)
         if: github.event_name != 'push'
         continue-on-error: true
-        run: python scripts/summarize_concalls.py --max 80 --max-ar 20
+        run: python scripts/summarize_concalls.py --max "${{ github.event.schedule == '17 */2 * * *' && '100' || '250' }}" --max-ar "${{ github.event.schedule == '17 */2 * * *' && '15' || '40' }}"
 
       - name: Build company index
         run: |
