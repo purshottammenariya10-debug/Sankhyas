@@ -322,13 +322,16 @@
     const cur = Q[0];
     const back = months => { const d = new Date(cur.qe + 'T00:00:00'); d.setDate(15); d.setMonth(d.getMonth() - months); const k = d.toISOString().slice(0, 7); return Q.find(q => q.qe.slice(0, 7) === k) || null; };
     const prev = back(3), yago = back(12);
-    const profit = q => (q ? (ok(q.np_owners) ? q.np_owners : q.np) : null);
+    // some filers leave the owners' share as 0 when there is no minority interest; fall back to total profit
+    const profit = q => (q ? (ok(q.np_owners) && (q.np_owners !== 0 || !ok(q.np)) ? q.np_owners : q.np) : null);
     const opm = q => (q && ok(q.op) && q.sales ? q.op / q.sales * 100 : null);
     const pick = q => ({ sales: q && q.sales, op: q && q.op, np: profit(q), eps: q && q.eps, opm: opm(q) });
     const c = pick(cur), p = pick(prev), y = pick(yago);
     const epsG = (a, b) => (ok(a) && ok(b) && a > 0 && b > 0 ? growth(a, b) : null);
     const yoy = { sales: growth(c.sales, y.sales), op: growth(c.op, y.op), np: growth(c.np, y.np), eps: epsG(c.eps, y.eps), opm: ok(c.opm) && ok(y.opm) ? c.opm - y.opm : null };
     const qoq = { sales: growth(c.sales, p.sales), op: growth(c.op, p.op), np: growth(c.np, p.np), eps: epsG(c.eps, p.eps), opm: ok(c.opm) && ok(p.opm) ? c.opm - p.opm : null };
+    // a bonus issue or split changes EPS without a change in profit: drop EPS growth that disagrees with profit growth
+    [[yoy, c.np, y.np], [qoq, c.np, p.np]].forEach(([g]) => { if (ok(g.eps) && ok(g.np) && Math.abs(g.eps - g.np) > 30 && Math.abs(g.eps - g.np) > Math.abs(g.np)) g.eps = null; });
     const cmp = yago ? yoy : qoq, basis = yago ? 'YoY' : 'QoQ';
     let score = 0;
     const sG = cmp.sales, pG = cmp.np;
@@ -337,7 +340,8 @@
     if (ok(c.np) && c.np < 0) score -= ok(base) && base < 0 ? 1 : 3;
     else if (ok(pG)) score += pG >= 20 ? 2 : pG >= 5 ? 1 : pG <= -20 ? -2 : pG <= -5 ? -1 : 0;
     if (ok(cmp.opm) && !cur.bank) score += cmp.opm >= 1 ? 1 : cmp.opm <= -1.5 ? -1 : 0;
-    const verdict = score >= 3 ? 'Strong' : score <= -2 ? 'Weak' : 'Mixed';
+    // newly listed companies: nothing reported to compare with
+    const verdict = !ok(sG) && !ok(pG) && !(ok(c.np) && c.np < 0) ? 'New' : score >= 3 ? 'Strong' : score <= -2 ? 'Weak' : 'Mixed';
     const cr = v => '₹ ' + Math.round(v).toLocaleString('en-IN') + ' Cr';
     const chg = (v, unit) => (v >= 0 ? 'up ' : 'down ') + Math.abs(v).toFixed(Math.abs(v) < 10 ? 1 : 0) + (unit || '%');
     const points = [];

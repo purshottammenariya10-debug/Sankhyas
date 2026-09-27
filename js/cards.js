@@ -140,7 +140,7 @@
   T.verdict = async (c, format) => {
     const v = c._res && window.Insights ? Insights.resultsVerdict(c._res) : null;
     if (!v) return T.results(c, format);
-    const col = v.verdict === 'Strong' ? C.up : v.verdict === 'Weak' ? C.down : C.amber;
+    const col = v.verdict === 'Strong' ? C.up : v.verdict === 'Weak' ? C.down : v.verdict === 'New' ? C.ink2 : C.amber;
     const f = await frame(format, 'RESULTS · ' + v.label.toUpperCase());
     let y = heading(f, c.name, subOf(c));
     y += 20;
@@ -148,7 +148,7 @@
     f.ctx.globalAlpha = 0.16;
     f.ctx.beginPath(); f.ctx.roundRect ? f.ctx.roundRect(70, y, f.W - 140, 150, 24) : f.ctx.rect(70, y, f.W - 140, 150); f.ctx.fill();
     f.ctx.globalAlpha = 1;
-    text(f.ctx, v.verdict + ' quarter', 110, y + 78, 64, col, 800);
+    text(f.ctx, v.verdict === 'New' ? 'First results' : v.verdict + ' quarter', 110, y + 78, 64, col, 800);
     text(f.ctx, v.basis === 'YoY' ? 'Compared with the same quarter last year' : 'Compared with the previous quarter', 110, y + 124, 28, C.ink2, 500);
     y += 170;
     const w = (f.W - 140 - 30) / 2, h = 150;
@@ -256,7 +256,7 @@
     const c = d, m = c.metrics, sym = tagOf(c.symbol);
     if (kind === 'verdict' && c._res && window.Insights) {
       const v = Insights.resultsVerdict(c._res);
-      if (v) return (v.verdict === 'Strong' ? '🟢 ' : v.verdict === 'Weak' ? '🔴 ' : '🟡 ') + c.name + ' ' + v.label + ' results: ' + v.verdict + '\n\n' + v.points.map(p => '• ' + p).join('\n') + tail +
+      if (v) return (v.verdict === 'Strong' ? '🟢 ' : v.verdict === 'Weak' ? '🔴 ' : v.verdict === 'New' ? '⚪ ' : '🟡 ') + c.name + ' ' + v.label + ' results: ' + v.verdict + '\n\n' + v.points.map(p => '• ' + p).join('\n') + tail +
         '#Sankhyas ' + sym + ' #QuarterlyResults #Earnings #StockMarketIndia #NSE';
     }
     if (kind === 'results' || kind === 'verdict') {

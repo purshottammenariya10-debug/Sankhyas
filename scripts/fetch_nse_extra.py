@@ -82,7 +82,12 @@ def read_shp_xbrl(url, limit=1_600_000):
 
 def parse_shp(text):
     f = facts(text)
-    pct = lambda ctx: (lambda v: round(v * 100, 2) if v is not None else None)(num(f.get(("ShareholdingAsAPercentageOfTotalNumberOfShares", ctx))))
+    share = lambda ctx: num(f.get(("ShareholdingAsAPercentageOfTotalNumberOfShares", ctx)))
+    # newer filings give fractions (0.7177), older ones percentages (71.77): the grand total tells which
+    total = share("ShareholdingPattern_ContextI")
+    vals = [share(ctx) for ctx in SHP_ROWS.values()]
+    mult = 1 if (total or 0) > 1.5 or (total is None and any((v or 0) > 1 for v in vals)) else 100
+    pct = lambda ctx: (lambda v: round(v * mult, 2) if v is not None else None)(share(ctx))
     row = {k: pct(ctx) for k, ctx in SHP_ROWS.items()}
     if row["promoter"] is None:
         # companies with no promoter group (HDFC Bank, ITC, L&T ...) file no promoter row at all
@@ -135,6 +140,8 @@ def parse_results(text):
     # operating profit (EBITDA): revenue less operating costs (expenses without finance cost and depreciation)
     if raw["expenses"] is not None:
         out["op"] = cr(raw["sales"] - (raw["expenses"] - (raw["interest"] or 0) - (raw["dep"] or 0)))
+    if out.get("np_owners") == 0 and out.get("np"):
+        out["np_owners"] = None  # left blank as 0 by some filers without minority interest
     out["bank"] = ("InterestEarned", "OneD") in f
     return out
 
@@ -204,6 +211,20 @@ def update_results(nse, sym, stats):
 
 
 QUARTER_ENDS = ("03-31", "06-30", "09-30", "12-31")
+
+
+def repair_shp_scale(doc):
+    """Rows read before the percentage-scale fix hold values 100x too large; bring them back."""
+    changed = False
+    for q in doc.get("quarters", []):
+        if any((q.get(k) or 0) > 100.5 for k in ("promoter", "fii", "dii", "gov")):
+            for k in ("promoter", "fii", "dii", "gov"):
+                if q.get(k) is not None:
+                    q[k] = round(q[k] / 100, 2)
+            inst = sum(q.get(k) or 0 for k in ("fii", "dii", "gov"))
+            q["public"] = round(max(0.0, 100 - (q.get("promoter") or 0) - inst), 2)
+            changed = True
+    return changed
 
 
 def update_shp(nse, sym, stats, xbrl_budget):
@@ -286,6 +307,9 @@ def main(argv=None):
 
     # shareholding: never fetched (largest first), then due for the next quarter (every 15 days)
     docs = {s: load(SHP_DIR / f"{s}.json") for s in nse_syms}
+    for s, d in docs.items():
+        if d and repair_shp_scale(d):
+            (SHP_DIR / f"{s}.json").write_text(json.dumps(d, separators=(",", ":")))
     never = sorted([s for s in nse_syms if not docs[s]], key=lambda s: -mcap.get(s, 0))
     incomplete = [s for s in nse_syms if docs[s] and any(q.get("fii") is None for q in docs[s]["quarters"])]
     stale = sorted([s for s in nse_syms if docs[s] and age_days(docs[s]) > 15], key=lambda s: -age_days(docs[s]))

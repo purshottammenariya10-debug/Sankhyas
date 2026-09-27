@@ -105,7 +105,7 @@ for (const f of files) {
     const res = readJSON(path.join(root, 'data', 'results', c.symbol + '.json'));
     const rv = res && Insights.resultsVerdict(res);
     if (rv) {
-      c.metrics.resVerdict = rv.verdict === 'Strong' ? 1 : rv.verdict === 'Weak' ? -1 : 0;
+      c.metrics.resVerdict = rv.verdict === 'Strong' ? 1 : rv.verdict === 'Weak' ? -1 : rv.verdict === 'New' ? null : 0;
       latestResults.push({ s: c.symbol, n: c.name, qe: rv.qe, q: rv.label, f: rv.filed, v: rv.verdict, cons: rv.cons ? 1 : 0, sales: rv.cur.sales, op: rv.cur.op, opm: rv.cur.opm, np: rv.cur.np, eps: rv.cur.eps,
         sy: rv.yoy.sales, py: rv.yoy.np, sq: rv.qoq.sales, pq: rv.qoq.np, mc: c.metrics.marketCap || 0 });
     }

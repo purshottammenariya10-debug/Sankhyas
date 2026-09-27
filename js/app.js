@@ -652,7 +652,7 @@
     return '<section class="section card" id="insights"><div class="section-head"><div><h2>Sankhyas Insights</h2><p>Sankhyas Score, forensic red flags, management\'s promises vs delivery, order wins, smart-money activity and what changed this quarter. ' + note + '</p></div></div>' +
       resultsCard(c) + scoreCard(c, open) + '<div class="ins-grid">' + cards + '</div></section>';
   }
-  const VERDICT_CLS = { Strong: 'v-strong', Mixed: 'v-mixed', Weak: 'v-weak' };
+  const VERDICT_CLS = { Strong: 'v-strong', Mixed: 'v-mixed', Weak: 'v-weak', New: 'v-new' };
   function resultsCard(c) {
     const v = c._res && Insights.resultsVerdict(c._res);
     if (!v) return '';
@@ -662,7 +662,7 @@
     const crv = x => (x == null ? '-' : num(x, 0));
     const filed = v.filed ? v.filed.replace(/\s+\d{2}:\d{2}(:\d{2})?$/, '') : '';
     return '<div class="res-card ' + VERDICT_CLS[v.verdict] + '"><div class="res-head"><div><div class="sub">Latest results · ' + esc(v.label) + (filed ? ' · filed ' + esc(filed) : '') + (v.cons ? '' : ' · standalone') + '</div>' +
-      '<h3>' + esc(v.label) + ' results: <span class="res-verdict">' + v.verdict + '</span></h3></div>' +
+      '<h3>' + esc(v.label) + ' results: <span class="res-verdict">' + (v.verdict === 'New' ? 'first reported quarter' : v.verdict) + '</span></h3></div>' +
       '<button class="btn btn-small" type="button" data-verdict-card="' + esc(c.symbol) + '">↗ Share card</button></div>' +
       '<ul class="res-points">' + v.points.map(p => '<li>' + esc(p) + '</li>').join('') + '</ul>' +
       '<div class="table-wrap"><table class="data res-table"><thead><tr><th class="l">₹ Cr</th><th>' + esc(v.label) + '</th><th>YoY</th><th>QoQ</th></tr></thead><tbody>' +
@@ -1785,7 +1785,7 @@
       const count = v => list.results.filter(r => r.v === v).length;
       const fmtF = r => (r.f ? r.f.replace(/\s+\d{2}:\d{2}(:\d{2})?$/, '') : r.q);
       app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Latest Results</h1><p>Quarterly results filed with NSE, newest first, with the Sankhyas verdict &middot; ₹ Cr, consolidated where filed</p></div>' +
-        '<div class="tabs">' + [['all', 'All ' + list.results.length], ['strong', 'Strong ' + count('Strong')], ['mixed', 'Mixed ' + count('Mixed')], ['weak', 'Weak ' + count('Weak')]]
+        '<div class="tabs">' + [['all', 'All ' + list.results.length], ['strong', 'Strong ' + count('Strong')], ['mixed', 'Mixed ' + count('Mixed')], ['weak', 'Weak ' + count('Weak')]].concat(count('New') ? [['new', 'New ' + count('New')]] : [])
           .map(t => '<a class="btn btn-small' + (f === t[0] ? ' active' : '') + '" href="#/results' + (t[0] === 'all' ? '' : '?v=' + t[0]) + '">' + t[1] + '</a>').join('') + '</div></div>' +
         '<div class="table-wrap"><table class="data list"><thead><tr><th>S.No.</th><th>Name</th><th>Filed</th><th>Quarter</th><th>Verdict</th><th>Sales</th><th>YoY %</th><th>Op. Profit</th><th>OPM %</th><th>Net Profit</th><th>YoY %</th><th>EPS</th><th></th></tr></thead><tbody>' +
         rows.slice(0, 500).map((r, i) => '<tr><td>' + (i + 1) + '.</td><td><a href="#/company/' + encodeURIComponent(r.s) + '">' + esc(r.n) + '</a></td><td>' + esc(fmtF(r)) + '</td><td>' + esc(r.q) + (r.cons ? '' : ' <span class="sub">SA</span>') + '</td>' +
