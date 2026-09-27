@@ -85,7 +85,10 @@ def parse_shp(text):
     pct = lambda ctx: (lambda v: round(v * 100, 2) if v is not None else None)(num(f.get(("ShareholdingAsAPercentageOfTotalNumberOfShares", ctx))))
     row = {k: pct(ctx) for k, ctx in SHP_ROWS.items()}
     if row["promoter"] is None:
-        return None
+        # companies with no promoter group (HDFC Bank, ITC, L&T ...) file no promoter row at all
+        if row["fii"] is None and row["dii"] is None and row["public_all"] is None:
+            return None
+        row["promoter"] = 0.0
     row["holders"] = num(f.get(("NumberOfShareholders", "ShareholdingPattern_ContextI")))
     if row["holders"] is not None:
         row["holders"] = int(row["holders"])
@@ -200,16 +203,20 @@ def update_results(nse, sym, stats):
     path.write_text(json.dumps(doc, separators=(",", ":")))
 
 
+QUARTER_ENDS = ("03-31", "06-30", "09-30", "12-31")
+
+
 def update_shp(nse, sym, stats, xbrl_budget):
     path = SHP_DIR / f"{sym}.json"
     doc = load(path) or {"symbol": sym, "quarters": []}
     data = nse.get(NSE_HOME + "/api/corporate-share-holdings-master", params={"index": "equities", "symbol": sym})
     rows = data if isinstance(data, list) else (data or {}).get("data") or []
-    have = {q["q"]: q for q in doc["quarters"]}
+    # off-cycle filings (e.g. after a scheme or a preferential allotment) carry odd dates; keep quarter-ends only
+    have = {q["q"]: q for q in doc["quarters"] if q["q"][5:] in QUARTER_ENDS}
     by_q = {}
     for r in rows:
         q = iso_date(r.get("date") or "")
-        if q and (q not in by_q or (r.get("broadcastDate") or "") > (by_q[q].get("broadcastDate") or "")):
+        if q and q[5:] in QUARTER_ENDS and (q not in by_q or (r.get("broadcastDate") or "") > (by_q[q].get("broadcastDate") or "")):
             by_q[q] = r
     for q in sorted(by_q, reverse=True)[:KEEP_SHP]:
         r = by_q[q]
