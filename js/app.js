@@ -248,7 +248,8 @@
   let cleanup = [];
   function onLeave(fn) { cleanup.push(fn); }
   function parseHash() {
-    const h = location.hash.replace(/^#\/?/, '');
+    // static company pages (company/<SYMBOL>/) carry their route on <body data-route>
+    const h = location.hash.replace(/^#\/?/, '') || document.body.getAttribute('data-route') || '';
     const [path, qs] = h.split('?');
     const params = {};
     (qs || '').split('&').filter(Boolean).forEach(kv => {
@@ -344,7 +345,7 @@
     const ready = Data.getCompany(sym, standalone);
     if (ready && !ready.summary) return renderCompany(ready, sym, standalone);
     setTitle(ready ? ready.name + ' share price' : sym);
-    app.innerHTML = LOADING;
+    if (!$('.seo-page', app)) app.innerHTML = LOADING;   // keep a static page's content until the data loads
     const token = navToken;
     Data.loadCompany(sym, standalone).then(c => {
       if (token !== navToken) return;
@@ -2609,7 +2610,7 @@
     if (e.key === '/' && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); const s = $('#home-search') || $('#nav-search'); s.focus(); }
   });
   renderAuth();
-  app.innerHTML = '<div class="container page muted">Loading market data…</div>';
+  if (!document.body.getAttribute('data-route')) app.innerHTML = '<div class="container page muted">Loading market data…</div>';
   let booted = false;
   let syncedFor = null;
   function syncOnLogin() {

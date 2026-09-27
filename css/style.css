@@ -639,3 +639,14 @@ table.trades td.l { min-width: 110px; }
 .about-mission p { margin: 4px 0 0; font-size: 18px; font-weight: 600; color: var(--ink); }
 .about-tagline { font-size: 18px; font-weight: 700; color: var(--primary); margin: 18px 0 26px; }
 @media (max-width: 560px) { .about-page h1 { font-size: 24px; } }
+/* static company pages (search engines) */
+.seo-page { padding-top: 16px; padding-bottom: 24px; }
+.seo-page h1 { margin: 6px 0 2px; }
+.seo-page .card { margin-top: 16px; }
+.seo-page h2 { font-size: 18px; margin-top: 0; }
+.seo-page h3 { font-size: 15px; margin: 12px 0 4px; }
+.seo-ratios { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px 20px; margin: 0; }
+.seo-ratios div { display: flex; justify-content: space-between; border-bottom: 1px solid var(--line-2); padding: 6px 0; }
+.seo-ratios dt { color: var(--ink-3); } .seo-ratios dd { margin: 0; font-weight: 600; }
+.seo-peers { columns: 2; padding-left: 18px; margin: 0; }
+@media (max-width: 560px) { .seo-peers { columns: 1; } }

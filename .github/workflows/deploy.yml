@@ -138,6 +138,44 @@ jobs:
             echo "Accounts and payments: off (set the SUPABASE_URL repository variable to switch them on)"
           fi
 
+      # Custom domain (default sankhyas.com; set the CUSTOM_DOMAIN repository variable to change it,
+      # or to "none" to turn it off). The domain is switched on only once its DNS points at GitHub
+      # Pages, so the site never redirects to a domain that does not reach it yet. Behind a proxy
+      # such as Cloudflare's orange cloud, set CUSTOM_DOMAIN_FORCE=1 instead.
+      - name: Custom domain and search-engine pages
+        env:
+          CUSTOM_DOMAIN: ${{ vars.CUSTOM_DOMAIN || 'sankhyas.com' }}
+          CUSTOM_DOMAIN_FORCE: ${{ vars.CUSTOM_DOMAIN_FORCE }}
+        run: |
+          ORIGIN="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/"
+          if [ "$CUSTOM_DOMAIN" != "none" ]; then
+            READY=$(python3 - "$CUSTOM_DOMAIN" <<'PY'
+          import socket, sys
+          gh = {"185.199.108.153", "185.199.109.153", "185.199.110.153", "185.199.111.153"}
+          d = sys.argv[1]
+          try:
+              apex = set(socket.gethostbyname_ex(d)[2])
+          except OSError:
+              apex = set()
+          try:
+              name, aliases, ips = socket.gethostbyname_ex("www." + d)
+              www = name.endswith("github.io") or any(a.endswith("github.io") for a in aliases) or (set(ips) and set(ips) <= gh)
+          except OSError:
+              www = False
+          print("yes" if (apex and apex <= gh) else "no", sorted(apex), "www->github" if www else "")
+          PY
+            )
+            echo "DNS check for $CUSTOM_DOMAIN: $READY"
+            if [ "${READY%% *}" = "yes" ] || [ "$CUSTOM_DOMAIN_FORCE" = "1" ]; then
+              echo "$CUSTOM_DOMAIN" > _site/CNAME
+              ORIGIN="https://$CUSTOM_DOMAIN/"
+              echo "Custom domain on: $ORIGIN"
+            else
+              echo "Custom domain waiting for DNS: point $CUSTOM_DOMAIN's A records at 185.199.108.153, .109.153, .110.153 and .111.153 (and www as a CNAME to ${GITHUB_REPOSITORY_OWNER}.github.io)"
+            fi
+          fi
+          node scripts/build_seo.mjs _site "$ORIGIN"
+
       - name: Publish to gh-pages
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

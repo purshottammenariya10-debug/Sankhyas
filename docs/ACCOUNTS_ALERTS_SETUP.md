@@ -15,6 +15,33 @@ uses it (`js/config.js`).
 
 ## Left for you (dashboard settings no tool can change)
 
+### 0. Point sankhyas.com at the site
+Right now sankhyas.com resolves to Cloudflare, not GitHub Pages. In the DNS settings where the domain is managed (Cloudflare, it appears), make these changes:
+
+| Type | Name | Value | Proxy |
+| --- | --- | --- | --- |
+| A | `@` | `185.199.108.153` | DNS only |
+| A | `@` | `185.199.109.153` | DNS only |
+| A | `@` | `185.199.110.153` | DNS only |
+| A | `@` | `185.199.111.153` | DNS only |
+| CNAME | `www` | `purshottammenariya10-debug.github.io` | DNS only |
+
+- Delete any other A, AAAA or CNAME records for `@` and `www`.
+- In Cloudflare, set the proxy to **DNS only** (grey cloud) so GitHub can issue the HTTPS certificate.
+
+The next deploy notices the change and switches the site to https://sankhyas.com automatically. That run adds the `CNAME` file, and the old github.io address then redirects to the domain.
+
+Then:
+1. In GitHub, open **Settings → Pages** and tick **Enforce HTTPS** once it becomes available. The certificate takes up to about an hour.
+2. In Supabase, open **Authentication → URL Configuration**:
+   - Set **Site URL** to `https://sankhyas.com/`.
+   - Add `https://sankhyas.com/` and `https://www.sankhyas.com/` to **Redirect URLs**.
+3. Set up Google Search Console:
+   - Add the property `https://sankhyas.com`. Verify it with a DNS TXT record.
+   - Submit `https://sankhyas.com/sitemap.xml`.
+
+Keeping Cloudflare's proxy (orange cloud) also works, but then the DNS check can't see GitHub, so it can't switch the domain on by itself. In that case add the repository variable `CUSTOM_DOMAIN_FORCE` = `1`, and set SSL/TLS to **Full**.
+
 ### 1. Login redirects (required: email links and Google return here)
 In Supabase, open **Authentication → URL Configuration**:
 - **Site URL:** `https://purshottammenariya10-debug.github.io/Sankhyas/` (or your own domain later).
