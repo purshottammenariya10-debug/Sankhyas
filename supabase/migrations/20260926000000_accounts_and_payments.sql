@@ -30,11 +30,11 @@ alter table public.profiles enable row level security;
 alter table public.payments enable row level security;
 
 drop policy if exists "read own profile" on public.profiles;
-create policy "read own profile" on public.profiles for select to authenticated using (auth.uid() = id);
+create policy "read own profile" on public.profiles for select to authenticated using ((select auth.uid()) = id);
 drop policy if exists "update own profile" on public.profiles;
-create policy "update own profile" on public.profiles for update to authenticated using (auth.uid() = id) with check (auth.uid() = id);
+create policy "update own profile" on public.profiles for update to authenticated using ((select auth.uid()) = id) with check ((select auth.uid()) = id);
 drop policy if exists "read own payments" on public.payments;
-create policy "read own payments" on public.payments for select to authenticated using (auth.uid() = user_id);
+create policy "read own payments" on public.payments for select to authenticated using ((select auth.uid()) = user_id);
 
 -- users may only change their display name, never their plan
 revoke update on public.profiles from authenticated, anon;
@@ -50,6 +50,7 @@ begin
   on conflict (id) do nothing;
   return new;
 end $$;
+revoke all on function public.handle_new_user() from public, anon, authenticated;
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users for each row execute function public.handle_new_user();
 

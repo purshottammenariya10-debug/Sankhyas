@@ -258,7 +258,12 @@ def match_company(a, by_nse, by_name):
     who = a.get("who", "")
     if who.upper() in by_nse:
         return by_nse[who.upper()]
-    return by_name.get(norm_name(who))
+    # corporate-action items read "Company Limited - Ex-Date ... - Dividend"; keep the name part
+    for cand in (who, re.split(r"\s+-\s+|\s*\|", who)[0]):
+        hit = by_name.get(norm_name(cand))
+        if hit:
+            return hit
+    return None
 
 
 # ---------- storage ----------

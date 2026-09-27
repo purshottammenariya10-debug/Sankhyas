@@ -320,6 +320,72 @@ def disclosure_direction(text):
     return "buy" if buy > sell * 1.3 else "sell" if sell > buy * 1.3 else ""
 
 
+NUM = r"(\d{1,3}(?:,\d{2,3})+|\d+)(?:\.(\d+))?"
+HONORIFIC = re.compile(r"\b(?:Mr|Mrs|Ms|Smt|Shri|Sri|Dr|M/s)\.?\s+([A-Z][A-Za-z.&'\- ]{2,60}?)(?=\s*[,(]|\s+(?:a|an|one|the|who|being|is|has|have|holding|belonging|promoter|director|member|part|along|and|acquired|sold|purchased)\b)")
+CATEGORY = [("Promoter Group", r"promoter group"), ("Promoter", r"\bpromoter"), ("Director", r"\bdirector"), ("KMP", r"key managerial|\bkmp\b"),
+            ("Designated Person", r"designated person"), ("Employee", r"\bemployee")]
+MODE = [("Market Purchase", r"market purchase|open market (?:purchase|acquisition)|on[- ]market purchase"), ("Market Sale", r"market sale|open market (?:sale|disposal)"),
+        ("Off Market", r"off[- ]market"), ("Inter-se Transfer", r"inter[- ]?se"), ("Gift", r"\bgift"), ("ESOP", r"\besops?\b|stock option"),
+        ("Preferential Offer", r"preferential"), ("Pledge", r"\bpledge"), ("Revocation of Pledge", r"release of pledge|revocation")]
+
+
+def _num(s, frac=None):
+    try:
+        return float(s.replace(",", "") + ("." + frac if frac else ""))
+    except (AttributeError, ValueError):
+        return None
+
+
+def trade_details(text):
+    """Best-effort read of an insider (SEBI PIT Reg 7) or SAST disclosure: who traded, how many
+    shares, at what average price. Returns only the fields it could read."""
+    flat = re.sub(r"\s+", " ", text)
+    low = flat.lower()
+    out = {}
+    m = HONORIFIC.search(flat)
+    if m:
+        out["who"] = re.sub(r"\s+", " ", m.group(1)).strip(" .,-")[:60]
+    for label, rx in CATEGORY:
+        if re.search(rx, low):
+            out["cat"] = label
+            break
+    for label, rx in MODE:
+        if re.search(rx, low):
+            out["mode"] = label
+            break
+    verbs = r"(?:acquired|acquisition of|purchased|purchase of|bought|sold|sale of|disposed(?: off| of)?|disposal of|transferred|allotted|pledged|released)"
+    m = re.search(verbs + r"\D{0,80}?" + NUM + r"\s*(?:\([^)]{0,60}\)\s*)?(?:nos?\.?\s*)?(?:of\s*)?(?:fully[- ]paid[- ]?up\s*)?(?:equity\s*)?shares", flat, re.I)
+    if not m:
+        m = re.search(NUM + r"\s*(?:\([^)]{0,60}\)\s*)?(?:fully[- ]paid[- ]?up\s*)?equity shares", flat, re.I)
+    if not m:   # Form C table: "Securities acquired/Disposed ... No. 5000 Value 1,00,500"
+        m = re.search(r"acquired\s*/\s*disposed.{0,120}?\bno\.?\s*(?:of securities)?\s*" + NUM, flat, re.I)
+    qty = _num(m.group(1)) if m else None
+    if qty and 1 <= qty <= 5e10:
+        out["q"] = int(qty)
+    m = re.search(r"(?:average|avg\.?|weighted average)\s*(?:price|rate)[^0-9₹]{0,30}(?:rs\.?|inr|₹)?\s*" + NUM, flat, re.I) or \
+        re.search(r"@\s*(?:rs\.?|inr|₹)?\s*" + NUM, flat, re.I) or \
+        re.search(r"(?:at a price of|price per share|per share price|at the rate of)[^0-9₹]{0,20}(?:rs\.?|inr|₹)?\s*" + NUM, flat, re.I)
+    price = _num(m.group(1), m.group(2)) if m else None
+    m = re.search(r"(?:total |aggregate )?(?:value|consideration|amount)[^0-9₹]{0,40}(?:rs\.?|inr|₹)\s*" + NUM + r"\s*(lakhs?|lacs?|crores?|cr\b)?", flat, re.I)
+    if not m:
+        m = re.search(r"acquired\s*/\s*disposed.{0,200}?\bvalue\s*(?:\(in rs\.?\))?\s*" + NUM + r"()", flat, re.I)
+    value = None
+    if m:
+        value = _num(m.group(1), m.group(2))
+        unit = (m.group(3) or "").lower()
+        if value is not None:
+            value *= 1e5 if unit.startswith(("lakh", "lac")) else 1e7 if unit.startswith("cr") else 1
+    if not price and value and out.get("q"):
+        price = value / out["q"]
+    if price and 0.05 <= price <= 5e5:
+        out["pr"] = round(price, 2)
+    if out.get("q") and out.get("pr"):
+        out["v"] = round(out["q"] * out["pr"] / 1e7, 4)       # Rs crores, like bulk/block deals
+    elif value and value > 0:
+        out["v"] = round(value / 1e7, 4)
+    return out
+
+
 def filing_details(requests, UA, limit=150):
     """Read order-win and insider/promoter disclosure PDFs once and store what they say on the filing."""
     todo = []
@@ -328,16 +394,17 @@ def filing_details(requests, UA, limit=150):
             continue
         doc = json.loads(f.read_text())
         for i, a in enumerate(doc.get("announcements", [])):
-            if a.get("k") in ("order", "insider", "sast") and not a.get("det") and a["u"].lower().endswith(".pdf"):
+            # det=2: insider/SAST filings read again for the person, quantity and price
+            if a.get("k") in ("order", "insider", "sast") and (a.get("det") or 0) < (1 if a["k"] == "order" else 2) and a["u"].lower().endswith(".pdf"):
                 todo.append((a["d"], f, i))
     todo.sort(key=lambda t: t[0], reverse=True)
-    done = found = 0
+    done = found = missed = 0
     by_file = {}
     for d, f, i in todo[:limit]:
         doc = by_file.get(f) or json.loads(f.read_text())
         by_file[f] = doc
         a = doc["announcements"][i]
-        a["det"] = 1
+        a["det"] = 1 if a["k"] == "order" else 2
         done += 1
         try:
             r = requests.get(a["u"], headers={"User-Agent": UA, "Referer": "https://www.nseindia.com/"}, timeout=60)
@@ -354,6 +421,13 @@ def filing_details(requests, UA, limit=150):
                 if direction:
                     a["dir"] = direction
                     found += 1
+                info = trade_details(text)
+                for k2, v in info.items():
+                    a[k2] = v
+                if not (info.get("q") and info.get("who")) and missed < 3:   # samples for tuning the parser
+                    missed += 1
+                    sample = re.sub(r"\s+", " ", text)[:400]
+                    print(f"{f.stem}: trade details incomplete {info} | {sample!r}", file=sys.stderr)
         except Exception as e:  # noqa: BLE001
             print(f"{f.stem}: {a['k']} details not read ({str(e)[:60]})", file=sys.stderr)
     for f, doc in by_file.items():

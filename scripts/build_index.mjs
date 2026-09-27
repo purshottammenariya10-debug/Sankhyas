@@ -174,7 +174,7 @@ if (fs.existsSync(filingsDir)) {
 // ---------- market activity: order wins, insider/promoter disclosures, bulk & block deals ----------
 {
   const orders = [], disclosures = [];
-  const since = new Date(Date.now() - 400 * 864e5).toISOString(), since2 = new Date(Date.now() - 200 * 864e5).toISOString();
+  const since = new Date(Date.now() - 400 * 864e5).toISOString(), since2 = new Date(Date.now() - 400 * 864e5).toISOString();
   if (fs.existsSync(filingsDir)) {
     for (const f of fs.readdirSync(filingsDir)) {
       if (!f.endsWith('.json') || f === 'latest.json') continue;
@@ -183,7 +183,12 @@ if (fs.existsSync(filingsDir)) {
       const sym = doc.symbol || f.replace(/\.json$/, '');
       for (const a of doc.announcements || []) {
         if (a.k === 'order' && a.d >= since) orders.push({ s: sym, n: names[sym] || sym, d: a.d, amt: plausibleOrder(a.amt, salesBy[sym]), cust: a.cust || '', desc: a.desc || '', u: a.u });
-        else if ((a.k === 'insider' || a.k === 'sast') && a.d >= since2) disclosures.push({ s: sym, n: names[sym] || sym, d: a.d, k: a.k, dir: a.dir || '', t: String(a.t).slice(0, 200), u: a.u });
+        else if ((a.k === 'insider' || a.k === 'sast') && a.d >= since2) {
+          const x = { s: sym, n: names[sym] || sym, d: a.d, k: a.k, dir: a.dir || '', t: String(a.t).slice(0, 200), u: a.u };
+          // person, category, mode, quantity, average price and value (Rs Cr) read from the filing
+          for (const f2 of ['who', 'cat', 'mode', 'q', 'pr', 'v']) if (a[f2] != null && a[f2] !== '') x[f2] = a[f2];
+          disclosures.push(x);
+        }
       }
     }
   }

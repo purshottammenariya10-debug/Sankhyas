@@ -163,6 +163,44 @@ def quote_block(info):
     }
 
 
+OHLC_DAYS = 520   # open/high/low are kept for the last ~2 years (candles); closes for the full history
+
+
+def price_block(hist):
+    """Daily closes and volumes for the full history, plus open/high/low for the most recent
+    OHLC_DAYS sessions (aligned with the tail of 'dates')."""
+    tail = hist.tail(OHLC_DAYS)
+    return {
+        "dates": [d.strftime("%Y-%m-%d") for d in hist.index],
+        "close": [clean(v) for v in hist["Close"]],
+        "volume": [int(v) if v == v else 0 for v in hist["Volume"]],
+        "open": [clean(v) for v in tail["Open"]],
+        "high": [clean(v) for v in tail["High"]],
+        "low": [clean(v) for v in tail["Low"]],
+    }
+
+
+def actions_block(hist):
+    """Dividends (Rs per share) and splits/bonus (ratio) from Yahoo's price history."""
+    out = {"dividends": [], "splits": []}
+    if "Dividends" in hist:
+        for d, v in hist["Dividends"].items():
+            if v and v == v and v > 0:
+                out["dividends"].append([d.strftime("%Y-%m-%d"), clean(v, 1, 3)])
+    if "Stock Splits" in hist:
+        for d, v in hist["Stock Splits"].items():
+            if v and v == v and v > 0 and v != 1:
+                out["splits"].append([d.strftime("%Y-%m-%d"), clean(v, 1, 4)])
+    return out
+
+
+def trim_ohlc(px):
+    """Keep open/high/low to the last OHLC_DAYS values."""
+    for k in ("open", "high", "low"):
+        if k in px and len(px[k]) > OHLC_DAYS:
+            px[k] = px[k][-OHLC_DAYS:]
+
+
 def build_company(symbol, t, yahoo=None, meta=None):
     """Build the JSON document for one company from a yfinance Ticker-like object.
 
@@ -191,11 +229,8 @@ def build_company(symbol, t, yahoo=None, meta=None):
         "about": info.get("longBusinessSummary"),
         "updated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "quote": quote_block(info),
-        "prices": {
-            "dates": [d.strftime("%Y-%m-%d") for d in hist.index],
-            "close": [clean(v) for v in hist["Close"]],
-            "volume": [int(v) if v == v else 0 for v in hist["Volume"]],
-        },
+        "prices": price_block(hist),
+        "actions": actions_block(hist),
         "annual": annual_block(t),
         "quarterly": income_block(t.quarterly_income_stmt),
     }
@@ -257,6 +292,10 @@ def update_prices(yf, entries, chunk=200):
                 px["dates"].append(ds)
                 px["close"].append(clean(row["Close"]))
                 px["volume"].append(int(row["Volume"]) if row["Volume"] == row["Volume"] else 0)
+                if "open" in px and len(px["open"]) == min(OHLC_DAYS, len(px["dates"]) - 1):
+                    for k, col in (("open", "Open"), ("high", "High"), ("low", "Low")):
+                        px[k].append(clean(row[col]))
+                    trim_ohlc(px)
                 added = True
             if added:
                 q = doc.setdefault("quote", {})

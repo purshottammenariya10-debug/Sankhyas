@@ -149,3 +149,15 @@ jobs:
           git commit -q -m "Deploy site from ${GITHUB_SHA::7}"
           git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
           echo "Published to gh-pages: https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/"
+
+      - name: Send alerts (email / Telegram / WhatsApp)
+        continue-on-error: true
+        env:
+          DISPATCH_SECRET: ${{ secrets.DISPATCH_SECRET }}
+        run: |
+          URL=$(node -e 'global.window = {}; require("./_site/js/config.js"); process.stdout.write((window.SANKHYAS_CONFIG || {}).supabaseUrl || "")')
+          if [ -z "$URL" ]; then echo "Accounts are off; no alerts to send."; exit 0; fi
+          sleep 75   # let GitHub Pages serve the data just published
+          curl -sS -m 140 -X POST "${URL%/}/functions/v1/dispatch-alerts" -H "Content-Type: application/json" \
+            ${DISPATCH_SECRET:+-H "x-dispatch-secret: $DISPATCH_SECRET"} -d '{}' || true
+          echo

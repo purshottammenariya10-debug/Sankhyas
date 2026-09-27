@@ -1,0 +1,191 @@
+// Sends Sankhyas alerts. Called after every data refresh (the deploy workflow POSTs here).
+// Reads the public site data (activity, latest filings, metrics), works out which alert rules have
+// a new event, records each event once in public.alert_log and delivers it by email (Resend),
+// Telegram (bot) and WhatsApp (Meta Cloud API template). Channels without credentials are skipped.
+//
+// Secrets: SITE_URL (default: the GitHub Pages site), RESEND_API_KEY, ALERTS_FROM,
+// TELEGRAM_BOT_TOKEN, WHATSAPP_TOKEN, WHATSAPP_PHONE_ID, WHATSAPP_TEMPLATE, DISPATCH_SECRET.
+// Deployed with verify_jwt off: runs are rate limited (one per 5 minutes) unless the caller sends
+// the x-dispatch-secret header, and every event is sent at most once.
+import { createClient } from 'npm:@supabase/supabase-js@2.117.2';
+import { evaluateScreen, loadScreener } from './screener.ts';
+
+type Rule = { id: number; user_id: string; kind: string; symbol: string | null; params: Record<string, any>; channels: string[]; created_at: string };
+type Ev = { key: string; text: string; sym: string };
+
+const env = (k: string, d = '') => Deno.env.get(k) ?? d;
+const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'Content-Type': 'application/json' } });
+const SITE = env('SITE_URL', 'https://purshottammenariya10-debug.github.io/Sankhyas/').replace(/\/?$/, '/');
+const cr = (v: number) => '₹ ' + (v >= 100 ? Math.round(v).toLocaleString('en-IN') : v.toFixed(2)) + ' Cr';
+
+async function getJSON(path: string) {
+  const r = await fetch(SITE + path + '?t=' + Date.now());
+  if (!r.ok) throw new Error(path + ' ' + r.status);
+  return r.json();
+}
+
+Deno.serve(async (req) => {
+  if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
+  const db = createClient(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
+  const trusted = !!env('DISPATCH_SECRET') && req.headers.get('x-dispatch-secret') === env('DISPATCH_SECRET');
+
+  // ---- rate limit and state ----
+  const { data: stRows } = await db.from('dispatch_state').select('key, value');
+  const state: Record<string, any> = {};
+  (stRows || []).forEach((r: any) => (state[r.key] = r.value));
+  const last = state.last_run ? Date.parse(state.last_run.at) : 0;
+  if (!trusted && Date.now() - last < 5 * 60e3) return json({ skipped: 'ran less than 5 minutes ago' });
+  await db.from('dispatch_state').upsert({ key: 'last_run', value: { at: new Date().toISOString() }, updated_at: new Date().toISOString() });
+
+  const { data: rules } = await db.from('alerts').select('id, user_id, kind, symbol, params, channels, created_at').eq('active', true);
+  if (!rules || !rules.length) return json({ rules: 0 });
+
+  const [activity, latest, metrics] = await Promise.all([
+    getJSON('data/yahoo/activity.json').catch(() => ({ orders: [], disclosures: [], deals: [] })),
+    getJSON('data/filings/latest.json').catch(() => ({ items: [] })),
+    getJSON('data/yahoo/metrics.json').catch(() => ({ companies: [] })),
+  ]);
+  const M: Record<string, any> = {};
+  const names: Record<string, string> = {};
+  for (const c of metrics.companies || []) { M[c.s] = c.m || {}; names[c.s] = c.n || c.s; }
+  const recent = Date.now() - 3 * 864e5;
+  const fresh = (d: string, r: Rule) => { const t = Date.parse(d); return t >= recent && t >= Date.parse(r.created_at) - 864e5; };
+  const nm = (s: string) => (names[s] || s) + ' (' + s + ')';
+
+  // watchlists for rules that follow the watchlist
+  const wlUsers = [...new Set(rules.filter((r: Rule) => r.params?.scope === 'watchlist').map((r: Rule) => r.user_id))];
+  const watch: Record<string, string[]> = {};
+  if (wlUsers.length) {
+    const { data } = await db.from('user_data').select('user_id, value').eq('key', 'watchlist').in('user_id', wlUsers);
+    (data || []).forEach((r: any) => (watch[r.user_id] = Array.isArray(r.value) ? r.value : []));
+  }
+  const symsOf = (r: Rule) => (r.symbol ? [r.symbol] : r.params?.scope === 'watchlist' ? watch[r.user_id] || [] : []);
+
+  // red-flag scores seen last run
+  const prevRisk: Record<string, number> = state.risk || {};
+  const nextRisk: Record<string, number> = {};
+  for (const s in M) if (M[s].riskScore != null) nextRisk[s] = M[s].riskScore;
+  const band = (v: number) => (v >= 45 ? 'High' : v >= 20 ? 'Moderate' : 'Low');
+
+  const out: { rule: Rule; ev: Ev }[] = [];
+  const stateWrites: Record<string, any> = { risk: nextRisk };
+  for (const r of rules as Rule[]) {
+    const syms = new Set(symsOf(r));
+    const evs: Ev[] = [];
+    const items = latest.items || [];
+    switch (r.kind) {
+      case 'results':
+        for (const a of items) if (syms.has(a.s) && a.k === 'results' && fresh(a.d, r)) evs.push({ key: a.u, sym: a.s, text: `${nm(a.s)} filed its financial results. ${a.u}` });
+        break;
+      case 'concall':
+        for (const a of items) if (syms.has(a.s) && ['transcript', 'ppt', 'audio'].includes(a.k) && fresh(a.d, r))
+          evs.push({ key: a.u, sym: a.s, text: `${nm(a.s)}: new ${a.k === 'ppt' ? 'investor presentation' : a.k === 'audio' ? 'concall recording' : 'concall transcript'}. ${SITE}#/company/${encodeURIComponent(a.s)}` });
+        break;
+      case 'order_win':
+        for (const o of activity.orders || []) if (syms.has(o.s) && fresh(o.d, r))
+          evs.push({ key: o.u, sym: o.s, text: `${nm(o.s)} won an order${o.amt ? ' worth ' + cr(o.amt) : ''}${o.cust ? ' from ' + o.cust : ''}. ${o.u}` });
+        break;
+      case 'insider_buy':
+        for (const x of activity.disclosures || []) if (syms.has(x.s) && x.dir === 'buy' && fresh(x.d, r))
+          evs.push({ key: x.u, sym: x.s, text: `${nm(x.s)}: ${x.who || (x.k === 'sast' ? 'a substantial shareholder' : 'an insider')}${x.cat ? ' (' + x.cat + ')' : ''} bought${x.q ? ' ' + x.q.toLocaleString('en-IN') + ' shares' : ''}${x.pr ? ' at ₹ ' + x.pr : ''}. ${x.u}` });
+        break;
+      case 'bulk_deal':
+        for (const x of activity.deals || []) if (syms.has(x.s) && fresh(x.d + 'T18:00:00', r))
+          evs.push({ key: [x.d, x.c, x.side, x.q, x.t].join('|'), sym: x.s, text: `${nm(x.s)}: ${x.t} deal, ${x.c} ${x.side === 'B' ? 'bought' : 'sold'} ${x.q.toLocaleString('en-IN')} shares at ₹ ${x.p} (${cr(x.v)}).` });
+        break;
+      case 'red_flags':
+        for (const s of syms) {
+          const now = nextRisk[s], before = prevRisk[s];
+          if (now == null || before == null) continue;
+          if (Math.abs(now - before) >= 10 || band(now) !== band(before))
+            evs.push({ key: `risk|${s}|${before}|${now}`, sym: s, text: `${nm(s)}: red-flag score ${now > before ? 'rose' : 'fell'} from ${before} to ${now} (${band(now)} risk). ${SITE}#/company/${encodeURIComponent(s)}` });
+        }
+        break;
+      case 'price_above':
+      case 'price_below': {
+        const s = r.symbol || '', p = M[s]?.price, t = +r.params?.price;
+        if (p != null && t > 0 && (r.kind === 'price_above' ? p >= t : p <= t))
+          evs.push({ key: `price|${t}`, sym: s, text: `${nm(s)} is at ₹ ${p}, ${r.kind === 'price_above' ? 'above' : 'below'} your alert price of ₹ ${t}.` });
+        break;
+      }
+      case 'screen': {
+        let matches: string[] | null = null;
+        try { matches = evaluateScreen(await loadScreener(SITE), String(r.params?.query || ''), metrics.companies || []); } catch (_) { matches = null; }
+        if (!matches) break;
+        const key = 'screen:' + r.id, before: string[] | undefined = state[key];
+        stateWrites[key] = matches;
+        if (before) {
+          const added = matches.filter(s => !before.includes(s));
+          if (added.length) evs.push({ key: `screen|${new Date().toISOString().slice(0, 10)}|${added.join(',')}`.slice(0, 500), sym: '',
+            text: `New in your screen "${r.params?.name || 'screen'}": ${added.slice(0, 15).map(nm).join(', ')}${added.length > 15 ? ' and ' + (added.length - 15) + ' more' : ''}.` });
+        }
+        break;
+      }
+    }
+    for (const ev of evs) out.push({ rule: r, ev });
+  }
+
+  // ---- record once, then deliver grouped per user ----
+  const byUser: Record<string, { text: string; channels: Set<string> }[]> = {};
+  const priceDone: number[] = [];
+  for (const { rule, ev } of out) {
+    const { data, error } = await db.from('alert_log').insert({ alert_id: rule.id, user_id: rule.user_id, event_key: ev.key.slice(0, 500), message: ev.text.slice(0, 1000), channels: rule.channels }).select('id');
+    if (error || !data?.length) continue;   // already sent
+    (byUser[rule.user_id] = byUser[rule.user_id] || []).push({ text: ev.text, channels: new Set(rule.channels) });
+    if (rule.kind.startsWith('price_')) priceDone.push(rule.id);
+  }
+  if (priceDone.length) await db.from('alerts').update({ active: false }).in('id', priceDone);   // price alerts fire once
+  for (const k in stateWrites) await db.from('dispatch_state').upsert({ key: k, value: stateWrites[k], updated_at: new Date().toISOString() });
+
+  const users = Object.keys(byUser);
+  let sent = 0;
+  if (users.length) {
+    const { data: profs } = await db.from('profiles').select('id, email, full_name, email_alerts, telegram_chat_id, whatsapp_number, whatsapp_opt_in').in('id', users);
+    for (const p of profs || []) {
+      const msgs = byUser[p.id];
+      const pick = (ch: string) => msgs.filter(m => m.channels.has(ch)).map(m => m.text);
+      const email = pick('email'), tg = pick('telegram'), wa = pick('whatsapp');
+      try {
+        if (email.length && p.email_alerts !== false && p.email && env('RESEND_API_KEY')) { await sendEmail(p.email, email); sent++; }
+        if (tg.length && p.telegram_chat_id && env('TELEGRAM_BOT_TOKEN')) { await sendTelegram(p.telegram_chat_id, tg); sent++; }
+        if (wa.length && p.whatsapp_opt_in && p.whatsapp_number && env('WHATSAPP_TOKEN')) { for (const t of wa.slice(0, 5)) await sendWhatsApp(p.whatsapp_number, t); sent++; }
+      } catch (e) { console.error('delivery failed for', p.id, (e as Error).message); }
+    }
+  }
+  return json({ rules: rules.length, events: out.length, users: users.length, deliveries: sent });
+});
+
+const escHtml = (s: string) => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
+const linkify = (s: string) => escHtml(s).replace(/(https?:\/\/[^\s]+)/g, '<a href="$1">$1</a>');
+
+async function sendEmail(to: string, lines: string[]) {
+  const html = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#1c1d22"><h2 style="color:#6056ff;margin:0 0 12px">Sankhyas alerts</h2><ul style="padding-left:18px">' +
+    lines.map(l => '<li style="margin:0 0 10px">' + linkify(l) + '</li>').join('') +
+    '</ul><p style="color:#7a8090;font-size:12px">You get these because you set up alerts on Sankhyas. Change them at ' + SITE + '#/alerts. Not investment advice.</p></div>';
+  const r = await fetch('https://api.resend.com/emails', {
+    method: 'POST', headers: { Authorization: 'Bearer ' + env('RESEND_API_KEY'), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: env('ALERTS_FROM', 'Sankhyas Alerts <alerts@sankhyas.com>'), to: [to], subject: lines.length === 1 ? lines[0].replace(/\s+https?:\/\/\S+/g, '').slice(0, 110) : `Sankhyas: ${lines.length} new alerts`, html }),
+  });
+  if (!r.ok) throw new Error('email ' + r.status + ' ' + (await r.text()).slice(0, 200));
+}
+
+async function sendTelegram(chat: string, lines: string[]) {
+  const text = '🔔 Sankhyas alerts\n\n' + lines.map(l => '• ' + l).join('\n\n');
+  for (let i = 0; i < text.length; i += 4000) {
+    const r = await fetch(`https://api.telegram.org/bot${env('TELEGRAM_BOT_TOKEN')}/sendMessage`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chat, text: text.slice(i, i + 4000), disable_web_page_preview: true }),
+    });
+    if (!r.ok) throw new Error('telegram ' + r.status);
+  }
+}
+
+// WhatsApp needs an approved message template with one body variable ({{1}}) for business-initiated messages.
+async function sendWhatsApp(number: string, text: string) {
+  const r = await fetch(`https://graph.facebook.com/v21.0/${env('WHATSAPP_PHONE_ID')}/messages`, {
+    method: 'POST', headers: { Authorization: 'Bearer ' + env('WHATSAPP_TOKEN'), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messaging_product: 'whatsapp', to: number, type: 'template',
+      template: { name: env('WHATSAPP_TEMPLATE', 'sankhyas_alert'), language: { code: env('WHATSAPP_TEMPLATE_LANG', 'en') }, components: [{ type: 'body', parameters: [{ type: 'text', text: text.slice(0, 1000) }] }] } }),
+  });
+  if (!r.ok) throw new Error('whatsapp ' + r.status + ' ' + (await r.text()).slice(0, 200));
+}

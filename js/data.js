@@ -485,7 +485,10 @@
       years: a.periods, quarters: qq.periods, shQuarters: ['Latest'],
       pl, bs, cf, ratios, q, sh, sharesOut,
       docs: { announcements: [], reports: [], ratings: [], concalls: [] },
-      prices: px.close, volume: px.volume.map(v => v || 0), dates: px.dates.map(d => new Date(d + 'T00:00:00'))
+      prices: px.close, volume: px.volume.map(v => v || 0), dates: px.dates.map(d => new Date(d + 'T00:00:00')),
+      // open/high/low cover the most recent sessions only (aligned with the end of 'dates')
+      ohlc: px.open && px.open.length ? { open: px.open, high: px.high, low: px.low } : null,
+      actions: j.actions || null
     };
     out.ttm = computeTTM(out);
     out.metrics = computeMetrics(out, { quote: qt });

@@ -1,7 +1,8 @@
 /* Sankhyas accounts and Pro payments.
  *
  * Cloud mode (js/config.js has a Supabase project): real accounts with Supabase Auth (email and
- * password, Google, password reset), the plan stored in the database, and Pro bought with
+ * password, email sign-in link, Google / GitHub / Microsoft / Apple when switched on in Supabase,
+ * password reset), watchlist/screens/notes/portfolio synced across devices, alerts, the plan stored in the database, and Pro bought with
  * Razorpay Checkout. Orders are created and payments verified by Supabase Edge Functions
  * (supabase/functions), so the Razorpay secret never reaches the browser.
  *
@@ -35,7 +36,7 @@
   }
   const siteUrl = () => location.origin + location.pathname;
 
-  let client = null, session = null, profile = null, recovery = false;
+  let client = null, session = null, profile = null, recovery = false, providersP = null;
   const state = { user: null };
 
   /* ---------- local mode (browser-only accounts, as before) ---------- */
@@ -65,7 +66,7 @@
   }
   async function loadProfile() {
     if (!client || !state.user) { profile = null; return null; }
-    const { data } = await client.from('profiles').select('plan, pro_until, full_name').eq('id', state.user.id).maybeSingle();
+    const { data } = await client.from('profiles').select('plan, pro_until, full_name, email_alerts, telegram_chat_id, whatsapp_number, whatsapp_opt_in').eq('id', state.user.id).maybeSingle();
     profile = data || { plan: 'free', pro_until: null };
     if (profile.full_name) state.user.name = profile.full_name;
     return profile;
@@ -144,9 +145,25 @@
       if (error) return { error: friendly(error) };
       return { needsConfirm: !data.session };
     },
-    async google() {
-      if (!client) return { error: 'Google login is unavailable right now.' };
-      const { error } = await client.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: siteUrl() } });
+    /** Social logins switched on in the Supabase dashboard, e.g. { google: true, github: false }. */
+    providers() {
+      if (!cloud) return Promise.resolve({});
+      if (!providersP) {
+        providersP = fetch(cfg.supabaseUrl.replace(/\/$/, '') + '/auth/v1/settings', { headers: { apikey: cfg.supabaseAnonKey } })
+          .then(r => (r.ok ? r.json() : {})).then(j => j.external || {}).catch(() => ({}));
+      }
+      return providersP;
+    },
+    async oauth(provider) {
+      if (!client) return { error: 'This login is unavailable right now.' };
+      const { error } = await client.auth.signInWithOAuth({ provider, options: { redirectTo: siteUrl(), scopes: provider === 'azure' ? 'email' : undefined } });
+      return error ? { error: friendly(error) } : {};
+    },
+    google() { return Account.oauth('google'); },
+    /** Passwordless: email a one-time sign-in link (creates the account on first use). */
+    async magicLink(email) {
+      if (!client) return { error: 'Email login is unavailable right now.' };
+      const { error } = await client.auth.signInWithOtp({ email, options: { emailRedirectTo: siteUrl() } });
       return error ? { error: friendly(error) } : {};
     },
     async resetPassword(email) {
@@ -166,6 +183,64 @@
       setSession(null); profile = null; emit();
     },
     async refresh() { if (cloud) { await loadProfile(); emit(); } },
+    async updateProfile(fields) {
+      if (!client || !state.user) return { error: 'Please log in first.' };
+      const { error } = await client.from('profiles').update(fields).eq('id', state.user.id);
+      if (!error) await loadProfile();
+      return error ? { error: friendly(error) } : {};
+    },
+
+    /* ---------- sync across devices: one JSON value per key in public.user_data ---------- */
+    canSync: () => cloud && !!client && !!state.user,
+    async pullData() {
+      if (!Account.canSync()) return null;
+      const { data, error } = await client.from('user_data').select('key, value, updated_at');
+      if (error) throw error;
+      const out = {};
+      (data || []).forEach(r => { out[r.key] = { value: r.value, at: r.updated_at }; });
+      return out;
+    },
+    async pushData(key, value) {
+      if (!Account.canSync()) return;
+      const { error } = await client.from('user_data').upsert({ user_id: state.user.id, key, value, updated_at: new Date().toISOString() });
+      if (error) throw error;
+    },
+
+    /* ---------- alerts (rules in public.alerts, delivered by the dispatch-alerts function) ---------- */
+    alerts: {
+      async list() {
+        if (!client || !state.user) return [];
+        const { data } = await client.from('alerts').select('*').order('created_at', { ascending: false });
+        return data || [];
+      },
+      async add(rule) {
+        if (!client || !state.user) return { error: 'Please log in first.' };
+        const { error } = await client.from('alerts').insert(Object.assign({ user_id: state.user.id }, rule));
+        return error ? { error: friendly(error) } : {};
+      },
+      async update(id, fields) {
+        const { error } = await client.from('alerts').update(fields).eq('id', id);
+        return error ? { error: friendly(error) } : {};
+      },
+      async remove(id) {
+        const { error } = await client.from('alerts').delete().eq('id', id);
+        return error ? { error: friendly(error) } : {};
+      },
+      async log() {
+        if (!client || !state.user) return [];
+        const { data } = await client.from('alert_log').select('message, channels, sent_at').order('sent_at', { ascending: false }).limit(30);
+        return data || [];
+      },
+      async telegramLink() {
+        const { data, error } = await client.rpc('create_telegram_link');
+        return error ? { error: friendly(error) } : { token: data };
+      },
+      async unlinkTelegram() {
+        const { error } = await client.rpc('unlink_telegram');
+        if (!error) await loadProfile();
+        return error ? { error: friendly(error) } : {};
+      }
+    },
     async payments() {
       if (!client || !state.user) return [];
       const { data } = await client.from('payments').select('order_id, payment_id, plan, amount, status, created_at, paid_at').order('created_at', { ascending: false }).limit(50);

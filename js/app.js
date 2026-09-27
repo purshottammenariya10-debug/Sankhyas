@@ -8,10 +8,99 @@
   const RATIOS = Screener.RATIOS, RBY = Screener.BY_KEY;
 
   /* ---------- storage ---------- */
+  const rawSet = (k, v) => { try { if (v === undefined) localStorage.removeItem('sankhyas_' + k); else localStorage.setItem('sankhyas_' + k, JSON.stringify(v)); } catch (e) { /* ignore */ } };
   const store = {
     get(k, def) { try { const v = localStorage.getItem('sankhyas_' + k); return v == null ? def : JSON.parse(v); } catch (e) { return def; } },
-    set(k, v) { try { localStorage.setItem('sankhyas_' + k, JSON.stringify(v)); } catch (e) { /* ignore */ } }
+    set(k, v) { rawSet(k, v); Sync.touched(k); }
   };
+
+  /* ---------- sync across devices (signed-in cloud accounts; public.user_data) ----------
+     Each group is one row: watchlist, screens, portfolio, notes {SYM: text}, cc_extra {SYM: [...]},
+     prefs {topratios, screencols, chart_style}. The newer side wins; the first sync on a device
+     merges both sides so nothing saved before logging in is lost. */
+  const Sync = (function () {
+    const DIRECT = { watchlist: 'watchlist', screens: 'screens', portfolio: 'portfolio' };
+    const PREFS = ['topratios', 'screencols', 'chart_style'];
+    const PREFIX = { notes_: 'notes', cc_extra_: 'cc_extra' };
+    const GROUPS = ['watchlist', 'screens', 'portfolio', 'notes', 'cc_extra', 'prefs'];
+    let timer = null, dirty = {}, applying = false, status = { at: null, error: null };
+    const meta = () => store.get('sync_meta', {});
+    const setMeta = m => rawSet('sync_meta', m);
+    function groupOf(k) {
+      if (DIRECT[k]) return DIRECT[k];
+      if (PREFS.indexOf(k) >= 0) return 'prefs';
+      for (const p in PREFIX) if (k.indexOf(p) === 0) return PREFIX[p];
+      return null;
+    }
+    function prefixed(p) {
+      const out = {};
+      try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.indexOf('sankhyas_' + p) === 0) out[k.slice(('sankhyas_' + p).length)] = JSON.parse(localStorage.getItem(k)); } } catch (e) { /* ignore */ }
+      return out;
+    }
+    function collect(g) {
+      if (g === 'prefs') { const o = {}; PREFS.forEach(k => { const v = store.get(k, undefined); if (v !== undefined) o[k] = v; }); return o; }
+      if (g === 'notes') return prefixed('notes_');
+      if (g === 'cc_extra') return prefixed('cc_extra_');
+      return store.get(g, null);
+    }
+    function apply(g, v) {
+      if (g === 'prefs') { PREFS.forEach(k => { if (v && v[k] !== undefined) rawSet(k, v[k]); }); return; }
+      if (g === 'notes' || g === 'cc_extra') { const p = g === 'notes' ? 'notes_' : 'cc_extra_'; Object.keys(v || {}).forEach(sym => rawSet(p + sym, v[sym])); return; }
+      rawSet(g, v);
+    }
+    const empty = v => v == null || (Array.isArray(v) ? !v.length : typeof v === 'object' && !Object.keys(v).length);
+    function merge(g, local, remote) {
+      if (empty(local)) return remote;
+      if (empty(remote)) return local;
+      if (g === 'watchlist') return remote.concat(local.filter(x => remote.indexOf(x) < 0));
+      if (g === 'screens') { const names = remote.map(x => x.name); return remote.concat(local.filter(x => names.indexOf(x.name) < 0)); }
+      if (g === 'portfolio') { const syms = remote.map(x => x.s); return remote.concat(local.filter(x => syms.indexOf(x.s) < 0)); }
+      return Object.assign({}, local, remote);
+    }
+    async function push(groups) {
+      if (!Account.canSync()) return;
+      const m = meta();
+      try {
+        for (const g of groups) { const v = collect(g); if (v != null) await Account.pushData(g, v); m[g] = Date.now(); }
+        setMeta(m); status = { at: new Date(), error: null };
+      } catch (e) { status.error = 'Could not sync: ' + (e.message || e); }
+    }
+    return {
+      status: () => status,
+      touched(k) {
+        if (applying) return;
+        const g = groupOf(k);
+        if (!g) return;
+        const m = meta(); m[g] = Date.now(); setMeta(m);
+        if (!Account.canSync()) return;
+        dirty[g] = 1;
+        clearTimeout(timer);
+        timer = setTimeout(() => { const gs = Object.keys(dirty); dirty = {}; push(gs); }, 1200);
+      },
+      async pull() {
+        if (!Account.canSync()) return false;
+        let remote;
+        try { remote = await Account.pullData(); } catch (e) { status.error = 'Could not sync: ' + (e.message || e); return false; }
+        const m = meta(), first = !m.synced_user || m.synced_user !== Account.user().id, toPush = [];
+        let changed = false;
+        applying = true;
+        GROUPS.forEach(g => {
+          const r = remote[g], local = collect(g), at = m[g] || 0;
+          if (first) {
+            const v = r ? merge(g, local, r.value) : local;
+            if (r) { apply(g, v); changed = true; }
+            if (!empty(v) && (!r || JSON.stringify(v) !== JSON.stringify(r.value))) toPush.push(g);
+          } else if (r && new Date(r.at).getTime() > at) { apply(g, r.value); m[g] = new Date(r.at).getTime(); changed = true; }
+          else if (at && (!r || at > new Date(r.at).getTime())) toPush.push(g);
+        });
+        applying = false;
+        m.synced_user = Account.user().id;
+        setMeta(m);
+        if (toPush.length) await push(toPush); else status = { at: new Date(), error: null };
+        return changed;
+      }
+    };
+  })();
   const user = () => Account.user();
   const watchlist = () => store.get('watchlist', []);
   const inWatchlist = s => watchlist().indexOf(s) >= 0;
@@ -148,7 +237,7 @@
       if (existing) { existing.remove(); return; }
       const dd = document.createElement('div');
       dd.className = 'dropdown';
-      dd.innerHTML = '<a href="#/account">My account</a><a href="#/watchlist">Watchlist</a><a href="#/screens">My screens</a><a href="#/premium">Sankhyas Pro</a><button id="logout-btn">Logout</button>';
+      dd.innerHTML = '<a href="#/account">My account</a><a href="#/watchlist">Watchlist</a><a href="#/portfolio">Portfolio X-ray</a><a href="#/alerts">Alerts</a><a href="#/screens">My screens</a><a href="#/premium">Sankhyas Pro</a><button id="logout-btn">Logout</button>';
       $('.user-menu').appendChild(dd);
       $('#logout-btn').onclick = () => { Account.signOut().then(() => { renderAuth(); toast('Logged out'); location.hash = '#/'; }); };
       setTimeout(() => document.addEventListener('click', () => dd.remove(), { once: true }));
@@ -186,7 +275,7 @@
       login: pageLogin, register: pageRegister, premium: pagePremium, about: pageAbout, ai: pageAI,
       deals: pageDeals, orders: pageOrders, report: pageReport,
       ipo: pageIPO, calendar: pageCalendar, themes: pageThemes, theme: pageThemes, studio: pageStudio,
-      account: pageAccount, forgot: pageForgot, reset: pageReset, terms: pageLegal, privacy: pageLegal, refunds: pageLegal, contact: pageLegal
+      account: pageAccount, portfolio: pagePortfolio, alerts: pageAlerts, forgot: pageForgot, reset: pageReset, terms: pageLegal, privacy: pageLegal, refunds: pageLegal, contact: pageLegal
     };
     const fn = routes[p0] || pageNotFound;
     const prevY = window.scrollY;
@@ -281,7 +370,7 @@
       '<div class="company-title"><div>' +
       '<h1>' + esc(c.name) + (c.sme ? ' <span class="sme-badge" title="Listed on the NSE Emerge SME platform">SME</span>' : '') + '</h1>' +
       '<div class="company-links">' +
-      (c.website ? '<a href="https://' + esc(c.website) + '" target="_blank" rel="noopener">🔗 ' + esc(c.website) + '</a>' : '') +
+      (c.website ? '<a class="site-link" href="https://' + esc(c.website) + '" target="_blank" rel="noopener">🔗 ' + esc(c.website) + '</a>' : '') +
       (c.exchange === 'BSE' ? '<span>BSE: ' + esc(c.bseCode || c.symbol) + '</span>'
         : (c.bseCode ? '<span>BSE: ' + esc(c.bseCode) + '</span>' : '') + '<span>NSE: ' + esc(c.symbol) + '</span>') +
       '<a href="#/market/' + encodeURIComponent(c.sector) + '">' + esc(c.sector) + '</a><span>' + esc(c.industry) + '</span>' +
@@ -293,6 +382,7 @@
       '<button class="btn" id="export-btn">⤓ Export to Excel</button>' +
       '<button class="btn" id="share-btn" title="Make an image for Instagram, X or WhatsApp">↗ Share card</button>' +
       '<a class="btn" href="#/report/' + encodeURIComponent(c.symbol) + '" title="Printable research report (PDF)">⤓ Research PDF</a>' +
+      '<a class="btn" href="#/alerts?s=' + encodeURIComponent(c.symbol) + '" title="Email, Telegram or WhatsApp alerts for this company">🔔 Alerts</a>' +
       '<button class="btn ' + (followed ? 'active' : 'btn-primary') + '" id="follow-btn">' + (followed ? '✓ Following' : '+ Follow') + '</button>' +
       '</div></div></div>' +
       '<div class="sub-nav" id="sub-nav"><div class="container"><span class="sub-nav-name">' + esc(c.symbol) + '</span>' +
@@ -588,7 +678,7 @@
   }
   function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
   function bindChart(c) {
-    let range = '1Yr', type = 'price', chart = null;
+    let range = '1Yr', type = 'price', chart = null, style = store.get('chart_style', 'candle');
     const toggles = { dma50: true, dma200: true, volume: true };
     const RANGE_DAYS = { '1m': 22, '6m': 126, '1Yr': 252, '3Yr': 756, '5Yr': 1260, '10Yr': 2520, 'Max': 1e9 };
     onLeave(() => { if (chart) chart.destroy(); });
@@ -632,15 +722,17 @@
         }
       };
       let data, legend = '';
-      if (type === 'price') {
+      if (type === 'price' && style === 'candle') {
+        drawCandles(start, n, common, ink3);
+        legend = '';
+      } else if (type === 'price') {
         const ds = [{ label: 'Price on NSE', data: idx.map(i => c.prices[i]), borderColor: primary, backgroundColor: primary, borderWidth: 1.6, pointRadius: 0, tension: 0.1, yAxisID: 'y' }];
         if (toggles.dma50) ds.push({ label: '50 DMA', data: idx.map(i => dma50[i]), borderColor: '#e8a33d', borderWidth: 1.2, pointRadius: 0, yAxisID: 'y' });
         if (toggles.dma200) ds.push({ label: '200 DMA', data: idx.map(i => dma200[i]), borderColor: '#8a8fa0', borderWidth: 1.2, pointRadius: 0, yAxisID: 'y' });
         if (toggles.volume) ds.push({ type: 'bar', label: 'Volume', data: idx.map(i => c.volume[i]), backgroundColor: 'rgba(96,86,255,.18)', yAxisID: 'v', barPercentage: 1, categoryPercentage: 1 });
         common.scales.v = { display: false, position: 'left', max: Math.max.apply(null, idx.map(i => c.volume[i])) * 4, grid: { display: false } };
         data = { labels, datasets: ds };
-        legend = [['Price on NSE', primary, null], ['50 DMA', '#e8a33d', 'dma50'], ['200 DMA', '#8a8fa0', 'dma200'], ['Volume', 'rgba(96,86,255,.35)', 'volume']]
-          .map(l => '<label>' + (l[2] ? '<input type="checkbox" data-toggle="' + l[2] + '"' + (toggles[l[2]] ? ' checked' : '') + '>' : '') + '<span class="swatch" style="background:' + l[1] + '"></span>' + l[0] + '</label>').join('');
+        legend = priceLegend([['Price on NSE', primary, null], ['50 DMA', '#e8a33d', 'dma50'], ['200 DMA', '#8a8fa0', 'dma200'], ['Volume', 'rgba(96,86,255,.35)', 'volume']]);
         chart = new Chart($('#price-chart'), { type: 'line', data, options: common });
       } else if (type === 'pe') {
         const pes = idx.map(i => peSeries[i]);
@@ -665,8 +757,68 @@
         legend = '<label><span class="swatch" style="background:rgba(96,86,255,.55)"></span>Quarterly Sales (₹ Cr.)</label><label><span class="swatch" style="background:#e8a33d"></span>OPM % (left axis)</label>';
         chart = new Chart($('#price-chart'), { type: 'bar', data, options: common });
       }
-      $('#chart-legend').innerHTML = legend;
+      if (legend) $('#chart-legend').innerHTML = legend;
       $$('#chart-legend [data-toggle]').forEach(cb => cb.addEventListener('change', () => { toggles[cb.dataset.toggle] = cb.checked; draw(); }));
+      $$('#chart-legend [data-style]').forEach(b => b.onclick = () => { style = b.dataset.style; store.set('chart_style', style); draw(); });
+    }
+    function priceLegend(items) {
+      return '<span class="seg" role="group" aria-label="Chart style">' + [['candle', 'Candles'], ['line', 'Line']].map(x =>
+        '<button class="btn btn-small' + (style === x[0] ? ' active' : '') + '" data-style="' + x[0] + '">' + x[1] + '</button>').join('') + '</span>' +
+        items.map(l => '<label>' + (l[2] ? '<input type="checkbox" data-toggle="' + l[2] + '"' + (toggles[l[2]] ? ' checked' : '') + '>' : '') + '<span class="swatch" style="background:' + l[1] + '"></span>' + l[0] + '</label>').join('');
+    }
+
+    /* Candles: real open/high/low for recent sessions (from Yahoo); older sessions, or data without
+       them, use the previous close as the open. Long ranges are grouped into weekly/monthly candles. */
+    const ohlcFrom = c.ohlc ? c.prices.length - c.ohlc.open.length : Infinity;
+    function dayOHLC(i) {
+      const cl = c.prices[i];
+      if (i >= ohlcFrom) {
+        const j = i - ohlcFrom, o = c.ohlc.open[j], h = c.ohlc.high[j], l = c.ohlc.low[j];
+        if (o != null && h != null && l != null) return [o, Math.max(h, o, cl), Math.min(l, o, cl), cl];
+      }
+      const o = i > 0 ? c.prices[i - 1] : cl;
+      return [o, Math.max(o, cl), Math.min(o, cl), cl];
+    }
+    function drawCandles(start, n, common, ink3) {
+      const span = n - start;
+      const unit = span <= 300 ? 'day' : span <= 1300 ? 'week' : 'month';
+      const keyOf = d => unit === 'day' ? +d : unit === 'week' ? Math.floor((+d / 864e5 + 3) / 7) : d.getFullYear() * 12 + d.getMonth();
+      const buckets = [];
+      for (let i = start; i < n; i++) {
+        const k = keyOf(c.dates[i]), b = buckets[buckets.length - 1], x = dayOHLC(i);
+        if (b && b.k === k) { b.h = Math.max(b.h, x[1]); b.l = Math.min(b.l, x[2]); b.c = x[3]; b.v += c.volume[i] || 0; b.last = i; }
+        else buckets.push({ k, o: x[0], h: x[1], l: x[2], c: x[3], v: c.volume[i] || 0, first: i, last: i });
+      }
+      const up = cssVar('--green') || '#11813d', down = cssVar('--red') || '#d33a3a';
+      const col = buckets.map(b => (b.c >= b.o ? up : down));
+      const dateFmt = unit === 'month' ? { month: 'short', year: 'numeric' } : unit === 'week' ? { day: 'numeric', month: 'short', year: '2-digit' } : { day: 'numeric', month: 'short' };
+      const labels = buckets.map(b => c.dates[b.first].toLocaleDateString('en-IN', dateFmt));
+      const ds = [
+        { type: 'bar', label: 'wick', data: buckets.map(b => [b.l, b.h]), backgroundColor: col, barPercentage: 0.14, categoryPercentage: 1, grouped: false, yAxisID: 'y', order: 2 },
+        { type: 'bar', label: 'candle', data: buckets.map(b => { const lo = Math.min(b.o, b.c), hi = Math.max(b.o, b.c); return [lo, hi - lo < (b.h - b.l) * 0.004 + 1e-6 ? lo + Math.max((b.h - b.l) * 0.004, hi * 0.0004) : hi]; }),
+          backgroundColor: col, borderColor: col, barPercentage: 0.72, categoryPercentage: 1, grouped: false, yAxisID: 'y', order: 1 }
+      ];
+      if (toggles.dma50) ds.push({ type: 'line', label: '50 DMA', data: buckets.map(b => dma50[b.last]), borderColor: '#e8a33d', borderWidth: 1.2, pointRadius: 0, yAxisID: 'y', order: 0 });
+      if (toggles.dma200) ds.push({ type: 'line', label: '200 DMA', data: buckets.map(b => dma200[b.last]), borderColor: '#8a8fa0', borderWidth: 1.2, pointRadius: 0, yAxisID: 'y', order: 0 });
+      if (toggles.volume) ds.push({ type: 'bar', label: 'Volume', data: buckets.map(b => b.v), backgroundColor: 'rgba(96,86,255,.16)', yAxisID: 'v', barPercentage: 0.9, categoryPercentage: 1, grouped: false, order: 3 });
+      common.scales.y.beginAtZero = false;
+      common.scales.y.grace = '3%';
+      common.scales.v = { display: false, position: 'left', beginAtZero: true, max: Math.max.apply(null, buckets.map(b => b.v).concat([1])) * 4, grid: { display: false } };
+      common.plugins.tooltip = {
+        filter: it => it.dataset.label !== 'wick',
+        callbacks: {
+          label: it => {
+            const b = buckets[it.dataIndex];
+            if (it.dataset.label === 'candle') return ['Open ' + num(b.o, 2) + '   High ' + num(b.h, 2), 'Low ' + num(b.l, 2) + '   Close ' + num(b.c, 2) + '  (' + (b.c >= b.o ? '+' : '') + num((b.c / b.o - 1) * 100, 2) + '%)'];
+            if (it.dataset.label === 'Volume') return 'Volume ' + num(b.v, 0);
+            return it.dataset.label + ' ' + num(it.parsed.y, 2);
+          }
+        }
+      };
+      chart = new Chart($('#price-chart'), { type: 'bar', data: { labels, datasets: ds }, options: common });
+      const note = unit === 'day' ? 'Daily candles' : unit === 'week' ? 'Weekly candles' : 'Monthly candles';
+      $('#chart-legend').innerHTML = priceLegend([['50 DMA', '#e8a33d', 'dma50'], ['200 DMA', '#8a8fa0', 'dma200'], ['Volume', 'rgba(96,86,255,.35)', 'volume']]) +
+        '<span class="sub">' + note + (c.ohlc ? '' : ' from closing prices') + '</span>';
     }
     $$('#chart-range button').forEach(b => b.onclick = () => { range = b.dataset.range; $$('#chart-range button').forEach(x => x.classList.toggle('active', x === b)); draw(); });
     $$('#chart-type button').forEach(b => b.onclick = () => { type = b.dataset.type; $$('#chart-type button').forEach(x => x.classList.toggle('active', x === b)); draw(); });
@@ -739,10 +891,11 @@
       $$('tr[data-sub="' + b.dataset.expand + '"]', table).forEach(tr => tr.classList.toggle('hidden'));
     }));
   }
-  function sectionHead(id, title, desc, c) {
+  function sectionHead(id, title, desc, c, extra) {
     const alt = c.standalone ? 'Consolidated' : 'Standalone';
     return '<section class="section card" id="' + id + '"><div class="section-head"><div><h2>' + esc(title) + '</h2><p>' + desc + '</p></div>' +
-      (c.live ? '' : '<a class="btn btn-small btn-plain" href="#/company/' + c.symbol + (c.standalone ? '' : '/standalone') + '" data-view>View ' + alt + '</a>') + '</div>';
+      '<div class="head-actions">' + (extra || '') +
+      (c.live ? '' : '<a class="btn btn-small btn-plain" href="#/company/' + c.symbol + (c.standalone ? '' : '/standalone') + '" data-view>View ' + alt + '</a>') + '</div></div>';
   }
   const figs = c => (c.standalone ? 'Standalone' : 'Consolidated') + ' Figures in Rs. Crores' + (c.live ? ' &middot; Source: Yahoo Finance' : '');
 
@@ -797,7 +950,7 @@
   function bsSection(c) {
     const b = c.bs;
     const wr = b.equity.map((e, i) => e + b.reserves[i] + b.borrowings[i] + b.otherLiab[i]);
-    return sectionHead('balance-sheet', 'Balance Sheet', figs(c), c) + statementTable(c.years, [
+    return sectionHead('balance-sheet', 'Balance Sheet', figs(c), c, '<button class="btn btn-small" id="ca-btn">Corporate actions</button>') + statementTable(c.years, [
       { label: 'Equity Capital', values: b.equity },
       { label: 'Reserves', values: b.reserves },
       { label: 'Borrowings', values: b.borrowings, expand: 'bor' },
@@ -864,7 +1017,8 @@
   }
   function shareholdingSection(c) {
     return '<section class="section card" id="shareholding"><div class="section-head"><div><h2>Shareholding Pattern</h2><p>Numbers in percentages</p></div>' +
-      '<div class="tabs" id="sh-tabs"><button class="btn btn-small active" data-sh="q">Quarterly</button><button class="btn btn-small" data-sh="y">Yearly</button></div></div>' +
+      '<div class="head-actions"><button class="btn btn-small" id="trades-btn">Trades</button>' +
+      '<div class="tabs" id="sh-tabs"><button class="btn btn-small active" data-sh="q">Quarterly</button><button class="btn btn-small" data-sh="y">Yearly</button></div></div></div>' +
       '<div id="sh-table">' + shareholdingTable(c, false) + '</div></section>';
   }
   function bindShareholding(c) {
@@ -872,6 +1026,110 @@
       $$('#sh-tabs button').forEach(x => x.classList.toggle('active', x === b));
       $('#sh-table').innerHTML = shareholdingTable(c, b.dataset.sh === 'y');
     });
+    $('#trades-btn').onclick = () => openTrades(c);
+    const ca = $('#ca-btn');
+    if (ca) ca.onclick = () => openCorporateActions(c);
+  }
+
+  /* ---------- Trades: insider trades, bulk and block deals, SAST disclosures ---------- */
+  const MONTHS_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const monthKey = d => String(d).slice(0, 7);
+  const monthLabel = k => MONTHS_FULL[+k.slice(5, 7) - 1] + ' ' + k.slice(0, 4);
+  const SMALL_TRADE_CR = 0.1;   // "hide small quantities": trades under Rs 10 lakh
+  function tradeRows(c, act, tab) {
+    if (!act) return [];
+    if (tab === 'bulk' || tab === 'block') {
+      return act.deals.filter(x => x.s === c.symbol && x.t === tab).map(x => ({
+        d: x.d, who: x.c, sub: tab === 'bulk' ? 'Bulk deal' : 'Block deal', buy: x.side === 'B', q: x.q, pr: x.p, v: x.v
+      }));
+    }
+    return act.disclosures.filter(x => x.s === c.symbol && x.k === (tab === 'sast' ? 'sast' : 'insider')).map(x => ({
+      d: x.d.slice(0, 10), who: x.who || '', sub: [x.cat, x.mode].filter(Boolean).join(' · ') || (tab === 'sast' ? 'SAST disclosure' : 'Insider disclosure'),
+      buy: x.dir === 'buy' || x.dir === 'release', dir: x.dir, q: x.q, pr: x.pr, v: x.v, u: x.u
+    }));
+  }
+  function tradesTable(rows, hideSmall) {
+    const list = hideSmall ? rows.filter(r => r.v == null || r.v >= SMALL_TRADE_CR) : rows;
+    if (!list.length) return '<p class="muted" style="padding:12px 0">' + (rows.length ? 'Only small trades in this list. Untick "Hide small quantities" to see them.' : 'No trades of this type on record for this company yet.') + '</p>';
+    const byMonth = {};
+    list.sort((a, b) => b.d.localeCompare(a.d)).forEach(r => (byMonth[monthKey(r.d)] = byMonth[monthKey(r.d)] || []).push(r));
+    const qty = r => (r.q == null ? '<span class="muted">-</span>' : '<span class="' + (r.dir && !DIR[r.dir] ? '' : r.buy ? 'up' : 'down') + '">' + (r.buy ? '' : '−') + num(r.q, 0) + '</span>');
+    return '<div class="table-wrap"><table class="data trades"><thead><tr><th class="l">Person</th><th>Quantity</th><th>Avg Price</th><th>Value<br><span class="sub">Rs. Lacs</span></th></tr></thead><tbody>' +
+      Object.keys(byMonth).map(k => '<tr class="month-row"><td class="l" colspan="4">' + monthLabel(k) + '</td></tr>' + byMonth[k].map(r =>
+        '<tr><td class="l"><div class="person">' + (r.who ? esc(r.who) : '<span class="muted">' + (r.dir && DIR[r.dir] ? DIR[r.dir][0] : 'Trade') + ' - see filing</span>') + '</div>' +
+        '<div class="sub">' + esc(r.sub) + ' · ' + docWhen(r.d) + (r.u ? ' · <a target="_blank" rel="noopener noreferrer" href="' + esc(r.u) + '">filing ↗</a>' : '') + '</div></td>' +
+        '<td>' + qty(r) + '</td><td>' + (r.pr == null ? '<span class="muted">-</span>' : num(r.pr, 2)) + '</td><td>' + (r.v == null ? '<span class="muted">-</span>' : num(r.v * 100, 2)) + '</td></tr>').join('')).join('') +
+      '</tbody></table></div>';
+  }
+  function tabbedModal(title, tabs, render, footNote) {
+    const bd = modal(title, '<div class="tabs modal-tabs">' + tabs.map((t, i) => '<button class="btn btn-small' + (i === 0 ? ' active' : '') + '" data-tab="' + t[0] + '">' + t[1] + '</button>').join('') + '</div>' +
+      '<div class="modal-tab-body"></div>' + (footNote ? '<p class="table-note">' + footNote + '</p>' : ''));
+    bd.querySelector('.modal').classList.add('modal-wide');
+    let current = tabs[0][0];
+    const show = () => { $('.modal-tab-body', bd).innerHTML = render(current, bd); };
+    $$('[data-tab]', bd).forEach(b => b.onclick = () => { current = b.dataset.tab; $$('[data-tab]', bd).forEach(x => x.classList.toggle('active', x === b)); show(); });
+    show();
+    return { bd, show };
+  }
+  function openTrades(c) {
+    let act = c._activity || null, hideSmall = store.get('hide_small_trades', true), loading = !act && c.live;
+    const tabs = [['insider', 'Insider Trades'], ['bulk', 'Bulk Deals'], ['block', 'Block Deals'], ['sast', 'SAST Trades']];
+    const m = tabbedModal('Trades', tabs, tab => loading ? '<p class="muted">Loading…</p>' :
+      '<label class="check-line"><input type="checkbox" id="hide-small"' + (hideSmall ? ' checked' : '') + '> Hide small quantities <span class="sub">(under ₹ 10 lakh)</span></label>' +
+      tradesTable(tradeRows(c, act, tab), hideSmall),
+      'Bulk and block deals from NSE\'s daily files. Insider (SEBI PIT) and SAST trades are read from the company\'s filings; open the filing when a figure is missing. Quantities sold are shown in red.');
+    const rebind = () => { const cb = $('#hide-small', m.bd); if (cb) cb.onchange = () => { hideSmall = cb.checked; store.set('hide_small_trades', hideSmall); m.show(); rebind(); }; };
+    $$('[data-tab]', m.bd).forEach(b => b.addEventListener('click', rebind));
+    rebind();
+    if (loading) Data.loadActivity().then(a => { act = c._activity = a; loading = false; m.show(); rebind(); });
+  }
+
+  /* ---------- Corporate actions: equity history, preferential and rights issues, mergers, splits, dividends ---------- */
+  const CA_KINDS = [
+    ['equity', 'Equity History', /allot(ment|ted)|conversion of (share )?warrants|\besops?\b|\besos\b|employee stock option|increase in (the )?(paid[- ]up|authori[sz]ed|share) capital|listing (approval )?of (further|additional|new) (equity )?shares|\bqip\b|qualified institutions? placement|reduction of (share )?capital/i],
+    ['prefs', 'Prefs', /preferential/i],
+    ['rights', 'Rights', /rights? (issue|entitlement|shares)|rights basis/i],
+    ['merger', 'Merger', /amalgamation|\bmerger\b|demerger|scheme of arrangement|slump sale|composite scheme/i],
+    ['splits', 'Splits & Bonus', /\bbonus\b|sub-?division|stock split|\bsplit\b/i],
+    ['dividends', 'Dividends', /dividend/i],
+    ['buyback', 'Buyback', /buy ?-?back/i]
+  ];
+  const ratioText = r => { const f = [[2, '1:1'], [3, '2:1'], [1.5, '1:2']].find(x => Math.abs(x[0] - r) < 0.001); return f ? f[1] : num(r, r < 10 ? 2 : 0) + ' for 1'; };
+  function corporateActions(c, f) {
+    const out = {};
+    CA_KINDS.forEach(k => (out[k[0]] = []));
+    ((f && f.announcements) || []).forEach(a => {
+      const t = cleanTitle(a.t || '');
+      const k = CA_KINDS.find(x => x[2].test(t));
+      if (!k || /trading window|newspaper|intimation of (record date )?for? ?agm|postal ballot/i.test(t) && k[0] !== 'dividends') return;
+      out[k[0]].push({ d: a.d.slice(0, 10), text: t, u: a.u });
+    });
+    const acts = c.actions || {};
+    (acts.splits || []).forEach(x => out.splits.push({ d: x[0], text: 'Split or bonus: shares multiplied ' + ratioText(x[1]) + ' (' + num(x[1], 4).replace(/\.?0+$/, '') + 'x shares; past prices adjusted)' }));
+    (acts.dividends || []).forEach(x => out.dividends.push({ d: x[0], text: 'Dividend of ₹ ' + num(x[1], 2) + ' per share (ex-date)' }));
+    // share capital changes from the balance sheet
+    const eq = (c.bs && c.bs.equity) || [];
+    for (let i = 1; i < eq.length; i++) {
+      if (eq[i] != null && eq[i - 1] != null && Math.abs(eq[i] - eq[i - 1]) > Math.max(0.01, eq[i - 1] * 0.001)) {
+        out.equity.push({ d: '', label: c.years[i], text: 'Equity share capital ' + (eq[i] > eq[i - 1] ? 'rose' : 'fell') + ' from ₹ ' + num(eq[i - 1], 2) + ' Cr to ₹ ' + num(eq[i], 2) + ' Cr' });
+      }
+    }
+    Object.keys(out).forEach(k => out[k].sort((a, b) => (b.d || yearDate(b.label)).localeCompare(a.d || yearDate(a.label))));
+    return out;
+  }
+  const yearDate = l => { const m = /(\w{3}) (\d{4})/.exec(l || ''); return m ? m[2] + '-' + String(MON.indexOf(m[1]) + 1).padStart(2, '0') + '-31' : ''; };
+  function openCorporateActions(c) {
+    let f = c._filings || null, loading = !f && c.live;
+    const tabs = CA_KINDS.map(k => [k[0], k[1]]);
+    const m = tabbedModal('Corporate actions', tabs, tab => {
+      if (loading) return '<p class="muted">Loading…</p>';
+      const rows = corporateActions(c, f)[tab];
+      if (!rows.length) return '<p class="muted" style="padding:12px 0">No ' + esc(tabs.find(t => t[0] === tab)[1].toLowerCase()) + ' records for this company yet.</p>';
+      return '<div class="table-wrap"><table class="data ca-table"><thead><tr><th class="l">Date</th><th class="l">Details</th></tr></thead><tbody>' +
+        rows.map(r => '<tr><td class="l nowrap">' + (r.d ? new Date(r.d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : esc(r.label)) + '</td><td class="l">' +
+          (r.u ? '<a target="_blank" rel="noopener noreferrer" href="' + esc(r.u) + '">' + esc(r.text) + ' ↗</a>' : esc(r.text)) + '</td></tr>').join('') + '</tbody></table></div>';
+    }, 'From exchange filings, Yahoo Finance splits and dividends, and changes in share capital on the balance sheet. Filings history grows as Sankhyas collects them.');
+    if (loading) Data.loadFilings(c.symbol).then(x => { f = c._filings = x; loading = false; m.show(); });
   }
 
   /* Documents: exact filing PDFs when the data pipeline has fetched them, otherwise the company's
@@ -1816,8 +2074,312 @@
     draw();
   }
 
+  /* ---------- Portfolio X-ray ----------
+     Holdings are [{ s: symbol, q: quantity, p: average buy price }] kept in the 'portfolio' store
+     (synced across devices when logged in). The X-ray part is a Pro feature. */
+  const portfolio = () => store.get('portfolio', []);
+  const CSV_COLS = {
+    sym: /^(instrument|symbol|trading ?symbol|tradingsymbol|scrip( name| code)?|stock( name)?|company( name)?|security( name)?|name)$/i,
+    isin: /^isin/i,
+    qty: /^(qty\.?|quantity( available)?|total quantity|shares|holding|no\.? of shares|units)$/i,
+    avg: /^(avg\.? ?(cost|price)|average ?(buy )?(price|cost)|buy (avg|average)( price)?|avg\.? buy price|cost price|purchase price)$/i
+  };
+  function splitCSVLine(line) {
+    const out = []; let cur = '', q = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { if (q && line[i + 1] === '"') { cur += '"'; i++; } else q = !q; }
+      else if ((ch === ',' || ch === '\t' || ch === ';') && !q) { out.push(cur.trim()); cur = ''; }
+      else cur += ch;
+    }
+    out.push(cur.trim());
+    return out;
+  }
+  /** Broker holdings export (Zerodha, Groww, Upstox, Angel, ICICI...) -> holdings + names we could not match. */
+  function parseHoldingsCSV(text, all) {
+    const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim());
+    let hi = lines.findIndex(l => { const cells = splitCSVLine(l); return cells.some(c => CSV_COLS.qty.test(c)) && cells.some(c => CSV_COLS.sym.test(c) || CSV_COLS.isin.test(c)); });
+    if (hi < 0) return { error: 'Could not find the header row. The file needs a symbol (or ISIN) column and a quantity column.' };
+    const head = splitCSVLine(lines[hi]);
+    const col = k => head.findIndex(h => CSV_COLS[k].test(h));
+    const ci = { sym: col('sym'), isin: col('isin'), qty: col('qty'), avg: col('avg') };
+    const byIsin = {}, bySym = {};
+    all.forEach(c => { if (c.isin) byIsin[c.isin.toUpperCase()] = c; bySym[c.symbol.toUpperCase()] = c; });
+    const holdings = [], missed = [];
+    lines.slice(hi + 1).forEach(l => {
+      const cells = splitCSVLine(l);
+      const q = parseFloat(String(cells[ci.qty] || '').replace(/,/g, ''));
+      if (!(q > 0)) return;
+      const raw = ci.sym >= 0 ? (cells[ci.sym] || '').replace(/-(EQ|BE|SM|ST|BZ)$/i, '').trim() : '';
+      let c = (ci.isin >= 0 && byIsin[(cells[ci.isin] || '').toUpperCase()]) || bySym[raw.toUpperCase()];
+      if (!c && raw) { const hit = Data.search(raw, 1)[0]; if (hit && hit.name.toLowerCase().indexOf(raw.toLowerCase().split(/\s+/)[0]) === 0) c = hit; }
+      if (!c) { if (raw) missed.push(raw); return; }
+      const avg = ci.avg >= 0 ? parseFloat(String(cells[ci.avg] || '').replace(/[,₹\s]/g, '')) : NaN;
+      holdings.push({ s: c.symbol, q, p: isFinite(avg) && avg > 0 ? avg : null });
+    });
+    return { holdings, missed };
+  }
+  const CAP_BANDS = [['Large cap', 90000], ['Mid cap', 30000], ['Small cap', 0]];
+  function xray(rows) {
+    const total = rows.reduce((a, r) => a + r.value, 0) || 1;
+    const w = r => r.value / total;
+    const wavg = key => {
+      let sw = 0, sv = 0;
+      rows.forEach(r => { const v = r.c.metrics[key]; if (v != null && isFinite(v)) { sw += w(r); sv += w(r) * v; } });
+      return sw >= 0.5 ? sv / sw : null;
+    };
+    // portfolio P/E = value / earnings: harmonic weighting, loss makers excluded
+    let ey = 0, eyw = 0;
+    rows.forEach(r => { const pe = r.c.metrics.pe; if (pe > 0) { ey += w(r) / pe; eyw += w(r); } });
+    const sectors = {}, caps = {};
+    rows.forEach(r => {
+      sectors[r.c.sector || 'Others'] = (sectors[r.c.sector || 'Others'] || 0) + w(r) * 100;
+      const band = r.c.sme ? 'SME' : CAP_BANDS.find(b => (r.c.metrics.marketCap || 0) >= b[1])[0];
+      caps[band] = (caps[band] || 0) + w(r) * 100;
+    });
+    const sorted = rows.slice().sort((a, b) => b.value - a.value);
+    const hhi = rows.reduce((a, r) => a + w(r) * w(r), 0);
+    return {
+      pe: eyw > 0.5 ? eyw / ey : null, roce: wavg('roce'), roe: wavg('roe'), divYield: wavg('divYield'), de: wavg('de'), ret1y: wavg('ret1y'),
+      score: wavg('sankhyasScore'), risk: wavg('riskScore'), salesGrowth3: wavg('salesGrowth3'),
+      sectors: Object.entries(sectors).sort((a, b) => b[1] - a[1]), caps: Object.entries(caps).sort((a, b) => b[1] - a[1]),
+      top1: sorted[0] ? w(sorted[0]) * 100 : 0, top5: sorted.slice(0, 5).reduce((a, r) => a + w(r) * 100, 0), effective: hhi ? 1 / hhi : 0,
+      flagged: rows.filter(r => (r.c.metrics.riskScore || 0) >= 45), lowScore: rows.filter(r => r.c.metrics.sankhyasScore != null && r.c.metrics.sankhyasScore < 40)
+    };
+  }
+  function xrayNotes(x, rows) {
+    const n = [];
+    if (x.top1 > 25) n.push(['warn', 'Your largest holding is ' + num(x.top1, 0) + '% of the portfolio. A single bad result can hurt a lot.']);
+    if (x.sectors[0] && x.sectors[0][1] > 40) n.push(['warn', num(x.sectors[0][1], 0) + '% sits in one sector (' + x.sectors[0][0] + ').']);
+    if (rows.length >= 25 && x.effective > 20) n.push(['info', 'With ' + rows.length + ' stocks, the portfolio behaves like an index fund. Consider fewer, higher-conviction holdings.']);
+    if (x.effective && x.effective < 5 && rows.length >= 3) n.push(['info', 'Effectively ' + num(x.effective, 1) + ' stocks after weighting: quite concentrated.']);
+    if (x.flagged.length) n.push(['bad', x.flagged.length + ' holding' + (x.flagged.length > 1 ? 's have' : ' has') + ' a high red-flag score: ' + x.flagged.map(r => r.c.symbol).join(', ') + '.']);
+    if (x.de != null && x.de > 1) n.push(['warn', 'Weighted debt to equity is ' + num(x.de, 2) + ': the portfolio leans on leveraged companies.']);
+    if (x.roce != null && x.roce >= 18) n.push(['good', 'Weighted ROCE of ' + num(x.roce, 0) + '%: good quality businesses on average.']);
+    if (x.pe != null && x.pe > 45) n.push(['warn', 'Portfolio P/E of ' + num(x.pe, 0) + ' is rich; returns depend on growth staying high.']);
+    const sme = (x.caps.find(c => c[0] === 'SME') || [0, 0])[1], small = (x.caps.find(c => c[0] === 'Small cap') || [0, 0])[1];
+    if (sme + small > 50) n.push(['warn', num(sme + small, 0) + '% in small caps and SME stocks: expect bigger swings and lower liquidity.']);
+    if (!n.length) n.push(['good', 'Nothing stands out: diversified, with no high red-flag holdings.']);
+    return n;
+  }
+  function barList(entries) {
+    return '<div class="bar-list">' + entries.map(e => '<div class="bar-row"><span class="bar-label">' + esc(e[0]) + '</span><span class="bar-track"><span class="bar-fill" style="width:' + Math.max(1, Math.min(100, e[1])).toFixed(1) + '%"></span></span><b>' + num(e[1], 1) + '%</b></div>').join('') + '</div>';
+  }
+  function pagePortfolio() {
+    setTitle('Portfolio X-ray');
+    const all = Data.listCompanies();
+    const draw = () => {
+      const hold = portfolio();
+      const rows = hold.map(h => {
+        const c = Data.getCompany(h.s);
+        if (!c || !c.metrics) return null;
+        const price = c.metrics.price, value = price * h.q, cost = h.p ? h.p * h.q : null;
+        return { h, c, price, value, cost, pnl: cost != null ? value - cost : null, day: c.metrics.changePct != null ? value - value / (1 + c.metrics.changePct / 100) : 0 };
+      }).filter(Boolean);
+      const total = rows.reduce((a, r) => a + r.value, 0), invested = rows.filter(r => r.cost != null).reduce((a, r) => a + r.cost, 0);
+      const pnl = rows.filter(r => r.cost != null).reduce((a, r) => a + r.pnl, 0), day = rows.reduce((a, r) => a + r.day, 0);
+      const rupees = v => '₹ ' + num(v, 0);
+      const x = rows.length ? xray(rows) : null, open = Account.isPro();
+      app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Portfolio X-ray</h1><p>' + rows.length + ' holdings' +
+        (user() && Account.canSync() ? ' &middot; synced to your account' : user() ? '' : ' &middot; saved in this browser. <a href="#/login?next=%23%2Fportfolio">Log in</a> to sync across devices') + '</p></div>' +
+        '<div class="head-actions"><label class="btn btn-small" for="pf-file">⤒ Import broker CSV</label><input type="file" id="pf-file" accept=".csv,.txt,text/csv" hidden>' +
+        (rows.length ? '<button class="btn btn-small" id="pf-export">⤓ Export</button><button class="btn btn-small btn-plain" id="pf-clear">Clear all</button>' : '') + '</div></div>' +
+        '<form id="pf-add" class="pf-add"><div class="nav-search"><svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" id="pf-search" placeholder="Company" autocomplete="off"></div>' +
+        '<input type="number" id="pf-qty" min="0" step="any" placeholder="Quantity" required><input type="number" id="pf-avg" min="0" step="any" placeholder="Avg buy price (optional)"><button class="btn btn-primary" type="submit">Add</button></form>' +
+        '<div id="pf-msg"></div>' +
+        (rows.length ? '<div class="stats-row"><div class="stat"><div class="sub">Current value</div><b>' + rupees(total) + '</b></div>' +
+          (invested ? '<div class="stat"><div class="sub">Invested</div><b>' + rupees(invested) + '</b></div><div class="stat"><div class="sub">Total P&amp;L</div><b class="' + signCls(pnl) + '">' + (pnl >= 0 ? '+' : '−') + rupees(Math.abs(pnl)) + ' (' + num(pnl / invested * 100, 1) + '%)</b></div>' : '') +
+          '<div class="stat"><div class="sub">Today</div><b class="' + signCls(day) + '">' + (day >= 0 ? '+' : '−') + rupees(Math.abs(day)) + '</b></div></div>'
+          : '<div class="info-box">Add your holdings above, or import the holdings CSV from your broker (Zerodha Console, Groww, Upstox, Angel One, ICICI Direct and most others work). Nothing leaves your device unless you are logged in, when it syncs to your account.</div>') +
+        '</div>' +
+        (x ? (open ? '<div class="xray-grid">' +
+          '<div class="card"><h3>What the X-ray sees</h3><ul class="xray-notes">' + xrayNotes(x, rows).map(n => '<li class="' + n[0] + '">' + esc(n[1]) + '</li>').join('') + '</ul></div>' +
+          '<div class="card"><h3>Portfolio as one company ' + PRO_TAG + '</h3><div class="stats-row mini">' +
+            [['P/E', x.pe, 1, ''], ['ROCE', x.roce, 1, '%'], ['ROE', x.roe, 1, '%'], ['Div. yield', x.divYield, 2, '%'], ['Debt / equity', x.de, 2, ''], ['Sales growth 3Y', x.salesGrowth3, 1, '%'], ['1Y return', x.ret1y, 1, '%'], ['Sankhyas Score', x.score, 0, ''], ['Red-flag score', x.risk, 0, '']]
+              .map(m => '<div class="stat"><div class="sub">' + m[0] + '</div><b>' + (m[1] == null ? '-' : num(m[1], m[2]) + m[3]) + '</b></div>').join('') +
+          '</div><p class="table-note">Value-weighted averages of your holdings. P/E is total value over total earnings (loss makers left out).</p></div>' +
+          '<div class="card"><h3>Sectors</h3>' + barList(x.sectors.slice(0, 10)) + '</div>' +
+          '<div class="card"><h3>Size &amp; concentration</h3>' + barList(x.caps) +
+            '<div class="stats-row mini" style="margin-top:12px"><div class="stat"><div class="sub">Largest holding</div><b>' + num(x.top1, 1) + '%</b></div><div class="stat"><div class="sub">Top 5</div><b>' + num(x.top5, 1) + '%</b></div><div class="stat"><div class="sub">Effective no. of stocks</div><b>' + num(x.effective, 1) + '</b></div></div></div>' +
+          '</div>' : '<div style="margin-top:16px">' + lockedCard('xray-lock', 'Portfolio X-ray', '<p class="muted">Sector and size mix, concentration, the portfolio\'s combined P/E, ROCE and debt, and holdings with red flags.</p>') + '</div>') : '') +
+        (rows.length ? '<div class="card" style="margin-top:16px"><h3>Holdings</h3><div class="table-wrap"><table class="data"><thead><tr><th class="l">Company</th><th>Qty</th><th>Avg price</th><th>CMP</th><th>Value</th><th>Weight</th><th>P&amp;L %</th><th>Score</th><th>Red flags</th><th></th></tr></thead><tbody>' +
+          rows.sort((a, b) => b.value - a.value).map(r => {
+            const m = r.c.metrics, pl = r.cost ? (r.value / r.cost - 1) * 100 : null;
+            return '<tr><td class="l"><a href="#/company/' + encodeURIComponent(r.c.symbol) + '">' + esc(r.c.name) + '</a><div class="sub">' + esc(r.c.sector || '') + '</div></td><td>' + num(r.h.q, 0) + '</td><td>' + (r.h.p ? num(r.h.p, 2) : '-') + '</td><td>' + num(r.price, 2) + '</td><td>' + num(r.value, 0) +
+              '</td><td>' + num(r.value / total * 100, 1) + '%</td><td class="' + signCls(pl) + '">' + (pl == null ? '-' : num(pl, 1)) + '</td><td>' + (m.sankhyasScore == null ? '-' : num(m.sankhyasScore, 0)) + '</td><td class="' + ((m.riskScore || 0) >= 45 ? 'down' : '') + '">' + (m.riskScore == null ? '-' : num(m.riskScore, 0)) +
+              '</td><td><button class="btn btn-plain btn-small" data-rm="' + esc(r.c.symbol) + '" aria-label="Remove">✕</button></td></tr>';
+          }).join('') + '</tbody></table></div></div>' : '') + '</div>';
+
+      let picked = null;
+      attachSearch($('#pf-search'), c => { picked = c; $('#pf-search').value = c.name; $('#pf-qty').focus(); }, { keepValue: true, footer: false });
+      $('#pf-add').onsubmit = e => {
+        e.preventDefault();
+        const q = parseFloat($('#pf-qty').value), p = parseFloat($('#pf-avg').value);
+        if (!picked) { $('#pf-msg').innerHTML = errBox('Pick a company from the list.'); return; }
+        if (!(q > 0)) return;
+        const list = portfolio(), ex = list.find(h => h.s === picked.symbol);
+        if (ex) { const cost = (ex.p || 0) * ex.q + (p > 0 ? p : 0) * q; ex.q += q; ex.p = ex.p && p > 0 ? cost / ex.q : ex.p || (p > 0 ? p : null); }
+        else list.push({ s: picked.symbol, q, p: p > 0 ? p : null });
+        store.set('portfolio', list);
+        draw();
+      };
+      $('#pf-file').onchange = () => {
+        const f = $('#pf-file').files[0];
+        if (!f) return;
+        f.text().then(t => {
+          const r = parseHoldingsCSV(t, all);
+          if (r.error) { $('#pf-msg').innerHTML = errBox(r.error); return; }
+          if (!r.holdings.length) { $('#pf-msg').innerHTML = errBox('No holdings found in this file.'); return; }
+          const replace = !portfolio().length || confirm('Replace your current holdings with the ' + r.holdings.length + ' in this file? Cancel adds them instead.');
+          const list = replace ? [] : portfolio();
+          r.holdings.forEach(h => { const ex = list.find(x => x.s === h.s); if (ex) { ex.q += h.q; } else list.push(h); });
+          store.set('portfolio', list);
+          draw();
+          $('#pf-msg').innerHTML = okBox('Imported ' + r.holdings.length + ' holdings.' + (r.missed.length ? ' Not matched: ' + esc(r.missed.slice(0, 12).join(', ')) + (r.missed.length > 12 ? '…' : '') + '. Add them by hand.' : ''));
+        });
+      };
+      $$('[data-rm]').forEach(b => b.onclick = () => { store.set('portfolio', portfolio().filter(h => h.s !== b.dataset.rm)); draw(); });
+      if ($('#pf-clear')) $('#pf-clear').onclick = () => { if (confirm('Remove all holdings?')) { store.set('portfolio', []); draw(); } };
+      if ($('#pf-export')) $('#pf-export').onclick = () => downloadCSV('sankhyas-portfolio.csv', [['Symbol', 'Quantity', 'Avg price', 'CMP', 'Value']].concat(rows.map(r => [r.c.symbol, r.h.q, r.h.p || '', r.price, Math.round(r.value)])));
+    };
+    draw();
+  }
+
+  /* ---------- Alerts: email, Telegram, WhatsApp ----------
+     Rules live in public.alerts; the dispatch-alerts Edge Function checks them after every data
+     refresh and sends each event once (public.alert_log). */
+  const ALERT_KINDS = [
+    ['results', 'Quarterly results announced', 'company'],
+    ['red_flags', 'Red-flag score changes', 'company'],
+    ['insider_buy', 'Promoter / insider buying', 'company'],
+    ['order_win', 'New order wins', 'company'],
+    ['bulk_deal', 'Bulk or block deals', 'company'],
+    ['concall', 'Concall transcript or presentation filed', 'company'],
+    ['price_above', 'Price rises above', 'price'],
+    ['price_below', 'Price falls below', 'price'],
+    ['screen', 'New companies match a screen', 'screen']
+  ];
+  const CHANNELS = [['email', 'Email'], ['telegram', 'Telegram'], ['whatsapp', 'WhatsApp']];
+  function alertLabel(a) {
+    const k = ALERT_KINDS.find(x => x[0] === a.kind) || [a.kind, a.kind];
+    const who = a.kind === 'screen' ? 'screen “' + (a.params.name || a.params.query || '') + '”' : a.symbol ? a.symbol : a.params.scope === 'watchlist' ? 'all watchlist companies' : 'any company';
+    return k[1] + (a.kind.indexOf('price_') === 0 ? ' ₹ ' + num(a.params.price, 2) : '') + ' · ' + who;
+  }
+  function pageAlerts(parts, params) {
+    setTitle('Alerts');
+    const u = user(), cfg = Account.config;
+    const shell = body => { app.innerHTML = '<div class="container page"><div class="card" style="max-width:860px;margin:0 auto"><div class="section-head"><div><h1>Alerts ' + PRO_TAG + '</h1><p>Results, red-flag changes, insider buying, order wins and screen matches, sent to you by email, Telegram or WhatsApp.</p></div></div>' + body + '</div></div>'; };
+    if (!Account.cloud) return shell('<div class="info-box">Alerts need Sankhyas accounts, which are not switched on for this site.</div>');
+    if (!u) return shell('<div class="info-box"><a href="#/login?next=%23%2Falerts">Log in</a> or <a href="#/register?next=%23%2Falerts">create a free account</a> to set up alerts.</div>');
+    if (!Account.isPro()) return shell(lockedCard('alerts-lock', 'Alerts', '<p class="muted">Get told the moment results, red flags, insider buying or order wins land for the companies you follow.</p>'));
+    const prof = Account.profile() || {};
+    const screens = store.get('screens', []);
+    const tgOn = !!prof.telegram_chat_id;
+    shell(
+      '<h3>Where to send alerts</h3><div class="channel-grid">' +
+      '<div class="channel"><div><b>✉ Email</b><div class="sub">' + esc(u.email) + '</div></div><label class="switch"><input type="checkbox" id="ch-email"' + (prof.email_alerts !== false ? ' checked' : '') + '><span></span></label></div>' +
+      '<div class="channel"><div><b>✈ Telegram</b><div class="sub">' + (tgOn ? 'Connected' : cfg.telegramBot ? 'Not connected' : 'Coming soon') + '</div></div>' +
+        (tgOn ? '<button class="btn btn-small" id="tg-unlink">Disconnect</button>' : cfg.telegramBot ? '<button class="btn btn-small btn-primary" id="tg-link">Connect</button>' : '') + '</div>' +
+      '<div class="channel channel-wa"><div><b>🟢 WhatsApp</b><div class="sub">' + (cfg.whatsappAlerts ? (prof.whatsapp_opt_in && prof.whatsapp_number ? 'On for +' + esc(prof.whatsapp_number) : 'Off') : 'Save your number now; sending starts soon') + '</div></div>' +
+        '<form id="wa-form" class="wa-form"><input type="tel" id="wa-num" inputmode="tel" placeholder="91 98xxxxxxxx" value="' + esc(prof.whatsapp_number || '') + '"><label class="check-line"><input type="checkbox" id="wa-opt"' + (prof.whatsapp_opt_in ? ' checked' : '') + '> I agree to get alerts on WhatsApp</label><button class="btn btn-small" type="submit">Save</button></form></div>' +
+      '</div><div id="ch-msg"></div>' +
+      '<h3>Quick start</h3><p class="sub">One click alerts for every company in your watchlist (' + watchlist().length + (watchlist().length === 1 ? ' company' : ' companies') + '; alerts follow the list as it changes).</p>' +
+      '<div class="flex flex-wrap" id="quick">' + ['results', 'red_flags', 'insider_buy', 'order_win'].map(k => '<button class="btn btn-small" data-quick="' + k + '">+ ' + ALERT_KINDS.find(x => x[0] === k)[1] + '</button>').join('') + '</div>' +
+      '<h3>New alert</h3><form id="al-form" class="al-form">' +
+      '<label>When<select id="al-kind">' + ALERT_KINDS.map(k => '<option value="' + k[0] + '">' + k[1] + '</option>').join('') + '</select></label>' +
+      '<label id="al-scope-wrap">For<select id="al-scope"><option value="company">One company</option><option value="watchlist">My watchlist</option></select></label>' +
+      '<label id="al-co-wrap">Company<div class="nav-search"><input type="search" id="al-co" placeholder="Search company" autocomplete="off"></div></label>' +
+      '<label id="al-price-wrap" hidden>Price (₹)<input type="number" id="al-price" min="0" step="any"></label>' +
+      '<label id="al-screen-wrap" hidden>Screen<select id="al-screen">' + (screens.length ? screens.map((x, i) => '<option value="' + i + '">' + esc(x.name) + '</option>').join('') : '<option value="">No saved screens yet</option>') + '</select></label>' +
+      '<div class="al-ch">Send by ' + CHANNELS.map(c => '<label class="check-line"><input type="checkbox" name="al-ch" value="' + c[0] + '"' + (c[0] === 'email' || (c[0] === 'telegram' && tgOn) ? ' checked' : '') + '> ' + c[1] + '</label>').join(' ') + '</div>' +
+      '<button class="btn btn-primary" type="submit">Create alert</button></form><div id="al-msg"></div>' +
+      '<h3>Your alerts</h3><div id="al-list" class="muted">Loading…</div>' +
+      '<h3>Recently sent</h3><div id="al-log" class="muted">Loading…</div>' +
+      '<p class="table-note">Alerts are checked after every data refresh (about every 2 hours during market days). Screen alerts tell you about companies that newly match. Not investment advice.</p>'
+    );
+    const msg = (id, html) => { const el = $(id); if (el) el.innerHTML = html; };
+    $('#ch-email').onchange = async e => { const r = await Account.updateProfile({ email_alerts: e.target.checked }); msg('#ch-msg', r.error ? errBox(r.error) : ''); toast(e.target.checked ? 'Email alerts on' : 'Email alerts off'); };
+    if ($('#tg-link')) $('#tg-link').onclick = async () => {
+      const r = await Account.alerts.telegramLink();
+      if (r.error) return msg('#ch-msg', errBox(r.error));
+      window.open('https://t.me/' + encodeURIComponent(cfg.telegramBot) + '?start=' + r.token, '_blank', 'noopener');
+      msg('#ch-msg', okBox('Telegram opened. Press <b>Start</b> in the chat with @' + esc(cfg.telegramBot) + ', then <a href="" id="tg-refresh">refresh this page</a>.'));
+      $('#tg-refresh').onclick = e => { e.preventDefault(); Account.refresh().then(() => pageAlerts()); };
+    };
+    if ($('#tg-unlink')) $('#tg-unlink').onclick = async () => { await Account.alerts.unlinkTelegram(); pageAlerts(); };
+    $('#wa-form').onsubmit = async e => {
+      e.preventDefault();
+      const n = $('#wa-num').value.replace(/[^\d]/g, ''), opt = $('#wa-opt').checked;
+      if (n && !/^\d{10,15}$/.test(n)) return msg('#ch-msg', errBox('Enter the number with country code, e.g. 91 98765 43210.'));
+      const full = n.length === 10 ? '91' + n : n;
+      const r = await Account.updateProfile({ whatsapp_number: full || null, whatsapp_opt_in: !!(full && opt) });
+      msg('#ch-msg', r.error ? errBox(r.error) : okBox('WhatsApp settings saved.'));
+    };
+    const channels = () => $$('input[name=al-ch]:checked').map(x => x.value);
+    let picked = params && params.s && Data.exists(params.s.toUpperCase()) ? Data.getCompany(params.s.toUpperCase()) : null;
+    if (picked) $('#al-co').value = picked.name + ' (' + picked.symbol + ')';
+    attachSearch($('#al-co'), c => { picked = c; $('#al-co').value = c.name + ' (' + c.symbol + ')'; }, { keepValue: true, footer: false });
+    const syncForm = () => {
+      const k = ALERT_KINDS.find(x => x[0] === $('#al-kind').value);
+      $('#al-scope-wrap').hidden = k[2] !== 'company';
+      $('#al-co-wrap').hidden = k[2] === 'screen' || (k[2] === 'company' && $('#al-scope').value === 'watchlist');
+      $('#al-price-wrap').hidden = k[2] !== 'price';
+      $('#al-screen-wrap').hidden = k[2] !== 'screen';
+    };
+    $('#al-kind').onchange = syncForm; $('#al-scope').onchange = syncForm; syncForm();
+    const loadList = async () => {
+      const list = await Account.alerts.list();
+      const el = $('#al-list');
+      if (!el) return;
+      el.classList.remove('muted');
+      el.innerHTML = list.length ? '<ul class="alert-list">' + list.map(a => '<li class="' + (a.active ? '' : 'off') + '"><div><b>' + esc(alertLabel(a)) + '</b><div class="sub">' + a.channels.map(c => (CHANNELS.find(x => x[0] === c) || [c, c])[1]).join(', ') + '</div></div>' +
+        '<div class="flex"><label class="switch" title="On / off"><input type="checkbox" data-toggle-alert="' + a.id + '"' + (a.active ? ' checked' : '') + '><span></span></label><button class="btn btn-plain btn-small" data-del-alert="' + a.id + '" aria-label="Delete">✕</button></div></li>').join('') + '</ul>'
+        : '<p class="muted">No alerts yet. Use Quick start or create one above.</p>';
+      $$('[data-toggle-alert]', el).forEach(cb => cb.onchange = () => Account.alerts.update(+cb.dataset.toggleAlert, { active: cb.checked }).then(loadList));
+      $$('[data-del-alert]', el).forEach(b => b.onclick = () => Account.alerts.remove(+b.dataset.delAlert).then(loadList));
+    };
+    const add = async rule => {
+      if (!rule.channels.length) return msg('#al-msg', errBox('Pick at least one way to send the alert.'));
+      const r = await Account.alerts.add(rule);
+      msg('#al-msg', r.error ? errBox(r.error) : '');
+      if (!r.error) { toast('Alert created'); loadList(); }
+    };
+    $$('[data-quick]').forEach(b => b.onclick = () => add({ kind: b.dataset.quick, symbol: null, params: { scope: 'watchlist' }, channels: channels() }));
+    $('#al-form').onsubmit = e => {
+      e.preventDefault();
+      const k = ALERT_KINDS.find(x => x[0] === $('#al-kind').value);
+      const rule = { kind: k[0], symbol: null, params: {}, channels: channels() };
+      if (k[2] === 'screen') {
+        const sc = screens[+$('#al-screen').value];
+        if (!sc) return msg('#al-msg', errBox('Save a screen first (Screens → run a query → Save), then pick it here.'));
+        rule.params = { name: sc.name, query: sc.query };
+      } else if (k[2] === 'price') {
+        const pr = parseFloat($('#al-price').value);
+        if (!picked) return msg('#al-msg', errBox('Pick a company.'));
+        if (!(pr > 0)) return msg('#al-msg', errBox('Enter a price.'));
+        rule.symbol = picked.symbol; rule.params = { price: pr };
+      } else if ($('#al-scope').value === 'watchlist') rule.params = { scope: 'watchlist' };
+      else if (!picked) return msg('#al-msg', errBox('Pick a company.'));
+      else rule.symbol = picked.symbol;
+      add(rule);
+    };
+    loadList();
+    Account.alerts.log().then(list => {
+      const el = $('#al-log');
+      if (!el) return;
+      el.innerHTML = list.length ? '<ul class="act-list">' + list.map(x => '<li><span class="sub">' + new Date(x.sent_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + '</span> ' + esc(x.message) + '</li>').join('') + '</ul>' : 'Nothing sent yet.';
+    });
+  }
+
   /* ---------- Auth ---------- */
   const GOOGLE_ICON = '<svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>';
+  const SOCIAL = [
+    ['google', 'Google', GOOGLE_ICON],
+    ['azure', 'Microsoft', '<svg width="16" height="16" viewBox="0 0 23 23" aria-hidden="true"><path fill="#f35325" d="M1 1h10v10H1z"/><path fill="#81bc06" d="M12 1h10v10H12z"/><path fill="#05a6f0" d="M1 12h10v10H1z"/><path fill="#ffba08" d="M12 12h10v10H12z"/></svg>'],
+    ['apple', 'Apple', '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16.4 12.6c0-2.5 2-3.7 2.1-3.8-1.2-1.7-3-1.9-3.6-2-1.5-.2-3 .9-3.8.9-.8 0-2-.9-3.3-.8-1.7 0-3.3 1-4.1 2.5-1.8 3.1-.5 7.6 1.3 10.1.8 1.2 1.8 2.6 3.1 2.5 1.3-.1 1.7-.8 3.2-.8s1.9.8 3.2.8c1.4 0 2.2-1.2 3-2.5.9-1.4 1.3-2.8 1.3-2.8s-2.4-1-2.4-4.1zM14 5.2c.7-.8 1.1-1.9 1-3-1 0-2.1.7-2.8 1.5-.6.7-1.2 1.8-1 2.9 1 .1 2.1-.6 2.8-1.4z"/></svg>'],
+    ['github', 'GitHub', '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0a8 8 0 0 0-2.5 15.6c.4 0 .5-.2.5-.4v-1.5c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.1-.5.1-.5.8.1 1.2.8 1.2.8.7 1.3 1.9.9 2.4.7 0-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-4 0-.9.3-1.6.8-2.1-.1-.2-.4-1 .1-2.1 0 0 .7-.2 2.2.8a7.5 7.5 0 0 1 4 0c1.5-1 2.2-.8 2.2-.8.4 1.1.2 1.9.1 2.1.5.6.8 1.3.8 2.1 0 3.1-1.9 3.8-3.6 4 .3.3.6.8.6 1.5v2.2c0 .2.1.5.6.4A8 8 0 0 0 8 0z"/></svg>'],
+    ['twitter', 'X', '<svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M18.2 2h3.4l-7.4 8.5L23 22h-6.8l-5.3-7-6.1 7H1.4l7.9-9L1 2h7l4.8 6.4L18.2 2zm-1.2 18h1.9L7.1 3.9H5.1L17 20z"/></svg>']
+  ];
   const errBox = m => '<div class="error-box">' + esc(m) + '</div>';
   const okBox = m => '<div class="ok-box">' + m + '</div>';
   function authPage(isRegister, params) {
@@ -1826,19 +2388,39 @@
     if (user()) { location.hash = next; return; }
     app.innerHTML = '<div class="container page"><div class="card auth-card"><h1>' + (isRegister ? 'Create a free account' : 'Welcome back') + '</h1>' +
       '<p class="muted" style="text-align:center">' + (isRegister ? 'Save screens, follow companies and unlock Sankhyas Pro.' : 'Login to your Sankhyas account') + '</p>' +
-      (Account.cloud ? '<button class="btn btn-google" id="google-btn" type="button">' + GOOGLE_ICON + ' Continue with Google</button><div class="or-line"><span>or</span></div>' : '') +
+      (Account.cloud ? '<div id="social-btns" class="social-btns"></div><div class="or-line"><span>or</span></div>' : '') +
       '<form id="auth-form">' + (isRegister ? '<div class="field"><label for="a-name">Full name</label><input type="text" id="a-name" autocomplete="name" required></div>' : '') +
       '<div class="field"><label for="a-email">Email</label><input type="email" id="a-email" autocomplete="email" required></div>' +
       '<div class="field"><label for="a-pass">Password</label><input type="password" id="a-pass" minlength="' + (Account.cloud ? 8 : 6) + '" autocomplete="' + (isRegister ? 'new-password' : 'current-password') + '" required></div>' +
       (!isRegister && Account.cloud ? '<p class="sub" style="text-align:right;margin:-8px 0 12px"><a href="#/forgot">Forgot password?</a></p>' : '') +
-      '<div id="auth-err">' + (Account.error ? errBox(Account.error) : '') + '</div><button class="btn btn-primary" style="width:100%;justify-content:center" type="submit">' + (isRegister ? 'Create account' : 'Login') + '</button></form>' +
+      '<div id="auth-err">' + (Account.error ? errBox(Account.error) : '') + '</div><button class="btn btn-primary" style="width:100%;justify-content:center" type="submit">' + (isRegister ? 'Create account' : 'Login') + '</button>' +
+      (Account.cloud ? '<button class="btn btn-plain" id="magic-btn" type="button" style="width:100%;justify-content:center;margin-top:8px">✉ Email me a one-time login link instead</button>' : '') + '</form>' +
       '<p class="sub" style="text-align:center;margin-top:16px">' + (isRegister ? 'Already have an account? <a href="#/login' + (params.next ? '?next=' + encodeURIComponent(params.next) : '') + '">Login</a>'
         : 'New to Sankhyas? <a href="#/register' + (params.next ? '?next=' + encodeURIComponent(params.next) : '') + '">Create an account</a>') + '</p>' +
       '<p class="table-note" style="text-align:center">' + (Account.cloud ? 'By continuing you agree to the <a href="#/terms">Terms</a> and <a href="#/privacy">Privacy policy</a>.' : 'Your account is saved in this browser.') + '</p></div></div>';
-    if ($('#google-btn')) $('#google-btn').onclick = async () => {
+    if ($('#social-btns')) {
+      Account.providers().then(on => {
+        const el = $('#social-btns');
+        if (!el) return;
+        // Google is always offered unless the server says it is off; the others only when switched on
+        const list = SOCIAL.filter(x => on[x[0]] || (x[0] === 'google' && on.google !== false));
+        el.innerHTML = list.map(x => '<button class="btn btn-google" type="button" data-provider="' + x[0] + '">' + x[2] + ' Continue with ' + x[1] + '</button>').join('');
+        $$('[data-provider]', el).forEach(b => b.onclick = async () => {
+          try { sessionStorage.setItem('sankhyas_next', next); } catch (e) { /* ignore */ }
+          const r = await Account.oauth(b.dataset.provider);
+          if (r.error) $('#auth-err').innerHTML = errBox(r.error);
+        });
+      });
+    }
+    if ($('#magic-btn')) $('#magic-btn').onclick = async () => {
+      const email = $('#a-email').value.trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { $('#auth-err').innerHTML = errBox('Enter your email above first.'); $('#a-email').focus(); return; }
       try { sessionStorage.setItem('sankhyas_next', next); } catch (e) { /* ignore */ }
-      const r = await Account.google();
-      if (r.error) $('#auth-err').innerHTML = errBox(r.error);
+      $('#magic-btn').disabled = true;
+      const r = await Account.magicLink(email);
+      $('#magic-btn').disabled = false;
+      if (r.error) { $('#auth-err').innerHTML = errBox(r.error); return; }
+      $('#auth-form').outerHTML = okBox('Check your inbox: we sent a login link to <b>' + esc(email) + '</b>. Open it on this device to sign in. No password needed.');
     };
     $('#auth-form').onsubmit = async e => {
       e.preventDefault();
@@ -2021,8 +2603,20 @@
   renderAuth();
   app.innerHTML = '<div class="container page muted">Loading market data…</div>';
   let booted = false;
+  let syncedFor = null;
+  function syncOnLogin() {
+    const u = user();
+    if (!u || !Account.canSync() || syncedFor === u.id) { if (!u) syncedFor = null; return; }
+    syncedFor = u.id;
+    Sync.pull().then(changed => {
+      if (!changed) return;
+      const p0 = parseHash().parts[0] || '';
+      if (['watchlist', 'screens', 'portfolio', 'account', 'company'].indexOf(p0) >= 0) { routeKeepScroll = p0 === 'company'; route(); }
+    });
+  }
   Account.onChange(() => {
     if (!booted) return;
+    syncOnLogin();
     renderAuth();
     const p0 = parseHash().parts[0] || '';
     if (['account', 'premium', 'login', 'register'].indexOf(p0) >= 0) route();
@@ -2039,5 +2633,12 @@
     }
     window.addEventListener('hashchange', route);
     route();
+    syncOnLogin();
+    // bring changes made on other devices when the tab comes back into view
+    let lastPull = Date.now();
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden || !user() || !Account.canSync() || Date.now() - lastPull < 60e3) return;
+      lastPull = Date.now(); syncedFor = null; syncOnLogin();
+    });
   });
 })();

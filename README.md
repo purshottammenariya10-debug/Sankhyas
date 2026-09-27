@@ -104,6 +104,29 @@ python3 -m http.server 8000
 - Yahoo's terms allow personal use only. A commercial site should license data from an authorised vendor.
 - Without any data files, the site falls back to deterministic **sample** data for 50 companies, and the top banner says so.
 
+## Accounts, sync, alerts and portfolio
+
+- **Login**:
+  - email and password, a one-time email link, and Google, GitHub, Microsoft, Apple or X;
+  - each provider button appears once the provider is switched on in Supabase;
+  - accounts run on Supabase (see `docs/ACCOUNTS_ALERTS_SETUP.md`).
+- **Sync across devices**: the watchlist, saved screens, notes, portfolio and chart preferences are stored in the `user_data` table when logged in.
+  - The newer copy wins.
+  - The first login on a device merges both sides.
+- **Alerts** (`#/alerts`): results, red-flag changes, insider buying, order wins, bulk/block deals, concalls, price levels and screen matches.
+  - They are sent by email (Resend), Telegram (bot) or WhatsApp (Cloud API template).
+  - The `dispatch-alerts` Edge Function sends them after each data refresh.
+- **Portfolio X-ray** (`#/portfolio`): add holdings by hand or import a broker holdings CSV (Zerodha, Groww, Upstox and others). It shows:
+  - value and P&L;
+  - sector and market-cap mix;
+  - concentration;
+  - the portfolio's combined P/E, ROCE and debt;
+  - holdings with red flags.
+- **Company page**:
+  - candlestick price chart (real OHLC for about the last 2 years, weekly or monthly candles for long ranges, and a Line toggle);
+  - **Trades** (Shareholding): insider trades, bulk deals, block deals and SAST trades, grouped by month, with *Hide small quantities*;
+  - **Corporate actions** (Balance Sheet): equity history, preferential issues, rights, mergers, splits and bonus, dividends and buybacks.
+
 ## Structure
 
 ```
