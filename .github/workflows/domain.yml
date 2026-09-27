@@ -1,0 +1,53 @@
+# Points sankhyas.com at GitHub Pages. Run it from Actions -> "Connect custom domain" -> Run workflow.
+# It always reports where the domain's DNS is hosted and what it points at now. With the
+# CLOUDFLARE_API_TOKEN secret (a Cloudflare API token with the "Edit zone DNS" template for the
+# domain), it also replaces the apex and www records with GitHub Pages ones (DNS only, grey cloud).
+name: Connect custom domain
+
+on:
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: Domain to connect
+        default: sankhyas.com
+
+permissions:
+  contents: read
+
+jobs:
+  dns:
+    runs-on: ubuntu-latest
+    env:
+      DOMAIN: ${{ github.event.inputs.domain || 'sankhyas.com' }}
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      PAGES_HOST: ${{ github.repository_owner }}.github.io
+    steps:
+      - name: Where the DNS is hosted now
+        run: |
+          echo "== NS";  dig +short NS "$DOMAIN"
+          echo "== A";   dig +short A "$DOMAIN"
+          echo "== AAAA"; dig +short AAAA "$DOMAIN"
+          echo "== www"; dig +short CNAME "www.$DOMAIN"; dig +short A "www.$DOMAIN"
+          echo "== registrar"; whois "$DOMAIN" 2>/dev/null | grep -iE "registrar:|registrar url|name server" | head -8 || true
+          echo "== HTTP"; curl -sI -m 15 "http://$DOMAIN" | head -5 || true
+
+      - name: Set GitHub Pages records on Cloudflare
+        if: env.CF_TOKEN != ''
+        run: |
+          set -euo pipefail
+          api() { curl -sS -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" "$@"; }
+          ZONE=$(api "https://api.cloudflare.com/client/v4/zones?name=$DOMAIN" | jq -r '.result[0].id // empty')
+          if [ -z "$ZONE" ]; then echo "The token cannot see a Cloudflare zone for $DOMAIN."; exit 1; fi
+          # remove existing apex/www A, AAAA and CNAME records
+          for NAME in "$DOMAIN" "www.$DOMAIN"; do
+            for ID in $(api "https://api.cloudflare.com/client/v4/zones/$ZONE/dns_records?name=$NAME&per_page=100" | jq -r '.result[] | select(.type=="A" or .type=="AAAA" or .type=="CNAME") | .id'); do
+              api -X DELETE "https://api.cloudflare.com/client/v4/zones/$ZONE/dns_records/$ID" | jq -r '"deleted \(.result.id // .errors)"'
+            done
+          done
+          for IP in 185.199.108.153 185.199.109.153 185.199.110.153 185.199.111.153; do
+            api -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE/dns_records" \
+              -d "{\"type\":\"A\",\"name\":\"$DOMAIN\",\"content\":\"$IP\",\"ttl\":1,\"proxied\":false}" | jq -r '"A \(.result.content // .errors)"'
+          done
+          api -X POST "https://api.cloudflare.com/client/v4/zones/$ZONE/dns_records" \
+            -d "{\"type\":\"CNAME\",\"name\":\"www.$DOMAIN\",\"content\":\"$PAGES_HOST\",\"ttl\":1,\"proxied\":false}" | jq -r '"CNAME www \(.result.content // .errors)"'
+          echo "Done. The next site deploy detects the new DNS and switches the site to https://$DOMAIN/."
