@@ -81,6 +81,13 @@ jobs:
         # reports) for the next batch of companies until all NSE companies are covered.
         run: python scripts/fetch_filings.py --max-backfill "${{ github.event.schedule == '17 */2 * * *' && '80' || github.event.inputs.max_backfill || '300' }}"
 
+      - name: Shareholding pattern and quarterly results (NSE)
+        if: github.event_name != 'push'
+        continue-on-error: true
+        # quarterly shareholding (promoter / FII / DII / public / pledge) and results for the verdict
+        # cards; companies that just filed results are refreshed first
+        run: python scripts/fetch_nse_extra.py --max-results "${{ github.event.schedule == '17 */2 * * *' && '150' || '400' }}" --max-shp "${{ github.event.schedule == '17 */2 * * *' && '120' || '300' }}" --max-shp-xbrl "${{ github.event.schedule == '17 */2 * * *' && '300' || '900' }}"
+
       - name: Bulk and block deals (NSE daily files)
         if: github.event_name != 'push'
         continue-on-error: true
@@ -109,6 +116,8 @@ jobs:
           mkdir -p _site/data
           [ -d data/yahoo ] && cp -r data/yahoo _site/data/ || true
           [ -d data/filings ] && cp -r data/filings _site/data/ || true
+          [ -d data/shp ] && cp -r data/shp _site/data/ || true
+          [ -d data/results ] && cp -r data/results _site/data/ || true
           du -sh _site
 
       # Accounts and payments: public keys come from repository variables (Settings > Secrets and

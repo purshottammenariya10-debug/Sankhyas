@@ -27,9 +27,11 @@ const KEYS = Screener.RATIOS.map(r => r.key).concat(['change', 'changePct', 'qtr
 const round = v => (v == null || !Number.isFinite(v) ? null : Number(v.toPrecision(6)));
 
 const index = fs.existsSync(path.join(dir, 'index.json')) ? JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')) : {};
-const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !['index.json', 'metrics.json', 'calendar.json', 'activity.json'].includes(f));
+const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !['index.json', 'metrics.json', 'calendar.json', 'activity.json', 'results.json'].includes(f));
 const companies = [];
 let skipped = 0;
+const latestResults = [];
+const readJSON = f => { try { return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : null; } catch (e) { return null; } };
 
 // bulk and block deals (scripts/fetch_deals.py)
 const dealsFile = path.join(root, 'data', 'deals', 'deals.json');
@@ -93,6 +95,20 @@ for (const f of files) {
         if (g.score != null) c.metrics.guidanceScore = g.score;
       } catch (e) { /* keep the numbers-only score */ }
     }
+    // NSE shareholding pattern and quarterly results (scripts/fetch_nse_extra.py)
+    const shp = readJSON(path.join(root, 'data', 'shp', c.symbol + '.json'));
+    const hs = shp && Insights.holdingStats(shp);
+    if (hs) {
+      Object.assign(c.metrics, { promoter: hs.promoter, fii: hs.fii, dii: hs.dii, pledged: hs.pledge, promoterChg1q: hs.promoterChg1q, fiiChg1q: hs.fiiChg1q,
+        diiChg1q: hs.diiChg1q, fiiChg4q: hs.fiiChg4q, fiiUpQtrs: hs.fiiUpQtrs, holdersChg1q: hs.holdersChg1q });
+    }
+    const res = readJSON(path.join(root, 'data', 'results', c.symbol + '.json'));
+    const rv = res && Insights.resultsVerdict(res);
+    if (rv) {
+      c.metrics.resVerdict = rv.verdict === 'Strong' ? 1 : rv.verdict === 'Weak' ? -1 : 0;
+      latestResults.push({ s: c.symbol, n: c.name, qe: rv.qe, q: rv.label, f: rv.filed, v: rv.verdict, cons: rv.cons ? 1 : 0, sales: rv.cur.sales, op: rv.cur.op, opm: rv.cur.opm, np: rv.cur.np, eps: rv.cur.eps,
+        sy: rv.yoy.sales, py: rv.yoy.np, sq: rv.qoq.sales, pq: rv.qoq.np, mc: c.metrics.marketCap || 0 });
+    }
     salesBy[c.symbol] = c.metrics.sales;
     const m = {};
     for (const k of KEYS) { const v = round(c.metrics[k]); if (v != null) m[k] = v; }
@@ -113,6 +129,15 @@ companies.sort((a, b) => (b.m.marketCap || 0) - (a.m.marketCap || 0));
 const out = { source: 'Yahoo Finance', updated: index.updated || new Date().toISOString(), liveOnly: index.liveOnly !== false, companies };
 fs.writeFileSync(path.join(dir, 'metrics.json'), JSON.stringify(out));
 console.log(`metrics.json: ${companies.length} companies (${skipped} skipped), ${(fs.statSync(path.join(dir, 'metrics.json')).size / 1e6).toFixed(2)} MB`);
+
+// latest quarterly results with the Sankhyas verdict, newest filing first (results page, alerts, cards)
+{
+  const when = r => { const t = Date.parse((r.f || '').replace(/-/g, ' ')); return Number.isFinite(t) ? t : Date.parse(r.qe); };
+  const recent = latestResults.filter(r => Date.now() - Date.parse(r.qe) < 200 * 864e5).sort((a, b) => when(b) - when(a) || b.mc - a.mc).slice(0, 1500);
+  recent.forEach(r => { for (const k of Object.keys(r)) if (typeof r[k] === 'number') r[k] = round(r[k]); });
+  fs.writeFileSync(path.join(dir, 'results.json'), JSON.stringify({ updated: new Date().toISOString(), results: recent }));
+  console.log(`results.json: ${recent.length} companies with NSE quarterly results (${recent.filter(r => r.v === 'Strong').length} strong, ${recent.filter(r => r.v === 'Weak').length} weak)`);
+}
 
 // ---------- results calendar: upcoming board meetings from exchange filings ----------
 const MON = /(\d{1,2})(?:st|nd|rd|th)?[-\s]([A-Za-z]{3,9})[-,\s]+(\d{4})|([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})/i;

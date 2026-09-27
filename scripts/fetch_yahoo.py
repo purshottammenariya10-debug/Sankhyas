@@ -363,7 +363,7 @@ def main(argv=None):
         update_prices(yf, [e for e in entries if e["symbol"] not in refreshed])
 
     # keep previously fetched files for symbols that failed this run
-    existing = sorted(p.stem for p in OUT.glob("*.json") if p.stem not in ("index", "metrics"))
+    existing = sorted(p.stem for p in OUT.glob("*.json") if p.stem not in ("index", "metrics", "calendar", "activity", "results"))
     index = {
         "source": "Yahoo Finance",
         "updated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),

@@ -136,6 +136,33 @@
     if (format === 'story') moreStory(f, c, y + 2 * h + 90);
     return f.cv;
   };
+  // results-day verdict from NSE quarterly results (c._res)
+  T.verdict = async (c, format) => {
+    const v = c._res && window.Insights ? Insights.resultsVerdict(c._res) : null;
+    if (!v) return T.results(c, format);
+    const col = v.verdict === 'Strong' ? C.up : v.verdict === 'Weak' ? C.down : C.amber;
+    const f = await frame(format, 'RESULTS · ' + v.label.toUpperCase());
+    let y = heading(f, c.name, subOf(c));
+    y += 20;
+    f.ctx.fillStyle = col;
+    f.ctx.globalAlpha = 0.16;
+    f.ctx.beginPath(); f.ctx.roundRect ? f.ctx.roundRect(70, y, f.W - 140, 150, 24) : f.ctx.rect(70, y, f.W - 140, 150); f.ctx.fill();
+    f.ctx.globalAlpha = 1;
+    text(f.ctx, v.verdict + ' quarter', 110, y + 78, 64, col, 800);
+    text(f.ctx, v.basis === 'YoY' ? 'Compared with the same quarter last year' : 'Compared with the previous quarter', 110, y + 124, 28, C.ink2, 500);
+    y += 170;
+    const w = (f.W - 140 - 30) / 2, h = 150;
+    const g = x => (ok(x) ? pct(x) + ' ' + v.basis : '');
+    const gc = x => (ok(x) ? (x >= 0 ? C.up : C.down) : C.ink2);
+    const cmp = v.basis === 'YoY' ? v.yoy : v.qoq;
+    tile(f.ctx, 70, y, w, h, 'Revenue', cr(v.cur.sales), g(cmp.sales), gc(cmp.sales));
+    tile(f.ctx, 70 + w + 30, y, w, h, 'Net profit', cr(v.cur.np), g(cmp.np), gc(cmp.np));
+    tile(f.ctx, 70, y + h + 20, w, h, v.bank ? 'EPS' : 'Operating margin', v.bank ? '₹' + fmt(v.cur.eps, 2) : fmt(v.cur.opm, 1) + '%',
+      v.bank ? g(cmp.eps) : ok(cmp.opm) ? (cmp.opm >= 0 ? '+' : '') + fmt(cmp.opm, 1) + ' pts' : '', v.bank ? gc(cmp.eps) : gc(cmp.opm));
+    tile(f.ctx, 70 + w + 30, y + h + 20, w, h, 'EPS', '₹' + fmt(v.cur.eps, 2), g(cmp.eps), gc(cmp.eps));
+    if (format === 'story') moreStory(f, c, y + 2 * h + 90);
+    return f.cv;
+  };
   T.snapshot = async (c, format) => {
     const m = c.metrics;
     const f = await frame(format, 'STOCK SNAPSHOT');
@@ -227,7 +254,12 @@
         '#Sankhyas ' + tagOf(d.theme.name) + 'Stocks #StockMarketIndia #NSE #Investing #ThemeInvesting';
     }
     const c = d, m = c.metrics, sym = tagOf(c.symbol);
-    if (kind === 'results') {
+    if (kind === 'verdict' && c._res && window.Insights) {
+      const v = Insights.resultsVerdict(c._res);
+      if (v) return (v.verdict === 'Strong' ? '🟢 ' : v.verdict === 'Weak' ? '🔴 ' : '🟡 ') + c.name + ' ' + v.label + ' results: ' + v.verdict + '\n\n' + v.points.map(p => '• ' + p).join('\n') + tail +
+        '#Sankhyas ' + sym + ' #QuarterlyResults #Earnings #StockMarketIndia #NSE';
+    }
+    if (kind === 'results' || kind === 'verdict') {
       return '📊 ' + c.name + ' results (' + (c.lastQuarter || (c.quarters || []).slice(-1)[0] || 'latest quarter') + ')\n\n' +
         '• Revenue: ' + cr(m.qtrSales) + ' (' + pct(m.qtrSalesVar) + ' YoY)\n• Net profit: ' + cr(m.qtrProfit) + ' (' + pct(m.qtrProfitVar) + ' YoY)\n• EPS: ₹' + fmt(m.qtrEps, 2) + tail +
         '#Sankhyas ' + sym + ' #QuarterlyResults #Earnings #StockMarketIndia #NSE #BSE';
@@ -267,7 +299,7 @@
   }
 
   window.Cards = {
-    kinds: { results: 'Results card', snapshot: 'Company snapshot', redflags: 'Red-flag scan', listing: 'New listing performance', theme: 'Theme leaderboard' },
+    kinds: { verdict: 'Results verdict', results: 'Results card', snapshot: 'Company snapshot', redflags: 'Red-flag scan', listing: 'New listing performance', theme: 'Theme leaderboard' },
     render: (kind, data, format) => T[kind](data, format === 'story' ? 'story' : 'square'),
     caption, download, share
   };

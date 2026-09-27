@@ -403,7 +403,7 @@
       b.textContent = now ? '✓ Following' : '+ Follow';
     };
     $('#export-btn').onclick = () => exportCompany(c);
-    $('#share-btn').onclick = () => openCardModal(c.listed && c.listPrice != null ? ['results', 'snapshot', 'redflags', 'listing'] : ['results', 'snapshot', 'redflags'], () => Promise.resolve(c), c.symbol);
+    $('#share-btn').onclick = () => openCardModal((c._res ? ['verdict'] : []).concat(c.listed && c.listPrice != null ? ['results', 'snapshot', 'redflags', 'listing'] : ['results', 'snapshot', 'redflags']), () => Promise.resolve(c), c.symbol);
     $$('[data-view]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); routeKeepScroll = true; location.hash = a.getAttribute('href'); }));
 
     // sub nav
@@ -452,6 +452,17 @@
         if (token !== navToken || !act) return;
         c._activity = act;
         refreshInsights(c);
+      });
+      Data.loadResults(sym).then(r => {
+        if (token !== navToken || !r || !(r.quarters || []).length) return;
+        c._res = r;
+        refreshInsights(c);
+      });
+      Data.loadShareholding(sym).then(sh => {
+        if (token !== navToken || !sh || !(sh.quarters || []).some(q => q.fii != null)) return;
+        c._shp = sh;
+        const el = $('#sh-table');
+        if (el) el.innerHTML = shareholdingTable(c, !!$('#sh-tabs [data-sh=y].active'));
       });
     }
     bindNotes(c);
@@ -639,8 +650,32 @@
       }
     }
     return '<section class="section card" id="insights"><div class="section-head"><div><h2>Sankhyas Insights</h2><p>Sankhyas Score, forensic red flags, management\'s promises vs delivery, order wins, smart-money activity and what changed this quarter. ' + note + '</p></div></div>' +
-      scoreCard(c, open) + '<div class="ins-grid">' + cards + '</div></section>';
+      resultsCard(c) + scoreCard(c, open) + '<div class="ins-grid">' + cards + '</div></section>';
   }
+  const VERDICT_CLS = { Strong: 'v-strong', Mixed: 'v-mixed', Weak: 'v-weak' };
+  function resultsCard(c) {
+    const v = c._res && Insights.resultsVerdict(c._res);
+    if (!v) return '';
+    const g = x => (x == null || !isFinite(x) ? '<span class="muted">-</span>' : '<span class="' + signCls(x) + '">' + (x >= 0 ? '+' : '−') + num(Math.abs(x), 1) + '%</span>');
+    const pts = x => (x == null || !isFinite(x) ? '<span class="muted">-</span>' : '<span class="' + signCls(x) + '">' + (x >= 0 ? '+' : '−') + num(Math.abs(x), 1) + ' pts</span>');
+    const row = (label, cur, key, fmt) => '<tr><td class="l">' + label + '</td><td>' + fmt(cur) + '</td><td>' + (key === 'opm' ? pts(v.yoy.opm) : g(v.yoy[key])) + '</td><td>' + (key === 'opm' ? pts(v.qoq.opm) : g(v.qoq[key])) + '</td></tr>';
+    const crv = x => (x == null ? '-' : num(x, 0));
+    const filed = v.filed ? v.filed.replace(/\s+\d{2}:\d{2}(:\d{2})?$/, '') : '';
+    return '<div class="res-card ' + VERDICT_CLS[v.verdict] + '"><div class="res-head"><div><div class="sub">Latest results · ' + esc(v.label) + (filed ? ' · filed ' + esc(filed) : '') + (v.cons ? '' : ' · standalone') + '</div>' +
+      '<h3>' + esc(v.label) + ' results: <span class="res-verdict">' + v.verdict + '</span></h3></div>' +
+      '<button class="btn btn-small" type="button" data-verdict-card="' + esc(c.symbol) + '">↗ Share card</button></div>' +
+      '<ul class="res-points">' + v.points.map(p => '<li>' + esc(p) + '</li>').join('') + '</ul>' +
+      '<div class="table-wrap"><table class="data res-table"><thead><tr><th class="l">₹ Cr</th><th>' + esc(v.label) + '</th><th>YoY</th><th>QoQ</th></tr></thead><tbody>' +
+      row('Revenue', v.cur.sales, 'sales', crv) + (v.bank ? '' : row('Operating profit', v.cur.op, 'op', crv) + row('OPM %', v.cur.opm, 'opm', x => (x == null ? '-' : num(x, 1) + '%'))) +
+      row('Net profit', v.cur.np, 'np', crv) + row('EPS (₹)', v.cur.eps, 'eps', x => (x == null ? '-' : num(x, 2))) + '</tbody></table></div>' +
+      '<p class="table-note">From the company\'s results filed with NSE (' + (v.cons ? 'consolidated' : 'standalone') + '). The verdict weighs revenue and profit growth against the same quarter last year and the change in margin; it is not a recommendation.</p></div>';
+  }
+  document.addEventListener('click', e => {
+    const b = e.target.closest && e.target.closest('[data-verdict-card]');
+    if (!b || !currentCompany) return;
+    const c = currentCompany;
+    openCardModal(['verdict', 'results', 'snapshot'], () => Promise.resolve(c), c.symbol);
+  });
   function refreshInsights(c) {
     const el = $('#insights');
     if (!el) return;
@@ -1002,6 +1037,7 @@
   }
 
   function shareholdingTable(c, yearly) {
+    if (c._shp) return nseShareholdingTable(c, yearly);
     const s = c.sh;
     let idx = s.promoters.map((_, i) => i);
     if (yearly) idx = idx.filter(i => /^Mar/.test(c.shQuarters[i]) || i === idx.length - 1);
@@ -1021,6 +1057,25 @@
       { label: 'Public', values: pick(s.public), type: 'pct', dec: 2 },
       { label: 'No. of Shareholders', values: pick(s.holders) }
     ], { highlightLast: true });
+  }
+  function nseShareholdingTable(c, yearly) {
+    let Q = c._shp.quarters.filter(q => q.fii != null).slice().sort((a, b) => (a.q < b.q ? -1 : 1));
+    if (yearly) Q = Q.filter((q, i) => q.q.slice(5, 7) === '03' || i === Q.length - 1);
+    const heads = Q.map(q => monYear(new Date(q.q + 'T00:00:00')));
+    const col = k => Q.map(q => q[k]);
+    const hs = Insights.holdingStats(c._shp);
+    const chg = (v, label) => (v == null || Math.abs(v) < 0.01 ? '' : '<span class="' + (v > 0 ? 'up' : 'down') + '">' + label + ' ' + (v > 0 ? '+' : '−') + num(Math.abs(v), 2) + ' pts</span>');
+    const moves = hs ? [chg(hs.promoterChg1q, 'Promoters'), chg(hs.fiiChg1q, 'FIIs'), chg(hs.diiChg1q, 'DIIs')].filter(Boolean) : [];
+    return statementTable(heads, [
+      { label: 'Promoters', values: col('promoter'), type: 'pct', dec: 2 },
+      { label: 'FIIs', values: col('fii'), type: 'pct', dec: 2 },
+      { label: 'DIIs', values: col('dii'), type: 'pct', dec: 2 },
+      { label: 'Government', values: col('gov'), type: 'pct', dec: 2 },
+      { label: 'Public', values: col('public'), type: 'pct', dec: 2 },
+      { label: 'No. of Shareholders', values: col('holders') }
+    ].concat(Q.some(q => q.pledge > 0) ? [{ label: 'Pledged (% of promoter)', values: col('pledge'), type: 'pct', dec: 2 }] : []), { highlightLast: true }) +
+      '<p class="table-note">' + (moves.length ? 'Last quarter: ' + moves.join(' &middot; ') + '. ' : '') + (hs && hs.fiiUpQtrs >= 2 ? 'FIIs have raised their stake for ' + hs.fiiUpQtrs + ' quarters in a row. ' : '') +
+      'Source: shareholding pattern filed with NSE.</p>';
   }
   function shareholdingSection(c) {
     return '<section class="section card" id="shareholding"><div class="section-head"><div><h2>Shareholding Pattern</h2><p>Numbers in percentages</p></div>' +
@@ -1717,8 +1772,31 @@
   }
 
   /* ---------- Results ---------- */
-  function pageResults() {
+  function pageResults(parts, params) {
     setTitle('Latest results');
+    params = params || {};
+    app.innerHTML = LOADING;
+    const token = navToken;
+    Data.loadResultsList().then(list => {
+      if (token !== navToken) return;
+      if (!list || !(list.results || []).length) return pageResultsEstimated();
+      const f = params.v || 'all';
+      const rows = list.results.filter(r => f === 'all' || r.v.toLowerCase() === f);
+      const count = v => list.results.filter(r => r.v === v).length;
+      const fmtF = r => (r.f ? r.f.replace(/\s+\d{2}:\d{2}(:\d{2})?$/, '') : r.q);
+      app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Latest Results</h1><p>Quarterly results filed with NSE, newest first, with the Sankhyas verdict &middot; ₹ Cr, consolidated where filed</p></div>' +
+        '<div class="tabs">' + [['all', 'All ' + list.results.length], ['strong', 'Strong ' + count('Strong')], ['mixed', 'Mixed ' + count('Mixed')], ['weak', 'Weak ' + count('Weak')]]
+          .map(t => '<a class="btn btn-small' + (f === t[0] ? ' active' : '') + '" href="#/results' + (t[0] === 'all' ? '' : '?v=' + t[0]) + '">' + t[1] + '</a>').join('') + '</div></div>' +
+        '<div class="table-wrap"><table class="data list"><thead><tr><th>S.No.</th><th>Name</th><th>Filed</th><th>Quarter</th><th>Verdict</th><th>Sales</th><th>YoY %</th><th>Op. Profit</th><th>OPM %</th><th>Net Profit</th><th>YoY %</th><th>EPS</th><th></th></tr></thead><tbody>' +
+        rows.slice(0, 500).map((r, i) => '<tr><td>' + (i + 1) + '.</td><td><a href="#/company/' + encodeURIComponent(r.s) + '">' + esc(r.n) + '</a></td><td>' + esc(fmtF(r)) + '</td><td>' + esc(r.q) + (r.cons ? '' : ' <span class="sub">SA</span>') + '</td>' +
+          '<td><span class="v-pill ' + VERDICT_CLS[r.v] + '">' + r.v + '</span></td><td>' + num(r.sales, 0) + '</td><td class="' + signCls(r.sy) + '">' + num(r.sy, 1) + '</td><td>' + num(r.op, 0) + '</td><td>' + num(r.opm, 1) +
+          '</td><td>' + num(r.np, 0) + '</td><td class="' + signCls(r.py) + '">' + num(r.py, 1) + '</td><td>' + num(r.eps, 2) + '</td>' +
+          '<td><button class="btn btn-small btn-plain card-btn" data-card="' + esc(r.s) + '" title="Share results card">↗ Card</button></td></tr>').join('') + '</tbody></table></div>' +
+        '<p class="table-note">Verdict: Strong, Mixed or Weak from revenue and profit growth vs the same quarter last year and the change in operating margin. SA = standalone figures. Not investment advice.</p></div></div>';
+      $$('[data-card]').forEach(b => b.onclick = () => openCardModal(['verdict', 'results', 'snapshot'], () => Data.loadCompany(b.dataset.card).then(c => Data.loadResults(b.dataset.card).then(r => { if (r) c._res = r; return c; })), b.dataset.card));
+    });
+  }
+  function pageResultsEstimated() {
     const all = Data.listCompanies().slice().sort((a, b) => resultDate(b) - resultDate(a) || (b.metrics.marketCap || 0) - (a.metrics.marketCap || 0)).slice(0, 300);
     app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Latest Results</h1><p>Latest reported quarter &middot; figures in Rs. Cr.' + (Data.liveInfo().count ? ' &middot; result dates are estimated' : '') + '</p></div></div>' +
       '<div class="table-wrap"><table class="data list"><thead><tr><th>S.No.</th><th>Name</th><th>Result date</th><th>Sales</th><th>YoY %</th><th>Operating Profit</th><th>OPM %</th><th>Net Profit</th><th>YoY %</th><th>EPS</th><th></th></tr></thead><tbody>' +

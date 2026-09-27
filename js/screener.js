@@ -48,7 +48,14 @@
     ['FII holding', 'fii', '%', 'FII Hold %', ''],
     ['DII holding', 'dii', '%', 'DII Hold %', ''],
     ['Public holding', 'public', '%', 'Public Hold %', ''],
-    ['Pledged percentage', 'pledged', '%', 'Pledged %', ''],
+    ['Pledged percentage', 'pledged', '%', 'Pledged %', 'Promoter shares pledged or encumbered, as a % of the promoter holding'],
+    ['Change in promoter holding', 'promoterChg1q', '%', 'Chg Prom Hold %', 'Change in promoter holding over the last quarter (percentage points)'],
+    ['Change in FII holding', 'fiiChg1q', '%', 'Chg FII Hold %', 'Change in FII holding over the last quarter (percentage points)'],
+    ['Change in DII holding', 'diiChg1q', '%', 'Chg DII Hold %', 'Change in DII holding over the last quarter (percentage points)'],
+    ['Change in FII holding 1Year', 'fiiChg4q', '%', 'Chg FII Hold 1Yr %', 'Change in FII holding over the last four quarters (percentage points)'],
+    ['FII holding rising quarters', 'fiiUpQtrs', '', 'FII up Qtrs', 'Consecutive quarters in which FIIs raised their holding'],
+    ['Change in number of shareholders', 'holdersChg1q', '%', 'Chg Holders %', 'Change in the number of shareholders over the last quarter'],
+    ['Results verdict', 'resVerdict', '', 'Results', 'Latest quarterly results: 1 = strong, 0 = mixed, -1 = weak (Sankhyas verdict)'],
     ['Number of Shareholders', 'shareholders', '', 'No. Eq. Shareholders', ''],
     ['Free cash flow last year', 'fcf', 'Rs.Cr.', 'Free Cash Flow Rs.Cr.', 'CFO - capex'],
     ['Cash from operations last year', 'cfo', 'Rs.Cr.', 'CF Opr Rs.Cr.', ''],
@@ -154,6 +161,9 @@
     { slug: 'order-book-momentum', name: 'Order Book Momentum', desc: 'Companies announcing large order wins relative to their size in the last year.', query: 'Order wins 12M > 1000 AND Return on capital employed > 12' },
     { slug: 'clean-compounders', name: 'Clean Compounders', desc: 'Growing, high-return companies with few forensic red flags.', query: 'Red flag score < 15 AND Return on capital employed > 18 AND Sales growth 5Years > 12' },
     { slug: 'sme-stocks', name: 'SME Stocks', desc: 'Profitable, growing companies listed on the NSE Emerge SME platform.', query: 'SME listed = 1 AND Return on capital employed > 15 AND Sales growth 3Years > 15' },
+    { slug: 'fii-accumulation', name: 'FIIs Buying', desc: 'Foreign investors have raised their stake for three quarters in a row.', query: 'FII holding rising quarters >= 3 AND Market Capitalization > 500' },
+    { slug: 'promoter-buying', name: 'Promoters Buying', desc: 'Promoters raised their holding last quarter and have not pledged shares.', query: 'Change in promoter holding > 0.5 AND Pledged percentage < 1' },
+    { slug: 'strong-results', name: 'Strong Latest Results', desc: 'Companies whose latest quarterly results the Sankhyas verdict rates strong.', query: 'Results verdict = 1 AND Market Capitalization > 500' },
     { slug: 'psu-stocks', name: 'Cash Rich Companies', desc: 'Companies generating strong free cash flow.', query: 'Free cash flow last year > 2000 AND Debt to equity < 0.3' }
   ];
 

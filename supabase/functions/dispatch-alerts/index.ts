@@ -40,11 +40,17 @@ Deno.serve(async (req) => {
   const { data: rules } = await db.from('alerts').select('id, user_id, kind, symbol, params, channels, created_at').eq('active', true);
   if (!rules || !rules.length) return json({ rules: 0 });
 
-  const [activity, latest, metrics] = await Promise.all([
+  const [activity, latest, metrics, resultsList] = await Promise.all([
     getJSON('data/yahoo/activity.json').catch(() => ({ orders: [], disclosures: [], deals: [] })),
     getJSON('data/filings/latest.json').catch(() => ({ items: [] })),
     getJSON('data/yahoo/metrics.json').catch(() => ({ companies: [] })),
+    getJSON('data/yahoo/results.json').catch(() => ({ results: [] })),
   ]);
+  // latest quarterly results with the Sankhyas verdict, by symbol
+  const RES: Record<string, any> = {};
+  for (const r of resultsList.results || []) RES[r.s] = r;
+  const filedAt = (f: string) => { const t = Date.parse(String(f || '').replace(/-/g, ' ')); return Number.isFinite(t) ? t : 0; };
+  const pctTxt = (v: number | null) => (v == null ? '' : (v >= 0 ? 'up ' : 'down ') + Math.abs(v).toFixed(Math.abs(v) < 10 ? 1 : 0) + '%');
   const M: Record<string, any> = {};
   const names: Record<string, string> = {};
   for (const c of metrics.companies || []) { M[c.s] = c.m || {}; names[c.s] = c.n || c.s; }
@@ -75,7 +81,15 @@ Deno.serve(async (req) => {
     const items = latest.items || [];
     switch (r.kind) {
       case 'results':
-        for (const a of items) if (syms.has(a.s) && a.k === 'results' && fresh(a.d, r)) evs.push({ key: a.u, sym: a.s, text: `${nm(a.s)} filed its financial results. ${a.u}` });
+        for (const s of syms) {
+          const x = RES[s];
+          if (x && filedAt(x.f) && fresh(new Date(filedAt(x.f)).toISOString(), r)) {
+            const parts = [`Revenue ${pctTxt(x.sy)} YoY to ₹ ${Math.round(x.sales).toLocaleString('en-IN')} Cr`, x.np != null ? `net profit ${pctTxt(x.py)} YoY to ₹ ${Math.round(x.np).toLocaleString('en-IN')} Cr` : ''].filter(Boolean);
+            evs.push({ key: `res|${s}|${x.qe}`, sym: s, text: `${nm(s)} ${x.q} results: ${x.v}. ${parts.join(', ')}. ${SITE}#/company/${encodeURIComponent(s)}` });
+          }
+        }
+        // companies without parsed results yet: the filing itself
+        for (const a of items) if (syms.has(a.s) && !RES[a.s] && a.k === 'results' && fresh(a.d, r)) evs.push({ key: a.u, sym: a.s, text: `${nm(a.s)} filed its financial results. ${a.u}` });
         break;
       case 'concall':
         for (const a of items) if (syms.has(a.s) && ['transcript', 'ppt', 'audio'].includes(a.k) && fresh(a.d, r))

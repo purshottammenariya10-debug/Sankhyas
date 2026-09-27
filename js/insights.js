@@ -308,5 +308,63 @@
   const scoreOf = sym => scoreMap[sym] || null;
   const scoreBand = v => (v == null ? '' : v >= 75 ? 'Strong' : v >= 55 ? 'Good' : v >= 40 ? 'Average' : 'Weak');
 
-  window.Insights = { computeScores, scoreOf, scoreBand, PILLARS, redFlags, guidance, whatChanged, redFlagsMd, guidanceMd, whatChangedMd, METRIC_LABEL };
+  /* ---------- results-day verdict (quarterly results from NSE integrated filings) ---------- */
+  const quarterLabel = qe => {
+    const d = new Date(qe + 'T00:00:00'), m = d.getMonth();
+    const q = { 5: 1, 8: 2, 11: 3, 2: 4 }[m];
+    return q ? 'Q' + q + ' FY' + String((m === 2 ? d.getFullYear() : d.getFullYear() + 1) % 100).padStart(2, '0') : qe;
+  };
+  const growth = (a, b) => (ok(a) && ok(b) && b !== 0 ? (a - b) / Math.abs(b) * 100 : null);
+  /** Verdict on the latest quarter vs the same quarter last year (and the previous quarter). */
+  function resultsVerdict(doc) {
+    const Q = ((doc && doc.quarters) || []).filter(q => q && q.qe).slice().sort((a, b) => (a.qe < b.qe ? 1 : -1));
+    if (!Q.length) return null;
+    const cur = Q[0];
+    const back = months => { const d = new Date(cur.qe + 'T00:00:00'); d.setDate(15); d.setMonth(d.getMonth() - months); const k = d.toISOString().slice(0, 7); return Q.find(q => q.qe.slice(0, 7) === k) || null; };
+    const prev = back(3), yago = back(12);
+    const profit = q => (q ? (ok(q.np_owners) ? q.np_owners : q.np) : null);
+    const opm = q => (q && ok(q.op) && q.sales ? q.op / q.sales * 100 : null);
+    const pick = q => ({ sales: q && q.sales, op: q && q.op, np: profit(q), eps: q && q.eps, opm: opm(q) });
+    const c = pick(cur), p = pick(prev), y = pick(yago);
+    const epsG = (a, b) => (ok(a) && ok(b) && a > 0 && b > 0 ? growth(a, b) : null);
+    const yoy = { sales: growth(c.sales, y.sales), op: growth(c.op, y.op), np: growth(c.np, y.np), eps: epsG(c.eps, y.eps), opm: ok(c.opm) && ok(y.opm) ? c.opm - y.opm : null };
+    const qoq = { sales: growth(c.sales, p.sales), op: growth(c.op, p.op), np: growth(c.np, p.np), eps: epsG(c.eps, p.eps), opm: ok(c.opm) && ok(p.opm) ? c.opm - p.opm : null };
+    const cmp = yago ? yoy : qoq, basis = yago ? 'YoY' : 'QoQ';
+    let score = 0;
+    const sG = cmp.sales, pG = cmp.np;
+    if (ok(sG)) score += sG >= 15 ? 2 : sG >= 5 ? 1 : sG <= -15 ? -2 : sG <= -5 ? -1 : 0;
+    const base = profit(yago || prev);
+    if (ok(c.np) && c.np < 0) score -= ok(base) && base < 0 ? 1 : 3;
+    else if (ok(pG)) score += pG >= 20 ? 2 : pG >= 5 ? 1 : pG <= -20 ? -2 : pG <= -5 ? -1 : 0;
+    if (ok(cmp.opm) && !cur.bank) score += cmp.opm >= 1 ? 1 : cmp.opm <= -1.5 ? -1 : 0;
+    const verdict = score >= 3 ? 'Strong' : score <= -2 ? 'Weak' : 'Mixed';
+    const cr = v => '₹ ' + Math.round(v).toLocaleString('en-IN') + ' Cr';
+    const chg = (v, unit) => (v >= 0 ? 'up ' : 'down ') + Math.abs(v).toFixed(Math.abs(v) < 10 ? 1 : 0) + (unit || '%');
+    const points = [];
+    if (ok(c.sales)) points.push('Revenue ' + (ok(sG) ? chg(sG) + ' ' + basis + ' to ' : 'of ') + cr(c.sales) + (yago && ok(qoq.sales) ? ' (' + chg(qoq.sales) + ' QoQ)' : ''));
+    if (ok(c.np)) points.push(c.np < 0 ? 'Net loss of ' + cr(-c.np) + (ok(profit(yago)) ? ' against ' + (profit(yago) < 0 ? 'a loss' : 'a profit') + ' of ' + cr(Math.abs(profit(yago))) + ' a year ago' : '')
+      : 'Net profit ' + (ok(pG) ? chg(pG) + ' ' + basis + ' to ' : 'of ') + cr(c.np));
+    if (ok(c.opm) && !cur.bank) points.push('Operating margin ' + c.opm.toFixed(1) + '%' + (ok(cmp.opm) ? ', ' + chg(cmp.opm, ' pts') + ' from ' + (yago ? 'a year ago' : 'last quarter') : ''));
+    if (ok(cur.exceptional) && cur.exceptional !== 0 && ok(cur.pbt) && Math.abs(cur.exceptional) >= Math.abs(cur.pbt) * 0.05)
+      points.push('Includes a one-off ' + (cur.exceptional < 0 ? 'charge' : 'gain') + ' of ' + cr(Math.abs(cur.exceptional)) + ' (exceptional items)');
+    if (ok(c.eps)) points.push('EPS ₹ ' + c.eps.toFixed(2) + (ok(cmp.eps) ? ' (' + chg(cmp.eps) + ' ' + basis + ')' : ''));
+    return { qe: cur.qe, label: quarterLabel(cur.qe), filed: cur.filed || '', cons: !!cur.cons, bank: !!cur.bank, cur: c, prev: prev && p, yago: yago && y,
+      yoy, qoq, basis, score, verdict, points };
+  }
+
+  /* ---------- shareholding trend (NSE shareholding pattern, latest first) ---------- */
+  function holdingStats(doc) {
+    const Q = ((doc && doc.quarters) || []).filter(q => q && q.q && q.fii != null).slice().sort((a, b) => (a.q < b.q ? 1 : -1));
+    if (!Q.length) return null;
+    const d = (k, i) => (Q[i] && ok(Q[i][k]) && ok(Q[0][k]) ? Q[0][k] - Q[i][k] : null);
+    let fiiUp = 0;
+    for (let i = 0; i + 1 < Q.length && Q[i].fii > Q[i + 1].fii; i++) fiiUp++;
+    let diiUp = 0;
+    for (let i = 0; i + 1 < Q.length && Q[i].dii > Q[i + 1].dii; i++) diiUp++;
+    return { latest: Q[0], promoter: Q[0].promoter, fii: Q[0].fii, dii: Q[0].dii, pledge: Q[0].pledge, holders: Q[0].holders,
+      promoterChg1q: d('promoter', 1), promoterChg4q: d('promoter', 4), fiiChg1q: d('fii', 1), fiiChg4q: d('fii', 4), diiChg1q: d('dii', 1), diiChg4q: d('dii', 4),
+      holdersChg1q: Q[1] && Q[0].holders && Q[1].holders ? (Q[0].holders / Q[1].holders - 1) * 100 : null, fiiUpQtrs: fiiUp, diiUpQtrs: diiUp };
+  }
+
+  window.Insights = { computeScores, scoreOf, scoreBand, PILLARS, redFlags, guidance, whatChanged, redFlagsMd, guidanceMd, whatChangedMd, METRIC_LABEL, resultsVerdict, holdingStats, quarterLabel };
 })();

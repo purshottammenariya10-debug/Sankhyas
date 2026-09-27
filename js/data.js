@@ -577,6 +577,23 @@
     if (mode === 'sample') return Promise.resolve(null);
     return getJSON('data/filings/' + encodeURIComponent(String(sym).toUpperCase()) + '.json').catch(() => null);
   }
+  /** NSE shareholding pattern by quarter (scripts/fetch_nse_extra.py), or null. */
+  function loadShareholding(sym) {
+    if (mode === 'sample') return Promise.resolve(null);
+    return getJSON('data/shp/' + encodeURIComponent(String(sym).toUpperCase()) + '.json').catch(() => null);
+  }
+  /** NSE quarterly results (integrated filings), or null. */
+  function loadResults(sym) {
+    if (mode === 'sample') return Promise.resolve(null);
+    return getJSON('data/results/' + encodeURIComponent(String(sym).toUpperCase()) + '.json').catch(() => null);
+  }
+  /** Latest results across companies with the Sankhyas verdict (scripts/build_index.mjs). Cached. */
+  let _resultsList = null;
+  function loadResultsList() {
+    if (mode === 'sample') return Promise.resolve(null);
+    if (!_resultsList) _resultsList = getJSON('data/yahoo/results.json').catch(() => null);
+    return _resultsList;
+  }
   /** Upcoming board meetings (results calendar) built by scripts/build_index.mjs. */
   function loadCalendar() {
     if (mode === 'sample') return Promise.resolve(null);
@@ -632,7 +649,7 @@
 
   window.Data = {
     TODAY, YEARS, QUARTERS: QUARTERS.map(q => q.label), SH_QUARTERS,
-    init, getCompany: getAny, loadCompany, loadFilings, loadCalendar, loadActivity, latestFilings, listCompanies, search, median, cagr,
+    init, getCompany: getAny, loadCompany, loadFilings, loadCalendar, loadActivity, loadShareholding, loadResults, loadResultsList, latestFilings, listCompanies, search, median, cagr,
     mode: () => mode,
     liveInfo: () => ({
       count: mode === 'summary' ? Object.keys(summaries).length : Object.keys(live).length,
