@@ -2576,10 +2576,18 @@
 
   function pageAbout() {
     setTitle('About');
-    app.innerHTML = '<div class="container page"><div class="card" style="max-width:820px;margin:0 auto"><h1>About Sankhyas</h1>' +
-      '<p>Sankhyas (संख्या, "numbers") is India\'s AI-Powered Financial Research Terminal. It brings company financials, ratios, charts, peers, shareholding and documents into a single page, and lets you screen the market with plain-English queries.</p>' +
+    app.innerHTML = '<div class="container page"><article class="card about-page">' +
+      '<p class="about-kicker">About Sankhyas</p>' +
+      '<h1>A world of financial information. A clearer perspective.</h1>' +
+      '<p class="about-lead">The markets move on information. Sound investment decisions depend on understanding it.</p>' +
+      '<p><b>Sankhyas is being built to bridge that gap.</b> An AI-powered financial research platform, Sankhyas brings together financial analysis, business context, and technology to help investors see the bigger picture—and examine the details that matter.</p>' +
+      '<p>Founded by <b>CA Purshottam Menariya</b> and <b>CA Devanshu Soni</b>, Sankhyas draws on a foundation in accounting, financial analysis, and equity research. Our approach begins with a simple belief: every company deserves to be understood beyond its share price.</p>' +
+      '<p>We are building a connected research experience that brings company financials, corporate disclosures, market developments, and AI-assisted insights into one intuitive platform. By making complex information easier to navigate and interpret, we aim to give investors more time for thoughtful analysis.</p>' +
+      '<p>Our ambition is to make rigorous financial research accessible to individual investors and experienced professionals alike. Whether exploring a business, evaluating its performance, or questioning an investment thesis, Sankhyas is designed to support informed, independent thinking.</p>' +
+      '<div class="about-mission"><div class="sub">Our mission</div><p>To turn financial complexity into clarity—and enable investors to build conviction through understanding.</p></div>' +
+      '<p class="about-tagline">Sankhyas — Understand the business. See beyond the numbers.</p>' +
       '<h3>Data</h3><p>Market data comes from Yahoo Finance (end of day), and filings, concalls and annual reports come from NSE and BSE.</p>' +
-      '<h3>Disclaimer</h3><p class="muted">Nothing on this site is investment advice. Please consult a SEBI registered advisor before investing.</p></div></div>';
+      '<h3>Disclaimer</h3><p class="muted">Nothing on this site is investment advice. Please consult a SEBI registered advisor before investing.</p></article></div>';
   }
 
   function pageNotFound() {
