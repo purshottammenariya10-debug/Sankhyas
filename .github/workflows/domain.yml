@@ -29,7 +29,8 @@ jobs:
           echo "== AAAA"; dig +short AAAA "$DOMAIN"
           echo "== www"; dig +short CNAME "www.$DOMAIN"; dig +short A "www.$DOMAIN"
           echo "== registrar"; whois "$DOMAIN" 2>/dev/null | grep -iE "registrar:|registrar url|name server" | head -8 || true
-          echo "== HTTP"; curl -sI -m 15 "http://$DOMAIN" | head -5 || true
+          echo "== HTTP (where the domain goes today)"; curl -sIL -m 20 "http://$DOMAIN" | grep -iE "^(HTTP|location|server)" || true
+          echo "== page title"; curl -sL -m 20 "http://$DOMAIN" | grep -io "<title>[^<]*" | head -1 || true
 
       - name: Set GitHub Pages records on Cloudflare
         if: env.CF_TOKEN != ''
