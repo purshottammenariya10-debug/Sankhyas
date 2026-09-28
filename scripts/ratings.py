@@ -154,6 +154,10 @@ def rating_details(text, title=""):
             break
     if not act:
         act = first_action(body[:1200])
+    # a withdrawal is what the letter is about when the title or opening says so
+    wrx = dict(ACTIONS)["withdraw"]
+    if re.search(wrx, (title or "") + " " + body[:800], re.I):
+        act = "withdraw"
     t = (title or "").lower()
     if re.search(r"credit rating\s*-\s*new\b|\bassigned\b|new (?:credit )?rating", t) and act in (None, "upgrade", "downgrade") and not out.get("from"):
         act = "assign"
