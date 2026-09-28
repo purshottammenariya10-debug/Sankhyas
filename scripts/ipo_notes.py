@@ -362,7 +362,8 @@ def basis(pages):
     if m and not re.search(r"no (?:listed )?(?:industry )?peers|not have any (?:listed )?(?:industry )?peers|no comparable", f[f.find(flat(text[m.start():m.start() + 80])):][:1500], re.I):
         seg = flat(text[m.start():m.start() + 6000])
         ident = re.search(r"identified as (.{10,800}?)\s*\(the “?(?:Industry )?Peers|peers? (?:of our Company )?(?:are|include)\s*(.{10,600}?)\.", seg, re.I)
-        names = re.split(r",\s*|\s+and\s+", (ident.group(1) or ident.group(2))) if ident else []
+        # "A Limited, B and C Limited and D Ltd": split at commas and at an "and" that follows a company suffix
+        names = re.split(r",\s*(?:and\s+)?|(?<=Limited)\s+and\s+|(?<=Ltd)\s+and\s+|(?<=Ltd\.)\s+and\s+", (ident.group(1) or ident.group(2))) if ident else []
         if not names:
             names = re.findall(r"([A-Z][\w&.'-]*(?:\s+[A-Z(&][\w&.'()-]*){0,6}\s+(?:Limited|Ltd\.?))\s*\*?\s*(?:Consolidated|Standalone)", seg)
         for n in names:
@@ -400,9 +401,11 @@ def objects(pages, unit):
                 continue
             t = re.sub(r"\s*\(\d\)\s*$", "", body[:amt.start()]).strip(" .;:")
             t = re.sub(r"\(\d\)", "", t).strip()
-            if len(t) < 8:
+            if len(t) < 8 or re.search(r"\((?:[A-Z]|[A-Z]\s*=[^)]*)\)\*?$|^Project cost|^Funds? (?:already )?deployed|^Balance|^Estimated utili[sz]ation from|^Total\b|^Gross proceeds|^Less\b", t):
                 continue
-            items.append({"t": t[:220], "cr": cr(num(amt.group(1)), u) if amt.group(1) != "[●]" else None})
+            if any(x["t"].rstrip("^#*") == t.rstrip("^#*") for x in items):
+                break                                  # the same table again (deployment schedule)
+            items.append({"t": t.rstrip("^#*")[:220], "cr": cr(num(amt.group(1)), u) if amt.group(1) != "[●]" else None})
         if len(items) >= 1 and (best is None or len(items) > len(best)):
             best = items
     dbg("objects", best)
