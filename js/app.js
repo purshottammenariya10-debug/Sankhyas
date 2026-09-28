@@ -797,12 +797,13 @@
     const qs = (c._res && c._res.quarters) || [];
     const cur = qs.find(q => q.seg && q.seg.length >= 2);
     if (!cur) return '';
-    const key = n => String(n).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const unent = t => String(t).replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'");
+    const key = n => unent(n).toLowerCase().replace(/[^a-z0-9]/g, '');
     const ya = qs.find(q => q.seg && q.qe.slice(0, 4) === String(+cur.qe.slice(0, 4) - 1) && q.qe.slice(5) === cur.qe.slice(5) && q.cons === cur.cons);
     const old = {};
     (ya ? ya.seg : []).forEach(s => { old[key(s.n)] = s; });
     const tot = cur.seg.reduce((a, s) => a + Math.max(0, s.rev || 0), 0) || 1;
-    const rows = cur.seg.map(s => { const o = old[key(s.n)];
+    const rows = cur.seg.map(s => { const o = old[key(s.n)]; s = Object.assign({}, s, { n: unent(s.n) });
       return Object.assign({}, s, { share: (s.rev || 0) / tot * 100, m: s.rev > 0 && s.ebit != null ? s.ebit / s.rev * 100 : null,
         yoy: o && o.rev > 0 && s.rev != null ? (s.rev / o.rev - 1) * 100 : null, eyoy: o && o.ebit > 0 && s.ebit != null ? (s.ebit / o.ebit - 1) * 100 : null,
         mchg: o && o.rev > 0 && o.ebit != null && s.rev > 0 && s.ebit != null ? s.ebit / s.rev * 100 - o.ebit / o.rev * 100 : null }); })

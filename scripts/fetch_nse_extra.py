@@ -18,6 +18,7 @@ last few days first, then those never fetched, then the stalest.
 """
 import argparse
 import datetime as dt
+import html
 import json
 import re
 import sys
@@ -152,7 +153,7 @@ def parse_results(text):
 
 
 # ---------- business segments (Ind AS 108 segment reporting in the same results file) ----------
-SEG_VERSION = 1
+SEG_VERSION = 2
 SEG_SKIP = re.compile(r"^\s*(?:\(?add\)?|\(?less\)?|total|unallocable|unallocated|inter[- ]?segment|elimination|eliminations|reconcil)", re.I)
 
 
@@ -170,11 +171,14 @@ def parse_segments(f):
         key = (bool(m.group(1)), int(m.group(2)))
         row = by.setdefault(key, {})
         if name == "DescriptionOfReportableSegment":
-            row["n"] = re.sub(r"\s+", " ", val).strip(" .:-")
+            row["n"] = re.sub(r"\s+", " ", html.unescape(val)).strip(" .:-")
         elif name == "SegmentRevenue" or (name == "SegmentRevenueFromOperations" and "v" not in row):
             row["v"] = num(val)
         elif name == "SegmentProfitLossBeforeTaxAndFinanceCosts":
             row["v"] = num(val)
+            row["std"] = True
+        elif key[0] and not row.get("std") and re.match(r"Segment\w*(?:Result|ProfitLoss)", name) and num(val) is not None:
+            row["v"] = num(val)                        # banks and insurers file their segment result under other names
     revs = {r["n"]: r["v"] for (fin, k), r in sorted(by.items()) if not fin and r.get("n") and r.get("v") is not None}
     ebit = {r["n"]: r["v"] for (fin, k), r in sorted(by.items()) if fin and r.get("n") and r.get("v") is not None}
     out = []
