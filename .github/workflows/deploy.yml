@@ -90,6 +90,10 @@ jobs:
 
       - name: IPOs and rights issues (NSE)
         run: python scripts/fetch_ipo.py || echo "IPO data not refreshed"
+      - name: IPO research notes (red herring prospectus digests)
+        continue-on-error: true
+        timeout-minutes: 20
+        run: python scripts/ipo_notes.py --max "${{ github.event.schedule == '17 */2 * * *' && '4' || '10' }}" || echo "IPO notes not refreshed"
       - name: Bulk and block deals (NSE daily files)
         if: github.event_name != 'push'
         continue-on-error: true

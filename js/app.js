@@ -2041,7 +2041,27 @@
 
   /* ---------- IPOs: open & upcoming, recent listings, below issue price, rights issues ---------- */
   const IPO_TABS = [['open', 'Open & upcoming'], ['recent', 'Recent listings'], ['below', 'Below issue price'], ['rights', 'Rights issues']];
+  // listed issues joined with today's prices: listing-day gain and return since the IPO
+  function ipoListed(ipo) {
+    return (ipo ? ipo.past : []).filter(x => x.ld && x.ip).map(x => {
+      const c = Data.getCompany(x.s), m = c ? c.metrics : {};
+      const first = c && c.listPrice != null && (!c.listPriceDate || Math.abs(Date.parse(c.listPriceDate) - Date.parse(x.ld)) < 5 * 864e5) ? c.listPrice : null;
+      // prices are adjusted for later splits and bonuses, the issue price is not: when the first close
+      // is a clean fraction of the issue price (1/2, 1/5, 1/10...), adjust the issue price the same way
+      let ip = x.ip, adj = 0;
+      if (first && x.ip / first > 1.8) {
+        const k = [2, 3, 4, 5, 10, 20, 25, 50].map(k => [k, Math.abs(x.ip / k / first - 1)]).sort((a, b) => a[1] - b[1])[0];
+        if (k[1] < 0.35) { ip = x.ip / k[0]; adj = k[0]; }
+      }
+      return Object.assign({}, x, { c, ipAdj: ip, adj, price: m.price, first, lgain: first ? (first / ip - 1) * 100 : null, ret: m.price ? (m.price / ip - 1) * 100 : null, mc: m.marketCap, pe: m.pe, roce: m.roce });
+    });
+  }
+  // "IIFL Capital Services Limited (formerly known as ...)" -> "iifl capital services"
+  const leadKey = n => String(n || '').toLowerCase().replace(/\(.*?\)/g, ' ').replace(/\b(private|pvt|limited|ltd|llp|company|co|india|the)\b\.?/g, ' ').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const leadList = s => String(s || '').split(/,\s*|\s+and\s+/i).map(x => x.trim()).filter(x => leadKey(x).length > 2);
+
   function pageIPO(parts, params) {
+    if (parts[0]) return pageIPONote(parts[0]);
     setTitle('IPOs');
     const tab = IPO_TABS.some(t => t[0] === params.tab) ? params.tab : 'open';
     const board = params.board || 'all', period = params.period || '1y';
@@ -2065,19 +2085,7 @@
       const tabs = '<div class="ipo-tabs" role="tablist">' + IPO_TABS.map(([k, l]) => '<a role="tab" class="' + (k === tab ? 'active' : '') + '" href="' + link({ tab: k }) + '">' + l +
         (counts[k] ? ' <span class="ipo-count">' + counts[k] + '</span>' : '') + '</a>').join('') + '</div>';
 
-      // listed issues joined with today's prices and ratios
-      const listed = (ipo ? ipo.past : []).filter(x => x.ld && x.ip).map(x => {
-        const c = Data.getCompany(x.s), m = c ? c.metrics : {};
-        const first = c && c.listPrice != null && (!c.listPriceDate || Math.abs(Date.parse(c.listPriceDate) - Date.parse(x.ld)) < 5 * 864e5) ? c.listPrice : null;
-        // prices are adjusted for later splits and bonuses, the issue price is not: when the first close
-        // is a clean fraction of the issue price (1/2, 1/5, 1/10...), adjust the issue price the same way
-        let ip = x.ip, adj = 0;
-        if (first && x.ip / first > 1.8) {
-          const k = [2, 3, 4, 5, 10, 20, 25, 50].map(k => [k, Math.abs(x.ip / k / first - 1)]).sort((a, b) => a[1] - b[1])[0];
-          if (k[1] < 0.35) { ip = x.ip / k[0]; adj = k[0]; }
-        }
-        return Object.assign({}, x, { c, ipAdj: ip, adj, price: m.price, first, lgain: first ? (first / ip - 1) * 100 : null, ret: m.price ? (m.price / ip - 1) * 100 : null, mc: m.marketCap, pe: m.pe, roce: m.roce });
-      });
+      const listed = ipoListed(ipo);
       let body = '';
       if (!ipo) body = '<p class="muted">IPO data appears with the daily data update, from NSE\'s issue lists.</p>';
       else if (tab === 'open') {
@@ -2093,8 +2101,8 @@
           const left = Math.round((Date.parse(x.end) - Date.parse(today)) / 864e5);
           return d(x.start) + ' – ' + d(x.end) + '<div class="sub ' + (left <= 0 ? 'down' : '') + '">' + (left < 0 ? 'closed' : left === 0 ? 'closes today' : 'closes in ' + left + ' day' + (left > 1 ? 's' : '')) + '</div>';
         };
-        const docs = x => [x.rhp && '<a target="_blank" rel="noopener noreferrer" href="' + esc(x.rhp) + '">RHP</a>', x.ratios && '<a target="_blank" rel="noopener noreferrer" href="' + esc(x.ratios) + '">Basis of price</a>'].filter(Boolean).join(' · ');
-        const row = x => '<tr><td class="l ipo-co"><div class="ipo-name">' + esc(x.n) + '</div><div class="sub">' + badge(x) + (x.lead ? ' · ' + esc(x.lead.split(/,| and /)[0]) : '') + '</div></td><td class="l" data-label="Bidding">' + when(x) + '</td><td data-label="Price band">' +
+        const docs = x => [x.note && '<a class="note-link" href="#/ipo/' + encodeURIComponent(x.s) + '">Research note</a>', x.rhp && '<a target="_blank" rel="noopener noreferrer" href="' + esc(x.rhp) + '">RHP</a>', x.ratios && '<a target="_blank" rel="noopener noreferrer" href="' + esc(x.ratios) + '">Basis of price</a>'].filter(Boolean).join(' · ');
+        const row = x => '<tr><td class="l ipo-co"><div class="ipo-name">' + (x.note ? '<a href="#/ipo/' + encodeURIComponent(x.s) + '">' + esc(x.n) + '</a>' : esc(x.n)) + '</div><div class="sub">' + badge(x) + (x.lead ? ' · ' + esc(x.lead.split(/,| and /)[0]) : '') + '</div></td><td class="l" data-label="Bidding">' + when(x) + '</td><td data-label="Price band">' +
           (x.band ? '₹' + num(x.band[0], 0) + (x.band[1] !== x.band[0] ? '–' + num(x.band[1], 0) : '') : '<span class="muted">-</span>') + '</td><td data-label="Min. investment">' + (x.min ? '₹' + num(x.min, 0) + '<div class="sub">' + x.lot + ' shares</div>' : '<span class="muted">-</span>') +
           '</td><td data-label="Issue size ₹ Cr">' + (x.size ? num(x.size, x.size < 100 ? 1 : 0) : '<span class="muted">-</span>') + '</td><td data-label="Listing">' + (x.lst ? (x.lst < today ? '<span class="muted">awaited</span>' : d(x.lst)) : '-') + '</td><td data-label="Subscribed">' + subsCell(x) + '</td><td class="l" data-label="Documents">' + (docs(x) || '<span class="muted">-</span>') + '</td></tr>';
         const group = (title, list, note) => list.length ? '<tr class="ipo-group"><td colspan="8">' + title + ' <span class="sub">' + list.length + (note ? ' · ' + note : '') + '</span></td></tr>' + list.map(row).join('') : '';
@@ -2105,7 +2113,7 @@
             (() => { const t = open.concat(closed).filter(x => x.x != null).sort((a, b) => b.x - a.x)[0]; return t ? num(t.x, 1) + '× subscribed' : ''; })()) + '</div>' +
           '<div class="table-wrap"><table class="data list ipo-table"><thead><tr><th class="l">Company</th><th class="l">Bidding</th><th>Price band</th><th>Min. investment</th><th>Issue size ₹ Cr</th><th>Listing</th><th>Subscribed</th><th class="l">Documents</th></tr></thead><tbody>' +
           (group('Open now', open) + group('Opening soon', up) + group('Closed · awaiting listing', closed) || '<tr><td colspan="8" class="muted" style="text-align:center;padding:24px">No open or upcoming issues right now.</td></tr>') +
-          '</tbody></table></div><p class="table-note">Subscription is the number of times the shares on offer were bid for (tap it for QIB, NII and retail). Listing dates are estimated at three working days after the issue closes. Issue size is at the top of the price band. From NSE, updated with the site data.</p>';
+          '</tbody></table></div><p class="table-note">Subscription is the number of times the shares on offer were bid for (tap it for QIB, NII and retail). Listing dates are estimated at three working days after the issue closes. Issue size is at the top of the price band. Research notes are read from each red herring prospectus. From NSE, updated with the site data.</p>';
       } else if (tab === 'recent' || tab === 'below') {
         const DAYS = { '3m': 92, '6m': 183, '1y': 366, '3y': 1096 };
         const since = new Date(Date.now() - DAYS[tab === 'below' ? '3y' : period] * 864e5).toISOString().slice(0, 10);
@@ -2139,6 +2147,134 @@
         (ipo && ipo.updated ? ' <span class="sub">Updated ' + new Date(ipo.updated).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) + '.</span>' : '') + '</p></div>' +
         '<a class="btn" href="#/studio?kind=listing">↗ Make a post</a></div>' + tabs + body + '</div></div>';
       $$('[data-lcard]').forEach(b => b.onclick = () => openCardModal(['listing', 'snapshot'], () => Data.loadCompany(b.dataset.lcard), b.dataset.lcard));
+    });
+  }
+
+  /* ---------- IPO research note: one page from the red herring prospectus ---------- */
+  function pageIPONote(sym) {
+    setTitle(sym + ' IPO research note');
+    app.innerHTML = LOADING;
+    const token = navToken;
+    Promise.all([Data.loadIPO(), Data.loadIPONote(sym)]).then(([ipo, n]) => {
+      if (token !== navToken) return;
+      const it = ipo ? (ipo.open || []).concat(ipo.upcoming || [], ipo.closed || []).find(x => x.s === sym) || (ipo.past || []).find(x => x.s === sym) : null;
+      const name = (n && n.n) || (it && it.n) || sym;
+      setTitle(name.replace(/ Limited$/i, '') + ' IPO: research note');
+      const back = '<a class="sub" href="#/ipo">← All IPOs</a>';
+      if (!n) {
+        app.innerHTML = '<div class="container page"><div class="card">' + back + '<h1>' + esc(name) + '</h1><p class="muted">' +
+          (it && it.board === 'SME' ? 'Research notes cover mainboard issues; SME issues do not publish their prospectus on NSE in the same way.' : 'The research note for this issue is being prepared from its red herring prospectus. It usually appears within a few hours of the prospectus being filed.') +
+          '</p>' + (it && it.rhp ? '<p><a target="_blank" rel="noopener noreferrer" href="' + esc(it.rhp) + '">Red herring prospectus (NSE) ↗</a></p>' : '') + '</div></div>';
+        return;
+      }
+      const pro = Account.isPro();
+      const today = new Date().toISOString().slice(0, 10);
+      const d = s => (s ? new Date(s + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '-');
+      const pg = p => (p ? ' <span class="note-pg" title="Page of the red herring prospectus">p.' + p + '</span>' : '');
+      const cr = v => (v == null ? '<span class="muted">-</span>' : '₹' + num(v, v < 10 ? 2 : v < 100 ? 1 : 0) + ' Cr');
+      const x = v => (v == null ? '<span class="muted">-</span>' : num(v, v < 10 ? 2 : 1) + '×');
+      const pct = v => (v == null ? '<span class="muted">-</span>' : num(v, 1) + '%');
+      const band = n.band || (it && it.band), upper = band ? band[1] : null;
+      const tile = (label, value, sub) => '<div class="stat"><div class="sub">' + label + '</div><b>' + value + '</b>' + (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div>';
+      const card = (title, body, cls) => '<div class="ins-card ' + (cls || '') + '"><div class="ins-head"><h3>' + title + '</h3></div>' + body + '</div>';
+
+      // the issue at a glance (from NSE's issue list)
+      let when = '';
+      if (it && it.start) when = it.start > today ? 'Opens ' + d(it.start) + ', closes ' + d(it.end) : it.end >= today ? 'Bidding ' + d(it.start) + ' – ' + d(it.end) : 'Closed ' + d(it.end) + (it.ld ? ', listed ' + d(it.ld) : it.lst ? ', listing expected ' + d(it.lst) : '');
+      const head = '<div class="section-head"><div>' + back + '<h1>' + esc(name) + ' <span class="sub">IPO research note</span></h1><p>' + (it && it.board === 'SME' ? '<span class="sme-badge">SME</span> ' : '<span class="board-tag">Mainboard</span> · ') + esc(when) +
+        (n.promoters ? '<br><span class="sub">Promoters: ' + esc(n.promoters.toLowerCase().replace(/\s+,/g, ',').replace(/\b\w/g, c => c.toUpperCase())) + '</span>' : '') + '</p></div>' +
+        '<div class="flex flex-wrap">' + (n.rhp ? '<a class="btn" target="_blank" rel="noopener noreferrer" href="' + esc(n.rhp) + '">RHP ↗</a>' : '') + '</div></div>';
+      const o = n.offer || {}, v = n.val || {};
+      const tiles = '<div class="stats-row">' +
+        tile('Price band', band ? '₹' + num(band[0], 0) + (band[1] !== band[0] ? '–' + num(band[1], 0) : '') : '-', it && it.lot ? it.lot + ' shares a lot · ₹' + num(it.min || it.lot * upper, 0) : '') +
+        tile('Issue size', cr(o.total || (it && it.size)), o.total ? (o.fresh ? 'fresh ' + cr(o.fresh) : '') + (o.fresh && o.ofs ? ' + ' : '') + (o.ofs ? 'OFS ' + cr(o.ofs) : '') : '') +
+        tile('Value at the top of the band', cr(v.mcap), v.ps ? num(v.ps, 1) + '× last year\'s revenue' : '') +
+        tile('P/E at the top of the band', v.pe ? num(v.pe, 1) : '<span class="muted">-</span>', v.ind_pe && v.ind_pe.avg ? 'listed peers average ' + num(v.ind_pe.avg, 1) : v.eps_year ? 'on ' + v.eps_year + ' EPS' : '') +
+        (it && it.x != null ? tile('Subscribed', num(it.x, it.x < 10 ? 2 : 1) + '×', it.subs && it.subs.rii != null ? [['retail', it.subs.rii], ['QIB', it.subs.qib], ['NII', it.subs.nii]].filter(q => q[1] != null).map(q => q[0] + ' ' + num(q[1], 1) + '×').join(' · ') : '') : '') + '</div>';
+
+      // free: what it does, where the money goes (company vs sellers), the numbers
+      const about = n.about && n.about.t ? card('What the company does', '<p>' + esc(n.about.t) + pg(n.about.p) + '</p>' +
+        (n.about.long && n.about.long.length > n.about.t.length + 40 ? '<details class="about-more"><summary>More from the prospectus</summary><p>' + esc(n.about.long) + '</p></details>' : ''), 'note-about') : '';
+      let split = '';
+      if (o.fresh != null || o.ofs != null) {
+        const f = o.fresh || 0, s = o.ofs || 0, t = f + s || 1;
+        split = card('Who gets the money', '<div class="split-bar"><span class="sb-fresh" style="width:' + (f / t * 100).toFixed(1) + '%"></span><span class="sb-ofs" style="width:' + (s / t * 100).toFixed(1) + '%"></span></div>' +
+          '<div class="split-legend"><div><i class="sb-fresh"></i><b>Fresh issue ' + cr(f) + '</b> <span class="sub">' + Math.round(f / t * 100) + '% · new shares; the money goes to the company</span></div>' +
+          '<div><i class="sb-ofs"></i><b>Offer for sale ' + cr(s) + '</b> <span class="sub">' + Math.round(s / t * 100) + '% · existing shareholders sell; the money goes to them</span></div></div>' +
+          (s === 0 ? '<p class="sub">The whole issue is new shares: no existing shareholder is selling.</p>' : f === 0 ? '<p class="sub">The whole issue is an offer for sale: the company raises no money.</p>' : ''), 'note-split');
+      }
+      let fin = '';
+      const k = n.kpi;
+      if (k && k.rev) {
+        const rows = [['Revenue', 'rev', cr], ['EBITDA', 'ebitda', cr], ['EBITDA margin', 'ebitda_m', pct], ['Profit after tax', 'pat', cr], ['Profit margin', 'pat_m', pct], ['Return on equity', 'roe', pct], ['ROCE', 'roce', pct], ['Net debt to equity', 'de', x]]
+          .filter(r => k[r[1]] && k[r[1]].some(v => v != null));
+        const fy = k.periods.map((p, i) => [p, i]).filter(p => /^FY/.test(p[0]));
+        const g = (key) => { if (fy.length < 2 || !k[key]) return null; const a = k[key][fy[0][1]], b = k[key][fy[fy.length - 1][1]], yrs = fy.length - 1; return a > 0 && b > 0 ? (Math.pow(a / b, 1 / yrs) - 1) * 100 : null; };
+        const rg = g('rev'), pgw = g('pat');
+        fin = card('The numbers' + pg(k.p), '<div class="table-wrap"><table class="data"><thead><tr><th class="l"></th>' + k.periods.map(p => '<th>' + esc(p.replace(/^(\w{3}) (\d{4})$/, '$1 $2*')) + '</th>').join('') + '</tr></thead><tbody>' +
+          rows.map(r => '<tr><td class="l">' + r[0] + '</td>' + k[r[1]].map(v => '<td>' + r[2](v) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>' +
+          (rg != null || pgw != null ? '<p class="sub">' + [rg != null && 'Revenue grew ' + num(rg, 0) + '% a year', pgw != null && 'profit ' + num(pgw, 0) + '% a year'].filter(Boolean).join(', ') + ' over ' + fy[fy.length - 1][0] + '–' + fy[0][0] + '.</p>' : '') +
+          (k.periods.some(p => !/^FY/.test(p)) ? '<p class="sub">* Part-year, not annualised.</p>' : ''), 'note-fin');
+      }
+
+      // Pro: what sellers paid, use of money, peers, lead managers, risks, contingent liabilities, auditor
+      const sellers = (n.sellers || []).filter(s => s.waca != null);
+      const sellersCard = sellers.length ? card('What the sellers paid', '<div class="table-wrap"><table class="data"><thead><tr><th class="l">Selling shareholder</th><th>Selling</th><th>Average cost a share</th><th>Top of band vs cost</th></tr></thead><tbody>' +
+        sellers.map(s => '<tr><td class="l">' + esc(s.n) + ' <span class="sub">' + esc(s.type) + '</span></td><td>' + cr(s.cr) + '</td><td>₹' + num(s.waca, s.waca < 10 ? 2 : 0) + '</td><td>' + (upper && s.waca > 0.5 ? x(upper / s.waca) : upper && s.waca <= 0.5 ? '<span class="sub">bought near zero (bonus or founder shares)</span>' : '-') + '</td></tr>').join('') +
+        '</tbody></table></div><p class="sub">Weighted average cost of acquisition, as stated in the price band advertisement.</p>', 'wide') : '';
+      const objs = n.objects && n.objects.list && n.objects.list.length ? card('What the new money is for' + pg(n.objects.p), '<ul class="note-list">' +
+        n.objects.list.map(ob => '<li><span>' + esc(ob.t) + '</span><b>' + (ob.cr != null ? cr(ob.cr) : '<span class="muted">rest</span>') + '</b></li>').join('') + '</ul>' +
+        (o.fresh ? '<p class="sub">Out of the fresh issue of ' + cr(o.fresh) + ', before issue expenses. The offer for sale money goes to the sellers, not the company.</p>' : '')) : '';
+      let peers = '';
+      if (n.peers && n.peers.length) {
+        const all = Data.listCompanies();
+        const key = s => String(s).toLowerCase().replace(/\b(limited|ltd)\b\.?/g, '').replace(/[^a-z0-9]/g, '');
+        const rows = n.peers.map(p => { const k2 = key(p); const c = all.find(c => key(c.name) === k2) || all.find(c => key(c.name).indexOf(k2) === 0 || k2.indexOf(key(c.name)) === 0 && key(c.name).length > 6); return { p, c }; });
+        const pes = rows.map(r => r.c && r.c.metrics.pe).filter(v => v > 0);
+        peers = card('Listed peers (named in the prospectus)', '<div class="table-wrap"><table class="data"><thead><tr><th class="l">Company</th><th>M.Cap ₹ Cr</th><th>P/E</th><th>ROCE</th><th>Sales growth 3Y</th></tr></thead><tbody>' +
+          (v.pe ? '<tr class="note-self"><td class="l"><b>' + esc(name.replace(/ Limited$/i, '')) + '</b> <span class="sub">at the top of the band</span></td><td>' + (v.mcap ? num(v.mcap, 0) : '-') + '</td><td>' + num(v.pe, 1) + '</td><td>' + (k && k.roce && k.roce[k.periods.findIndex(p => /^FY/.test(p))] != null ? num(k.roce[k.periods.findIndex(p => /^FY/.test(p))], 1) + '%' : '-') + '</td><td>-</td></tr>' : '') +
+          rows.map(r => { const m = r.c ? r.c.metrics : null; return '<tr><td class="l">' + (r.c ? '<a href="#/company/' + encodeURIComponent(r.c.symbol) + '">' + esc(r.c.name) + '</a>' : esc(r.p)) + '</td><td>' + (m && m.marketCap ? num(m.marketCap, 0) : '<span class="muted">-</span>') +
+            '</td><td>' + (m && m.pe > 0 ? num(m.pe, 1) : '<span class="muted">-</span>') + '</td><td>' + (m && m.roce != null ? num(m.roce, 1) + '%' : '<span class="muted">-</span>') + '</td><td>' + (m && m.salesGrowth3 != null ? num(m.salesGrowth3, 1) + '%' : '<span class="muted">-</span>') + '</td></tr>'; }).join('') +
+          '</tbody></table></div><p class="sub">Peers as named in the prospectus; their P/E, ROCE and growth are today\'s figures from Sankhyas' + (pes.length ? ' (median P/E ' + num(Data.median(pes), 1) + ')' : '') + '.' +
+          (v.ind_pe && v.ind_pe.avg ? ' The prospectus puts the peer P/E at ' + (v.ind_pe.lo != null ? num(v.ind_pe.lo, 1) + ' to ' + num(v.ind_pe.hi, 1) + ', average ' : '') + num(v.ind_pe.avg, 1) + '.' : '') + '</p>', 'wide');
+      }
+      // lead managers: the record NSE's past listings give us, and the one stated in the advertisement
+      let brlm = '';
+      const leads = leadList(it && it.lead);
+      if (leads.length || n.brlm) {
+        const listed = ipoListed(ipo).filter(y => y.lead && y.s !== sym);
+        const rows = leads.map(l => {
+          const kk = leadKey(l), mine = listed.filter(y => leadList(y.lead).some(z => leadKey(z) === kk));
+          const g = mine.map(y => y.lgain).filter(v => v != null), r = mine.map(y => y.ret).filter(v => v != null);
+          const ad = ((n.brlm && n.brlm.rows) || []).find(b => leadKey(b.n) === kk || leadKey(b.n).indexOf(kk) === 0 || kk.indexOf(leadKey(b.n)) === 0);
+          return '<tr><td class="l">' + esc(l) + '</td><td>' + (ad ? ad.total + ' <span class="sub">(' + ad.below + ' below issue price)</span>' : '<span class="muted">-</span>') + '</td><td>' + (mine.length || '<span class="muted">-</span>') + '</td><td>' +
+            (g.length ? '<span class="' + signCls(Data.median(g)) + '">' + num(Data.median(g), 1) + '%</span>' : '<span class="muted">-</span>') + '</td><td>' + (r.length ? Math.round(r.filter(v => v > 0).length / r.length * 100) + '%' : '<span class="muted">-</span>') + '</td></tr>';
+        });
+        brlm = card('Lead managers\' track record', (n.brlm && n.brlm.all ? '<p>The lead managers handled <b>' + n.brlm.all[0] + '</b> public issues in the past three years; <b>' + n.brlm.all[1] + '</b> closed below the issue price on listing day.</p>' : '') +
+          (rows.length ? '<div class="table-wrap"><table class="data"><thead><tr><th class="l">Lead manager</th><th>Issues, 3 years (their disclosure)</th><th>Listings we track</th><th>Median listing gain</th><th>Above issue price today</th></tr></thead><tbody>' + rows.join('') + '</tbody></table></div>' +
+            '<p class="sub">"Listings we track" are NSE issues from the last three years with this lead manager; the history fills in over the coming days.</p>' : ''), 'wide');
+      }
+      const risks = n.risks && n.risks.length ? card('Risks the company lists first', '<ol class="note-risks">' + n.risks.slice(0, 10).map(r => '<li>' + esc(r) + '</li>').join('') + '</ol><p class="sub">In the order the company states them. The prospectus has the full list.</p>') : '';
+      const checks = [];
+      if (n.contingent && n.contingent.cr != null) {
+        const fyRev = k && k.rev ? k.rev[k.periods.findIndex(p => /^FY/.test(p))] : null;
+        checks.push('<li><b>Contingent liabilities ' + cr(n.contingent.cr) + '</b>' + pg(n.contingent.p) + (v.mcap && n.contingent.cr ? ' <span class="sub">' + num(n.contingent.cr / v.mcap * 100, 1) + '% of the issue-price value' + (fyRev ? ', ' + num(n.contingent.cr / fyRev * 100, 0) + '% of last year\'s revenue' : '') + '</span>' : '') + '</li>');
+      }
+      if (n.quals) checks.push('<li><b>Auditor qualifications:</b> ' + (n.quals.t ? esc(n.quals.t) : 'none that were left out of the restated accounts') + pg(n.quals.p) + '</li>');
+      if (v.ronw_w != null) checks.push('<li><b>Return on net worth, weighted over three years:</b> ' + num(v.ronw_w, 1) + '%</li>');
+      if (v.nav != null && upper) checks.push('<li><b>Book value a share:</b> ₹' + num(v.nav, 2) + ' <span class="sub">the top of the band is ' + num(upper / v.nav, 1) + '× book</span></li>');
+      const checksCard = checks.length ? card('Balance sheet and audit', '<ul class="note-checks">' + checks.join('') + '</ul>') : '';
+
+      const locked = [sellersCard, objs, peers, brlm, risks, checksCard].filter(Boolean);
+      const lockedHtml = pro ? '<div class="note-grid">' + locked.join('') + '</div>'
+        : '<div class="ins-card locked note-lock"><div class="ins-head"><h3>Full research note</h3>' + PRO_TAG + '</div><p class="muted">' +
+          ['what the selling shareholders paid for their shares', 'where the new money goes', 'listed peers at today\'s P/E', 'the lead managers\' listing record', 'the risks the company lists first', 'contingent liabilities and auditor remarks'].filter((t, i) => [sellersCard, objs, peers, brlm, risks, checksCard][i]).join(', ').replace(/, ([^,]*)$/, ' and $1') +
+          ', each with its page in the prospectus.</p><div class="lock-cta"><span aria-hidden="true">🔒</span> <b>Unlock with Sankhyas Pro</b><div class="sub">From ₹ 208 a month on the yearly plan.</div><a class="btn btn-primary btn-small" href="#/premium">See Pro plans</a></div></div>';
+
+      app.innerHTML = '<div class="container page"><div class="card ipo-note">' + head + tiles +
+        '<div class="note-grid">' + about + split + '</div>' + fin + lockedHtml +
+        '<p class="table-note">Read from the red herring prospectus (' + n.pages + ' pages) and the price band advertisement filed on NSE, ' + d((n.updated || '').slice(0, 10)) + '. "p." is the page of the PDF. ' +
+        'Money is in ₹ crore. This note sets out facts from the offer documents; it is not a recommendation to apply or not. Read the prospectus, especially its risk factors, before you invest.</p></div></div>';
     });
   }
 
