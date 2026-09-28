@@ -401,7 +401,7 @@ def trade_details(text):
     return out
 
 
-RATING_VERSION = 2       # bump to read every rating letter again after a parser fix
+RATING_VERSION = 3       # bump to read every rating letter again after a parser fix
 FORENSIC_VERSION = 2    # the same for the annual report check
 
 

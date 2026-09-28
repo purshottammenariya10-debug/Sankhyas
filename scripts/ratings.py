@@ -29,7 +29,7 @@ SYM = r"(A1\+|A1|A2\+|A2|A3\+|A3|A4\+|A4|AAA|AA\+|AA-|AA|A\+|A-|A|BBB\+|BBB-|BBB
 RATING = re.compile(PREFIX + r"\s*\]?\s*" + SYM + r"(?:\s*\((?:ce|so|cso)\))?\s*(?:[/;,(]\s*|\s+)?(stable|positive|negative|developing)?", re.I)
 WATCH = re.compile(r"rating watch|credit watch|watch with (negative|positive|developing) implications", re.I)
 ACTIONS = [
-    ("upgrade", r"upgrad|revised upward|rating (?:has been |was )?raised|enhanced from"),
+    ("upgrade", r"upgrad|revised upward|rating (?:has been |was )?raised"),
     ("downgrade", r"downgrad|revised downward|rating (?:has been |was )?lowered"),
     ("withdraw", r"(?:rating|ratings)\s+(?:has|have)\s+been\s+withdrawn|withdr[ae]wn? (?:its |the )?(?:credit )?ratings?|withdrawal of (?:the |its )?(?:credit )?ratings?|request for withdrawal|discontinu\w+ (?:of )?(?:the )?(?:credit )?rating"),
     ("outlook_up", r"outlook (?:has been )?revised (?:to|from \w+ to) positive|revised the outlook to positive"),
@@ -136,14 +136,27 @@ def rating_details(text, title=""):
     if out.get("rt"):
         out["term"] = "short" if (rank(out["rt"]) or 0) >= 100 else "long"
     # action: explicit words first (title counts most), then infer from the old and new rating
-    act = None
-    for scope in ((title or "") + " " + body[:1500], body):
+    # action: the words next to the ratings themselves ("AA+/Stable (Upgraded from AA)", "Reaffirmed"),
+    # then the letter's opening, then the filing title; words elsewhere (sensitivities, amounts
+    # "enhanced from") are not the action
+    def first_action(text):
+        best = None
         for name, rx in ACTIONS:
-            if re.search(rx, scope, re.I):
-                act = name
-                break
+            m = re.search(rx, text, re.I)
+            if m and (best is None or m.start() < best[1]):
+                best = (name, m.start())
+        return best[0] if best else None
+    act = None
+    near = [body[max(0, f[0] - 60):f[0] + 160] for f in found if f[0] < len(body)]
+    for ctx in near[:6]:
+        act = first_action(ctx)
         if act:
             break
+    if not act:
+        act = first_action(body[:1200])
+    t = (title or "").lower()
+    if re.search(r"credit rating\s*-\s*new\b|\bassigned\b|new (?:credit )?rating", t) and act in (None, "upgrade", "downgrade") and not out.get("from"):
+        act = "assign"
     if out.get("from") and out.get("rt") and (rank(out["from"]) is None or rank(out["rt"]) is None or (rank(out["from"]) >= 100) != (rank(out["rt"]) >= 100)):
         out.pop("from")
     if out.get("from") and out.get("rt") and rank(out["from"]) is not None and rank(out["rt"]) is not None:
