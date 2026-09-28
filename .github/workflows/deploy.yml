@@ -88,6 +88,8 @@ jobs:
         # cards; companies that just filed results are refreshed first
         run: python scripts/fetch_nse_extra.py --max-results "${{ github.event.schedule == '17 */2 * * *' && '150' || '400' }}" --max-shp "${{ github.event.schedule == '17 */2 * * *' && '120' || '300' }}" --max-shp-xbrl "${{ github.event.schedule == '17 */2 * * *' && '300' || '900' }}"
 
+      - name: IPOs and rights issues (NSE)
+        run: python scripts/fetch_ipo.py || echo "IPO data not refreshed"
       - name: Bulk and block deals (NSE daily files)
         if: github.event_name != 'push'
         continue-on-error: true

@@ -1927,7 +1927,7 @@
       ['#/deals', 'Smart money', 'Bulk and block deals, and insider and promoter buying and selling, market-wide.'],
       ['#/orders', 'Order wins', 'Every order and contract win announced to the exchange, with its value.'],
       ['#/ratings', 'Credit rating changes', 'Upgrades, downgrades and outlook changes from CRISIL, ICRA, CARE, India Ratings and others.'],
-      ['#/ipo', 'IPO & new listings', 'Every mainboard and SME listing of the last 3 years and how it has done since.'],
+      ['#/ipo', 'IPOs', 'Open and upcoming IPOs with live subscription, recent listings vs issue price, and rights issues.'],
       ['#/calendar', 'Results calendar', 'Upcoming board meetings for results, dividends and fund raising.'],
       ['#/themes', 'Theme tracker', 'Defence, railways, EV, PSU banks, renewables and more, with leaders and laggards.'],
       ['#/studio', 'Social post studio', 'Turn results, red flags, listings and themes into Instagram and X posts.']
@@ -2039,41 +2039,107 @@
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).catch(() => {});
   }
 
-  /* ---------- IPO & new listings ---------- */
+  /* ---------- IPOs: open & upcoming, recent listings, below issue price, rights issues ---------- */
+  const IPO_TABS = [['open', 'Open & upcoming'], ['recent', 'Recent listings'], ['below', 'Below issue price'], ['rights', 'Rights issues']];
   function pageIPO(parts, params) {
-    setTitle('IPO & new listings');
-    const all = Data.listCompanies().filter(c => c.listed);
+    setTitle('IPOs');
+    const tab = IPO_TABS.some(t => t[0] === params.tab) ? params.tab : 'open';
     const board = params.board || 'all', period = params.period || '1y';
-    const DAYS = { '3m': 92, '6m': 183, '1y': 366, '3y': 1096 };
-    const since = Date.now() - DAYS[period] * 864e5;
-    const list = all.filter(c => Date.parse(c.listed) >= since && (board === 'all' || (board === 'sme' ? c.sme : !c.sme)))
-      .map(c => Object.assign(c, { _ret: c.listPrice && c.metrics.price ? (c.metrics.price / c.listPrice - 1) * 100 : null }))
-      .sort((a, b) => b.listed.localeCompare(a.listed));
-    const rets = list.map(c => c._ret).filter(v => v != null);
-    const best = list.filter(c => c._ret != null).sort((a, b) => b._ret - a._ret)[0], worst = list.filter(c => c._ret != null).sort((a, b) => a._ret - b._ret)[0];
-    const link = (b, p) => '#/ipo?board=' + b + '&period=' + p;
-    const seg = (items, cur, mk) => '<div class="seg">' + items.map(([k, l]) => '<a class="' + (k === cur ? 'active' : '') + '" href="' + mk(k) + '">' + l + '</a>').join('') + '</div>';
-    const tileH = (label, value, sub) => '<div class="stat"><div class="sub">' + label + '</div><b>' + value + '</b>' + (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div>';
-    app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>IPO &amp; new listings</h1><p>Mainboard and SME companies listed on NSE, and how they have traded since their first day.</p></div>' +
-      '<a class="btn" href="#/studio?kind=listing">↗ Make a post</a></div>' +
-      '<div class="flex flex-wrap" style="gap:12px;margin-bottom:16px">' + seg([['all', 'All'], ['main', 'Mainboard'], ['sme', 'SME']], board, b => link(b, period)) +
-      seg([['3m', '3 months'], ['6m', '6 months'], ['1y', '1 year'], ['3y', '3 years']], period, p => link(board, p)) + '</div>' +
-      (all.length ? '<div class="stats-row">' + tileH('Listings', list.length) + tileH('Median return since listing', rets.length ? '<span class="' + signCls(Data.median(rets)) + '">' + num(Data.median(rets), 1) + '%</span>' : '-') +
-        tileH('Trading above first close', rets.length ? Math.round(rets.filter(v => v > 0).length / rets.length * 100) + '%' : '-') +
-        tileH('Best', best ? '<a href="#/company/' + esc(best.symbol) + '">' + esc(best.name) + '</a>' : '-', best ? '<span class="' + signCls(best._ret) + '">' + (best._ret > 0 ? '+' : '') + num(best._ret, 0) + '%</span>' : '') +
-        tileH('Worst', worst ? '<a href="#/company/' + esc(worst.symbol) + '">' + esc(worst.name) + '</a>' : '-', worst ? '<span class="' + signCls(worst._ret) + '">' + num(worst._ret, 0) + '%</span>' : '') + '</div>' +
-        '<div class="table-wrap"><table class="data list"><thead><tr><th>S.No.</th><th>Name</th><th class="l">Board</th><th>Listed on</th><th>First close ₹</th><th>Price ₹</th><th>Since listing %</th><th>Mar Cap Rs.Cr.</th><th class="l">Sector</th><th></th></tr></thead><tbody>' +
-        (list.length ? list.map((c, i) => '<tr><td>' + (i + 1) + '.</td><td><a href="#/company/' + esc(c.symbol) + '">' + esc(c.name) + '</a></td><td class="l">' + (c.sme ? '<span class="sme-badge">SME</span>' : 'Main') + '</td><td>' +
-          new Date(c.listed).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '</td><td>' + num(c.listPrice, 2) + '</td><td>' + num(c.metrics.price, 2) + '</td><td class="' + signCls(c._ret) + '">' + num(c._ret, 1) +
-          '</td><td>' + num(c.metrics.marketCap, 0) + '</td><td class="l">' + esc(c.sector || '') + '</td><td><button class="btn btn-small btn-plain" data-lcard="' + esc(c.symbol) + '">↗ Card</button></td></tr>').join('')
-          : '<tr><td colspan="10" class="muted" style="text-align:center;padding:24px">No listings in this period.</td></tr>') + '</tbody></table></div>' +
-        '<p class="table-note">"First close" is the closing price on the first trading day (the IPO issue price is not in the data yet). Listing dates come from NSE\'s equity and SME lists.</p>'
-      : '<p class="muted">Listing dates appear with the live market data. They come from NSE\'s equity and SME lists in the daily data update.</p>') +
-      '</div><div class="card"><h2>Upcoming IPOs</h2><p class="muted">Open and upcoming issues, with dates, price bands and lot sizes, are published by the exchanges:</p><div class="flex flex-wrap">' +
-      '<a class="btn" target="_blank" rel="noopener noreferrer" href="https://www.nseindia.com/market-data/all-upcoming-issues-ipo">NSE: upcoming issues ↗</a>' +
-      '<a class="btn" target="_blank" rel="noopener noreferrer" href="https://www.nseindia.com/market-data/sme-market">NSE Emerge (SME) ↗</a>' +
-      '<a class="btn" target="_blank" rel="noopener noreferrer" href="https://www.bseindia.com/publicissue.html">BSE public issues ↗</a></div></div></div>';
-    $$('[data-lcard]').forEach(b => b.onclick = () => openCardModal(['listing', 'snapshot'], () => Data.loadCompany(b.dataset.lcard), b.dataset.lcard));
+    const link = o => '#/ipo?' + Object.entries(Object.assign({ tab, board, period }, o)).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+    app.innerHTML = LOADING;
+    const token = navToken;
+    Data.loadIPO().then(ipo => {
+      if (token !== navToken) return;
+      const today = new Date().toISOString().slice(0, 10);
+      const d = s => (s ? new Date(s + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '-');
+      const dy = s => (s ? new Date(s + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '-');
+      const rs = v => (v == null ? '<span class="muted">-</span>' : '₹' + num(v, v < 100 ? 2 : 0));
+      const pc = v => (v == null || !isFinite(v) ? '<span class="muted">-</span>' : '<span class="' + signCls(v) + '">' + (v > 0 ? '+' : '') + num(v, 1) + '%</span>');
+      const co = x => { const c = Data.getCompany(x.s); return c ? '<a href="#/company/' + encodeURIComponent(x.s) + '">' + esc(x.n || c.name) + '</a>' : esc(x.n || x.s); };
+      const badge = x => (x.board === 'SME' ? '<span class="sme-badge">' + (x.ex === 'BSE' ? 'BSE SME' : 'NSE SME') + '</span>' : '<span class="board-tag">Mainboard</span>');
+      const boardOk = x => board === 'all' || (board === 'sme' ? x.board === 'SME' : x.board !== 'SME');
+      const seg = (items, cur, mk) => '<div class="seg">' + items.map(([k, l]) => '<a class="' + (k === cur ? 'active' : '') + '" href="' + mk(k) + '">' + l + '</a>').join('') + '</div>';
+      const boardSeg = seg([['all', 'All'], ['main', 'Mainboard'], ['sme', 'SME']], board, b => link({ board: b }));
+      const tile = (label, value, sub) => '<div class="stat"><div class="sub">' + label + '</div><b>' + value + '</b>' + (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div>';
+      const counts = ipo ? { open: (ipo.open || []).length + (ipo.upcoming || []).length, rights: (ipo.rights || []).filter(r => (r.rec || r.ex) >= today).length } : {};
+      const tabs = '<div class="ipo-tabs" role="tablist">' + IPO_TABS.map(([k, l]) => '<a role="tab" class="' + (k === tab ? 'active' : '') + '" href="' + link({ tab: k }) + '">' + l +
+        (counts[k] ? ' <span class="ipo-count">' + counts[k] + '</span>' : '') + '</a>').join('') + '</div>';
+
+      // listed issues joined with today's prices and ratios
+      const listed = (ipo ? ipo.past : []).filter(x => x.ld && x.ip).map(x => {
+        const c = Data.getCompany(x.s), m = c ? c.metrics : {};
+        const first = c && c.listPrice != null && (!c.listPriceDate || Math.abs(Date.parse(c.listPriceDate) - Date.parse(x.ld)) < 5 * 864e5) ? c.listPrice : null;
+        // prices are adjusted for later splits and bonuses, the issue price is not: when the first close
+        // is a clean fraction of the issue price (1/2, 1/5, 1/10...), adjust the issue price the same way
+        let ip = x.ip, adj = 0;
+        if (first && x.ip / first > 1.8) {
+          const k = [2, 3, 4, 5, 10, 20, 25, 50].map(k => [k, Math.abs(x.ip / k / first - 1)]).sort((a, b) => a[1] - b[1])[0];
+          if (k[1] < 0.35) { ip = x.ip / k[0]; adj = k[0]; }
+        }
+        return Object.assign({}, x, { c, ipAdj: ip, adj, price: m.price, first, lgain: first ? (first / ip - 1) * 100 : null, ret: m.price ? (m.price / ip - 1) * 100 : null, mc: m.marketCap, pe: m.pe, roce: m.roce });
+      });
+      let body = '';
+      if (!ipo) body = '<p class="muted">IPO data appears with the daily data update, from NSE\'s issue lists.</p>';
+      else if (tab === 'open') {
+        const subsCell = x => {
+          if (x.x == null) return '<span class="muted">' + (x.start > today ? 'opens ' + d(x.start) : '-') + '</span>';
+          const s = x.subs || {};
+          const parts = [['QIB', s.qib], ['NII', s.nii], ['Retail', s.rii], ['Employee', s.emp], ['Shareholder', s.sh]].filter(p => p[1] != null);
+          const main = '<b class="' + (x.x >= 1 ? 'up' : '') + '">' + num(x.x, x.x < 10 ? 2 : 1) + '×</b>';
+          return parts.length ? '<details class="subs"><summary>' + main + '</summary>' + parts.map(p => '<div><span>' + p[0] + '</span><b>' + num(p[1], p[1] < 10 ? 2 : 1) + '×</b></div>').join('') + '</details>' : main;
+        };
+        const when = x => {
+          if (x.start > today) return 'Opens ' + d(x.start) + '<div class="sub">closes ' + d(x.end) + '</div>';
+          const left = Math.round((Date.parse(x.end) - Date.parse(today)) / 864e5);
+          return d(x.start) + ' – ' + d(x.end) + '<div class="sub ' + (left <= 0 ? 'down' : '') + '">' + (left < 0 ? 'closed' : left === 0 ? 'closes today' : 'closes in ' + left + ' day' + (left > 1 ? 's' : '')) + '</div>';
+        };
+        const docs = x => [x.rhp && '<a target="_blank" rel="noopener noreferrer" href="' + esc(x.rhp) + '">RHP</a>', x.ratios && '<a target="_blank" rel="noopener noreferrer" href="' + esc(x.ratios) + '">Basis of price</a>'].filter(Boolean).join(' · ');
+        const row = x => '<tr><td class="l ipo-co"><div class="ipo-name">' + esc(x.n) + '</div><div class="sub">' + badge(x) + (x.lead ? ' · ' + esc(x.lead.split(/,| and /)[0]) : '') + '</div></td><td class="l" data-label="Bidding">' + when(x) + '</td><td data-label="Price band">' +
+          (x.band ? '₹' + num(x.band[0], 0) + (x.band[1] !== x.band[0] ? '–' + num(x.band[1], 0) : '') : '<span class="muted">-</span>') + '</td><td data-label="Min. investment">' + (x.min ? '₹' + num(x.min, 0) + '<div class="sub">' + x.lot + ' shares</div>' : '<span class="muted">-</span>') +
+          '</td><td data-label="Issue size ₹ Cr">' + (x.size ? num(x.size, x.size < 100 ? 1 : 0) : '<span class="muted">-</span>') + '</td><td data-label="Listing">' + (x.lst ? (x.lst < today ? '<span class="muted">awaited</span>' : d(x.lst)) : '-') + '</td><td data-label="Subscribed">' + subsCell(x) + '</td><td class="l" data-label="Documents">' + (docs(x) || '<span class="muted">-</span>') + '</td></tr>';
+        const group = (title, list, note) => list.length ? '<tr class="ipo-group"><td colspan="8">' + title + ' <span class="sub">' + list.length + (note ? ' · ' + note : '') + '</span></td></tr>' + list.map(row).join('') : '';
+        const open = (ipo.open || []).filter(boardOk), up = (ipo.upcoming || []).filter(boardOk), closed = (ipo.closed || []).filter(boardOk);
+        body = '<div class="flex flex-wrap ipo-filters">' + boardSeg + '</div>' +
+          '<div class="stats-row">' + tile('Open now', open.length) + tile('Opening soon', up.length) + tile('Awaiting listing', closed.length) +
+          tile('Most subscribed', (() => { const t = open.concat(closed).filter(x => x.x != null).sort((a, b) => b.x - a.x)[0]; return t ? esc(t.n.replace(/ Limited$/i, '')) : '-'; })(),
+            (() => { const t = open.concat(closed).filter(x => x.x != null).sort((a, b) => b.x - a.x)[0]; return t ? num(t.x, 1) + '× subscribed' : ''; })()) + '</div>' +
+          '<div class="table-wrap"><table class="data list ipo-table"><thead><tr><th class="l">Company</th><th class="l">Bidding</th><th>Price band</th><th>Min. investment</th><th>Issue size ₹ Cr</th><th>Listing</th><th>Subscribed</th><th class="l">Documents</th></tr></thead><tbody>' +
+          (group('Open now', open) + group('Opening soon', up) + group('Closed · awaiting listing', closed) || '<tr><td colspan="8" class="muted" style="text-align:center;padding:24px">No open or upcoming issues right now.</td></tr>') +
+          '</tbody></table></div><p class="table-note">Subscription is the number of times the shares on offer were bid for (tap it for QIB, NII and retail). Listing dates are estimated at three working days after the issue closes. Issue size is at the top of the price band. From NSE, updated with the site data.</p>';
+      } else if (tab === 'recent' || tab === 'below') {
+        const DAYS = { '3m': 92, '6m': 183, '1y': 366, '3y': 1096 };
+        const since = new Date(Date.now() - DAYS[tab === 'below' ? '3y' : period] * 864e5).toISOString().slice(0, 10);
+        let list = listed.filter(x => x.ld >= since && boardOk(x));
+        if (tab === 'below') list = list.filter(x => x.ret != null && x.ret < 0).sort((a, b) => a.ret - b.ret);
+        const rets = list.map(x => x.ret).filter(v => v != null), gains = list.map(x => x.lgain).filter(v => v != null);
+        const best = list.filter(x => x.ret != null).sort((a, b) => b.ret - a.ret)[0];
+        body = '<div class="flex flex-wrap ipo-filters">' + boardSeg + (tab === 'recent' ? seg([['3m', '3 months'], ['6m', '6 months'], ['1y', '1 year'], ['3y', '3 years']], period, p => link({ period: p })) : '') + '</div>' +
+          (tab === 'recent'
+            ? '<div class="stats-row">' + tile('Listings', list.length) + tile('Median listing gain', gains.length ? pc(Data.median(gains)) : '-') + tile('Median return since IPO', rets.length ? pc(Data.median(rets)) : '-') +
+              tile('Above issue price', rets.length ? Math.round(rets.filter(v => v > 0).length / rets.length * 100) + '%' : '-') + tile('Best', best ? co(best) : '-', best ? pc(best.ret) : '') + '</div>'
+            : '<div class="stats-row">' + tile('Below issue price', list.length + ' <span class="sub">of ' + listed.filter(x => x.ld >= since && boardOk(x) && x.ret != null).length + '</span>', 'listed in the last 3 years') + tile('Median fall', rets.length ? pc(Data.median(rets)) : '-') + '</div>') +
+          '<div class="table-wrap"><table class="data list"><thead><tr><th class="l">Company</th><th>Listed</th><th>Issue price</th><th>Listing day close</th><th>Listing gain</th><th>Price now</th><th>Since IPO</th><th>M.Cap ₹ Cr</th><th>P/E</th><th>ROCE</th><th></th></tr></thead><tbody>' +
+          (list.length ? list.map(x => '<tr><td class="l"><div class="ipo-name">' + co(x) + '</div><div class="sub">' + badge(x) + '</div></td><td>' + dy(x.ld) + '</td><td>' + rs(x.ip) + (x.adj ? '<div class="sub" title="Shares were split or bonus shares issued after listing; returns use the adjusted issue price">adj. ' + rs(x.ipAdj) + '</div>' : '') + '</td><td>' + rs(x.first) + '</td><td>' + pc(x.lgain) + '</td><td>' + rs(x.price) + '</td><td>' + pc(x.ret) +
+            '</td><td>' + (x.mc ? num(x.mc, 0) : '<span class="muted">-</span>') + '</td><td>' + (x.pe > 0 ? num(x.pe, 1) : '<span class="muted">-</span>') + '</td><td>' + (x.roce != null ? num(x.roce, 1) + '%' : '<span class="muted">-</span>') + '</td><td>' +
+            (x.c ? '<button class="btn btn-small btn-plain" data-lcard="' + esc(x.s) + '">↗ Card</button>' : '') + '</td></tr>').join('')
+            : '<tr><td colspan="11" class="muted" style="text-align:center;padding:24px">' + (tab === 'below' ? 'No recent listing is below its issue price.' : 'No listings in this period.') + '</td></tr>') +
+          '</tbody></table></div><p class="table-note">Issue price and listing date from NSE. Listing gain is the first day\'s close against the issue price; "since IPO" is today\'s price against it. P/E and ROCE are from the latest financials.</p>';
+      } else {
+        const R = (ipo.rights || []).slice().sort((a, b) => ((b.rec || b.ex) < (a.rec || a.ex) ? 1 : -1));
+        const up = R.filter(r => (r.rec || r.ex) >= today), past = R.filter(r => (r.rec || r.ex) < today).reverse();
+        const row = r => { const c = Data.getCompany(r.s), p = c && c.metrics.price; const disc = p && r.price ? (r.price / p - 1) * 100 : null;
+          return '<tr><td class="l">' + co(r) + '</td><td>' + dy(r.rec || r.ex) + '</td><td>' + esc(r.ratio) + '<div class="sub">new for existing</div></td><td>' + rs(r.price) + '</td><td>' + rs(p) + '</td><td>' + (disc == null ? '<span class="muted">-</span>' : disc < 0 ? num(-disc, 1) + '% below market' : num(disc, 1) + '% above market') + '</td><td class="l sub">' + esc(r.subject || '') + '</td></tr>'; };
+        body = '<div class="table-wrap"><table class="data list"><thead><tr><th class="l">Company</th><th>Record date</th><th>Ratio</th><th>Rights price</th><th>Price now</th><th>Discount</th><th class="l">Details</th></tr></thead><tbody>' +
+          (up.length ? '<tr class="ipo-group"><td colspan="7">Upcoming <span class="sub">' + up.length + '</span></td></tr>' + up.map(row).join('') : '') +
+          (past.length ? '<tr class="ipo-group"><td colspan="7">Last 30 days <span class="sub">' + past.length + '</span></td></tr>' + past.map(row).join('') : '') +
+          (!R.length ? '<tr><td colspan="7" class="muted" style="text-align:center;padding:24px">No rights issues announced.</td></tr>' : '') +
+          '</tbody></table></div><p class="table-note">From NSE corporate actions. Ratio 2:21 means 2 new shares for every 21 held on the record date. Rights price is face value plus premium; the discount is against today\'s price.</p>';
+      }
+      app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>IPOs</h1><p>Open and upcoming issues with live subscription, how recent listings have done, and rights issues, mainboard and SME.' +
+        (ipo && ipo.updated ? ' <span class="sub">Updated ' + new Date(ipo.updated).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) + '.</span>' : '') + '</p></div>' +
+        '<a class="btn" href="#/studio?kind=listing">↗ Make a post</a></div>' + tabs + body + '</div></div>';
+      $$('[data-lcard]').forEach(b => b.onclick = () => openCardModal(['listing', 'snapshot'], () => Data.loadCompany(b.dataset.lcard), b.dataset.lcard));
+    });
   }
 
   /* ---------- Results calendar ---------- */

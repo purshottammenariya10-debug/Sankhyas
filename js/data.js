@@ -609,6 +609,13 @@
     if (!_resultsList) _resultsList = getJSON('data/yahoo/results.json').catch(() => null);
     return _resultsList;
   }
+  /** Open, upcoming and past IPOs and rights issues from NSE (scripts/fetch_ipo.py). Cached. */
+  let _ipo = null;
+  function loadIPO() {
+    if (mode === 'sample') return Promise.resolve(null);
+    if (!_ipo) _ipo = getJSON('data/yahoo/ipo.json').catch(() => null);
+    return _ipo;
+  }
   /** Credit rating actions across companies, newest first (scripts/build_index.mjs). Cached. */
   let _ratings = null;
   function loadRatings() {
@@ -671,7 +678,7 @@
 
   window.Data = {
     TODAY, YEARS, QUARTERS: QUARTERS.map(q => q.label), SH_QUARTERS,
-    init, getCompany: getAny, loadCompany, loadFilings, loadCalendar, loadActivity, loadShareholding, loadResults, loadResultsList, loadRatings, latestFilings, listCompanies, search, median, cagr,
+    init, getCompany: getAny, loadCompany, loadFilings, loadCalendar, loadActivity, loadShareholding, loadResults, loadResultsList, loadRatings, loadIPO, latestFilings, listCompanies, search, median, cagr,
     mode: () => mode,
     liveInfo: () => ({
       count: mode === 'summary' ? Object.keys(summaries).length : Object.keys(live).length,
