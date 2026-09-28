@@ -661,7 +661,11 @@ def main():
     issues = ipo.get("open", []) + ipo.get("upcoming", []) + ipo.get("closed", [])
     todo = []
     for it in issues:
-        if not it.get("rhp"):
+        # mainboard only: SME offer documents follow a different layout the reader does not know
+        if not it.get("rhp") or it.get("board") == "SME":
+            stale = NOTES / (it["s"] + ".json")
+            if it.get("board") == "SME" and stale.exists():
+                stale.unlink()
             continue
         if args.sym and it["s"] not in args.sym:
             continue
@@ -689,6 +693,11 @@ def main():
                 continue
             pages = pdf_pages(docs[0][1], 900)
             note = build_note(it, pages, ad_pages)
+            # a note that read neither the business, the numbers nor the offer is not worth showing
+            if not ((note.get("about") or {}).get("t") or note.get("kpi") or (note.get("offer") or {}).get("total")):
+                print(f"  {it['s']}: too little read from the prospectus; no note", file=sys.stderr)
+                (NOTES / (it["s"] + ".json")).unlink(missing_ok=True)
+                continue
             (NOTES / (it["s"] + ".json")).write_text(json.dumps(note, ensure_ascii=False, separators=(",", ":")))
             done += 1
             filled = [k for k in ("about", "offer", "kpi", "val", "peers", "objects", "contingent", "quals", "risks", "brlm", "sellers") if note.get(k)]
