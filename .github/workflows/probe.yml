@@ -2,11 +2,67 @@ name: Probe (temporary)
 on:
   workflow_dispatch:
 jobs:
-  probe:
+  dSRIT:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install -q pypdf requests
-      - run: python scripts/ipo_notes.py --ipo .github/probe/ipo.json --max 20 --debug --print 2>&1 | grep -v "^Ignoring wrong\|^Multiple definitions\|^incorrect startxref\|^Invalid\|^Object "
+      - run: python .github/probe/dump.py SRIT 2>/dev/null
+  dELEVATE:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q pypdf requests
+      - run: python .github/probe/dump.py ELEVATE 2>/dev/null
+  dRUNWALENTR:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q pypdf requests
+      - run: python .github/probe/dump.py RUNWALENTR 2>/dev/null
+  dGERMAN:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q pypdf requests
+      - run: python .github/probe/dump.py GERMAN 2>/dev/null
+  dVARMORA:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q pypdf requests
+      - run: python .github/probe/dump.py VARMORA 2>/dev/null
+  dMONEYVIEW:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q pypdf requests
+      - run: python .github/probe/dump.py MONEYVIEW 2>/dev/null
+  dAONESTEELS:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q pypdf requests
+      - run: python .github/probe/dump.py AONESTEELS 2>/dev/null
+  dSHAHINVEST:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q pypdf requests
+      - run: python .github/probe/dump.py SHAHINVEST 2>/dev/null
