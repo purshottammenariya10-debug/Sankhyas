@@ -352,23 +352,149 @@
     if (ok(cur.exceptional) && cur.exceptional !== 0 && ok(cur.pbt) && Math.abs(cur.exceptional) >= Math.abs(cur.pbt) * 0.05)
       points.push('Includes a one-off ' + (cur.exceptional < 0 ? 'charge' : 'gain') + ' of ' + cr(Math.abs(cur.exceptional)) + ' (exceptional items)');
     if (ok(c.eps)) points.push('EPS ₹ ' + c.eps.toFixed(2) + (ok(cmp.eps) ? ' (' + chg(cmp.eps) + ' ' + basis + ')' : ''));
-    return { qe: cur.qe, label: quarterLabel(cur.qe), filed: cur.filed || '', cons: !!cur.cons, bank: !!cur.bank, cur: c, prev: prev && p, yago: yago && y,
+    return { raw: cur, qe: cur.qe, label: quarterLabel(cur.qe), filed: cur.filed || '', cons: !!cur.cons, bank: !!cur.bank, cur: c, prev: prev && p, yago: yago && y,
       yoy, qoq, basis, score, verdict, points };
   }
 
   /* ---------- shareholding trend (NSE shareholding pattern, latest first) ---------- */
   function holdingStats(doc) {
-    const Q = ((doc && doc.quarters) || []).filter(q => q && q.q && q.fii != null).slice().sort((a, b) => (a.q < b.q ? 1 : -1));
+    const Q = ((doc && doc.quarters) || []).filter(q => q && q.q && q.fii != null && ['promoter', 'fii', 'dii'].every(k => !(q[k] > 100))).slice().sort((a, b) => (a.q < b.q ? 1 : -1));
     if (!Q.length) return null;
     const d = (k, i) => (Q[i] && ok(Q[i][k]) && ok(Q[0][k]) ? Q[0][k] - Q[i][k] : null);
     let fiiUp = 0;
     for (let i = 0; i + 1 < Q.length && Q[i].fii > Q[i + 1].fii; i++) fiiUp++;
     let diiUp = 0;
     for (let i = 0; i + 1 < Q.length && Q[i].dii > Q[i + 1].dii; i++) diiUp++;
+    const streak = (k, dir) => { let n = 0; for (let i = 0; i + 1 < Q.length && ok(Q[i][k]) && ok(Q[i + 1][k]) && (Q[i][k] - Q[i + 1][k]) * dir > 0; i++) n++; return n; };
     return { latest: Q[0], promoter: Q[0].promoter, fii: Q[0].fii, dii: Q[0].dii, pledge: Q[0].pledge, holders: Q[0].holders,
       promoterChg1q: d('promoter', 1), promoterChg4q: d('promoter', 4), fiiChg1q: d('fii', 1), fiiChg4q: d('fii', 4), diiChg1q: d('dii', 1), diiChg4q: d('dii', 4),
-      holdersChg1q: Q[1] && Q[0].holders && Q[1].holders ? (Q[0].holders / Q[1].holders - 1) * 100 : null, fiiUpQtrs: fiiUp, diiUpQtrs: diiUp };
+      holdersChg1q: Q[1] && Q[0].holders && Q[1].holders ? (Q[0].holders / Q[1].holders - 1) * 100 : null, fiiUpQtrs: fiiUp, diiUpQtrs: diiUp, fiiDownQtrs: streak('fii', -1), diiDownQtrs: streak('dii', -1) };
   }
 
-  window.Insights = { computeScores, scoreOf, scoreBand, PILLARS, redFlags, guidance, whatChanged, redFlagsMd, guidanceMd, whatChangedMd, METRIC_LABEL, resultsVerdict, holdingStats, quarterLabel };
+  /* ---------- Quick read: a handful of plain-English takeaways across results, ownership, valuation, risk ----------
+   * Returns [{ area, tone: 'pos' | 'neg' | 'neu', text }]. opts: { hpe: own median P/E, res, shp } */
+  function quickRead(c, opts) {
+    const o = opts || {}, m = c.metrics || {}, out = [], fin = isFinancial(c);
+    const add = (area, tone, text) => { if (text) out.push({ area, tone, text }); };
+    const pc = v => (v >= 0 ? '+' : '−') + r1(Math.abs(v)) + '%';
+    const pts = v => r1(Math.abs(v)) + ' pts';
+
+    // 1. latest results
+    const v = o.res && resultsVerdict(o.res);
+    if (v) {
+      const g = v.yago ? v.yoy : v.qoq, b = v.yago ? 'YoY' : 'QoQ', bits = [];
+      if (ok(g.sales)) bits.push('revenue ' + pc(g.sales));
+      if (ok(v.cur.np) && v.cur.np < 0) bits.push('net loss of ₹ ' + r0(-v.cur.np) + ' Cr');
+      else if (ok(g.np)) bits.push('net profit ' + pc(g.np));
+      if (ok(g.opm) && !v.bank) bits.push('margin ' + (g.opm >= 0 ? '+' : '−') + pts(g.opm));
+      add('Results', v.verdict === 'Strong' ? 'pos' : v.verdict === 'Weak' ? 'neg' : 'neu', v.verdict === 'New' ? v.label + ' is its first reported quarter as a listed company.'
+        : (v.verdict === 'Mixed' ? 'Mixed' : v.verdict) + ' ' + v.label + (bits.length ? ': ' + bits.join(', ') + ' ' + b : '') + '.');
+    }
+    else if (ok(m.qtrSalesVar) && ok(m.qtrProfitVar))
+      add('Results', m.qtrSalesVar > 5 && m.qtrProfitVar > 10 ? 'pos' : m.qtrSalesVar < -5 || m.qtrProfitVar < -15 ? 'neg' : 'neu',
+        'Latest quarter: sales ' + pc(m.qtrSalesVar) + ' and net profit ' + pc(m.qtrProfitVar) + ' vs a year ago.');
+
+    // 2. ownership
+    const h = o.shp && holdingStats(o.shp);
+    if (h) {
+      const bits = [];
+      let tone = 'neu';
+      if (ok(h.promoterChg1q) && Math.abs(h.promoterChg1q) >= 0.3) {
+        bits.push('Promoters ' + (h.promoterChg1q > 0 ? 'raised' : 'cut') + ' their stake by ' + pts(h.promoterChg1q) + ' last quarter to ' + r1(h.promoter) + '%');
+        tone = h.promoterChg1q > 0 ? 'pos' : 'neg';
+      }
+      const inst = (who, key, up, down) => {
+        if (up >= 3) return who + ' have added for ' + up + ' quarters in a row (now ' + r1(h[key]) + '%)';
+        if (down >= 3) return who + ' have trimmed for ' + down + ' quarters in a row (now ' + r1(h[key]) + '%)';
+        const d4 = h[key + 'Chg4q'];
+        if (ok(d4) && Math.abs(d4) >= 1) return who + ' ' + (d4 > 0 ? 'added ' : 'cut ') + pts(d4) + ' in a year (now ' + r1(h[key]) + '%)';
+        return '';
+      };
+      const f = inst('FIIs', 'fii', h.fiiUpQtrs, h.fiiDownQtrs), d = inst('DIIs', 'dii', h.diiUpQtrs, h.diiDownQtrs);
+      if (f) bits.push(f);
+      if (d) bits.push(d);
+      if (tone === 'neu' && (f || d)) {
+        const net = (h.fiiChg4q || 0) + (h.diiChg4q || 0);
+        tone = net >= 1 ? 'pos' : net <= -1 ? 'neg' : 'neu';
+      }
+      if (ok(h.pledge) && h.pledge >= 5) { bits.push(r1(h.pledge) + '% of promoter shares are pledged'); tone = 'neg'; }
+      if (!bits.length) bits.push('Ownership steady: promoters ' + r1(h.promoter) + '%, FIIs ' + r1(h.fii) + '%, DIIs ' + r1(h.dii) + '%' + (ok(h.holdersChg1q) && Math.abs(h.holdersChg1q) >= 5 ? '; shareholder count ' + pc(h.holdersChg1q) + ' in a quarter' : ''));
+      add('Ownership', tone, bits.slice(0, 2).join('; ') + '.');
+    }
+
+    // 3. valuation
+    if (ok(m.pe) && m.pe > 0) {
+      const hpe = ok(o.hpe) && o.hpe > 0 ? o.hpe : null, ipe = ok(m.industryPE) && m.industryPE > 0 && Math.abs(m.industryPE - m.pe) > 0.01 ? m.industryPE : null;
+      const vsH = hpe ? m.pe / hpe - 1 : null, vsI = ipe ? m.pe / ipe - 1 : null;
+      const cmp = (r, what, val) => (Math.abs(r) < 0.1 ? 'in line with ' : r < 0 ? r0(-r * 100) + '% below ' : r0(r * 100) + '% above ') + what + ' (' + r1(val) + ')';
+      const parts = [];
+      if (hpe) parts.push(cmp(vsH, 'its own 5-year median', hpe));
+      if (ipe) parts.push(cmp(vsI, 'the industry median', ipe));
+      const ref = vsH != null ? vsH : vsI;
+      add('Valuation', ref == null ? 'neu' : ref <= -0.15 ? 'pos' : ref >= 0.25 ? 'neg' : 'neu', 'P/E of ' + r1(m.pe) + (parts.length ? ', ' + parts.join(' and ') : '') + '.');
+    } else if (ok(m.pe) || (ok(m.np) && m.np < 0)) add('Valuation', 'neg', 'Loss-making over the last 12 months, so P/E does not apply' + (ok(m.pb) && m.pb > 0 ? '; price to book is ' + r1(m.pb) + 'x' : '') + '.');
+
+    // 4. business quality
+    const roce = fin ? m.roe : m.roce, rl = fin ? 'ROE' : 'ROCE';
+    if (ok(roce)) {
+      const g = ok(m.profitGrowth5) ? m.profitGrowth5 : m.profitGrowth3, gy = ok(m.profitGrowth5) ? 5 : 3;
+      add('Quality', roce >= 20 && (!ok(g) || g >= 10) ? 'pos' : roce < 10 || (ok(g) && g < 0) ? 'neg' : 'neu',
+        rl + ' of ' + r1(roce) + '%' + (ok(g) ? ' with profit growing ' + r1(g) + '% a year over ' + gy + ' years' : '') + (!fin && ok(m.de) ? (m.de < 0.1 ? '; almost debt free' : m.de > 1 ? '; debt is ' + r1(m.de) + 'x equity' : '') : '') + '.');
+    }
+
+    // 5. forensic checks
+    const rf = redFlags(c);
+    if (rf.flags.length) {
+      const top = rf.flags.slice().sort((a, b) => SEV[b.sev] - SEV[a.sev])[0];
+      add('Red flags', rf.band === 'Low' ? 'neu' : 'neg', rf.flags.length + ' warning sign' + (rf.flags.length > 1 ? 's' : '') + ' (' + rf.band.toLowerCase() + ' risk), the most serious: ' + top.title.toLowerCase() + '.');
+    } else add('Red flags', 'pos', 'Clean on every forensic check: cash conversion, debt, receivables, dilution' + (rf.checked ? ', auditor exits, pledges and regulatory action' : '') + '.');
+
+    // 6. management: guidance delivery, then concall tone, then order wins
+    const gd = guidance(c), w = whatChanged(c), act = c._activity;
+    const orders = act ? act.orders.filter(x => x.s === c.symbol) : [];
+    if (gd.score != null) add('Management', gd.score >= 70 ? 'pos' : gd.score < 40 ? 'neg' : 'neu', 'Delivered ' + gd.score + '% of the targets it set on concalls (' + gd.judged + ' checked).');
+    else if (w.concall && w.concall.tone) {
+      const t = w.concall.tone, pt = w.concall.prevTone;
+      add('Management', /positive|confident|optimistic/i.test(t) ? 'pos' : /cautious|negative|weak/i.test(t) ? 'neg' : 'neu',
+        'Latest concall tone was ' + t.toLowerCase() + (pt && pt !== t ? ' (previous call: ' + pt.toLowerCase() + ')' : '') + (w.concall.guidance.length ? '; ' + w.concall.guidance.length + ' guidance update' + (w.concall.guidance.length > 1 ? 's' : '') : '') + '.');
+    }
+    if (orders.length) {
+      const tot = orders.reduce((a, x) => a + (x.amt || 0), 0);
+      add('Orders', 'pos', orders.length + ' order win' + (orders.length > 1 ? 's' : '') + ' announced in 12 months' + (tot ? ' worth ₹ ' + r0(tot) + ' Cr' + (ok(m.sales) && m.sales > 0 ? ' (' + r0(tot / m.sales * 100) + '% of annual sales)' : '') : '') + '.');
+    }
+
+    // 7. price trend
+    if (ok(m.price) && ok(m.high52) && m.high52 > 0) {
+      const off = (1 - m.price / m.high52) * 100, above = ok(m.dma200) ? m.price >= m.dma200 : null;
+      add('Price', above === false && off > 20 ? 'neg' : above && off < 10 ? 'pos' : 'neu',
+        (off < 2 ? 'At its 52-week high' : r0(off) + '% below its 52-week high') + (ok(m.ret1y) ? ', ' + (m.ret1y >= 0 ? 'up ' : 'down ') + r1(Math.abs(m.ret1y)) + '% over the past year' : '') + (above == null ? '' : above ? ', above its 200-day average' : ', below its 200-day average') + '.');
+    }
+    return out;
+  }
+  // one sentence on why the quarter got its verdict
+  function resultsWhy(v) {
+    if (!v) return '';
+    const g = v.yago ? v.yoy : v.qoq, basis = v.yago ? 'a year ago' : 'the previous quarter';
+    const good = [], bad = [];
+    const fmt = x => r1(Math.abs(x)) + '%';
+    if (ok(g.sales)) (g.sales >= 5 ? good : g.sales <= -5 ? bad : good).push(g.sales >= 0 ? 'revenue ' + (g.sales < 5 ? 'edged up ' : 'grew ') + fmt(g.sales) : 'revenue ' + (g.sales > -5 ? 'slipped ' : 'fell ') + fmt(g.sales));
+    const base = v.yago || v.prev;
+    const ex = v.raw && v.raw.exceptional;
+    if (ok(v.cur.np) && v.cur.np < 0) bad.push('it posted a net loss of ₹ ' + r0(-v.cur.np) + ' Cr' + (ok(ex) && ex < 0 ? ' after a one-off charge of ₹ ' + r0(-ex) + ' Cr' : '') + (base && ok(base.np) && base.np > 0 ? ' (vs a profit of ₹ ' + r0(base.np) + ' Cr ' + (v.yago ? 'a year ago' : 'last quarter') + ')' : ''));
+    else if (base && ok(base.np) && base.np < 0 && ok(v.cur.np)) good.push('it swung to a net profit of ₹ ' + r0(v.cur.np) + ' Cr from a loss');
+    else if (ok(g.np)) {
+      if (g.np >= 5 && !(ok(g.sales) && g.sales >= 10 && g.np < g.sales / 2)) good.push('net profit rose ' + fmt(g.np));
+      else if (g.np >= 1.5) bad.push('net profit rose only ' + fmt(g.np));
+      else if (g.np > -1.5) bad.push('net profit was flat');
+      else bad.push('net profit fell ' + fmt(g.np));
+    }
+    if (ok(g.opm) && !v.bank && Math.abs(g.opm) >= 0.5) (g.opm > 0 ? good : bad).push('operating margin ' + (g.opm > 0 ? 'widened ' : 'narrowed ') + r1(Math.abs(g.opm)) + ' pts');
+    if (v.verdict === 'New') return v.label + ' is its first reported quarter as a listed company, so there is nothing to compare with yet.';
+    const head = v.label + ' was ' + (v.verdict === 'Mixed' ? 'a mixed' : 'a ' + v.verdict.toLowerCase()) + ' quarter compared with ' + basis;
+    if (!good.length && !bad.length) return head + '.';
+    const list = a => (a.length > 1 ? a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1] : a[0]);
+    return head + ': ' + (good.length && bad.length ? list(good) + ', but ' + list(bad) : list(good.length ? good : bad)) + '.';
+  }
+
+  window.Insights = { quickRead, resultsWhy, computeScores, scoreOf, scoreBand, PILLARS, redFlags, guidance, whatChanged, redFlagsMd, guidanceMd, whatChangedMd, METRIC_LABEL, resultsVerdict, holdingStats, quarterLabel };
 })();

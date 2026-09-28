@@ -1006,6 +1006,6 @@
 
   function errorCopy(e) { return (e && e.message) || 'Something went wrong.'; }
 
-  window.AI = { ready, md, mount, answerCompany, answerMarket, answerCompare, screenQuery, parseConditions, errorCopy,
+  window.AI = { historicPE, ready, md, mount, answerCompany, answerMarket, answerCompare, screenQuery, parseConditions, errorCopy,
     companyContext, tableContext, marketContext, engine, kind: () => (engine() === 'builtin' ? 'local' : engine()) };
 })();

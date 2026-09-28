@@ -463,6 +463,7 @@
         c._shp = sh;
         const el = $('#sh-table');
         if (el) el.innerHTML = shareholdingTable(c, !!$('#sh-tabs [data-sh=y].active'));
+        refreshInsights(c);
       });
     }
     bindNotes(c);
@@ -539,8 +540,9 @@
         : '<p class="muted">No red flags found in the financials' + (r.checked ? ' or the last 2 years of filings' : '') + '.</p>') +
       '<p class="table-note">Checks cash conversion, debt, receivables, dilution, tax, other income' + (r.checked ? ', and filings for auditor exits, pledges, defaults, downgrades and regulatory action.' : '. Filing checks run once this company\'s exchange filings are fetched.') + ' Higher = more warning signs; not a verdict.</p></div>';
   }
-  function guidanceCard(c) {
+  function guidanceCard(c, empty) {
     const g = Insights.guidance(c);
+    if (empty && !g.rows.length) { empty.push('no concall guidance tracked yet'); return ''; }
     const badge = s => '<span class="gd gd-' + s.toLowerCase().replace(/\s+/g, '-') + '">' + esc(s) + '</span>';
     const body = g.rows.length
       ? '<div class="table-wrap"><table class="data gd-table"><thead><tr><th class="l">Guided</th><th class="l">For</th><th>Target</th><th>Actual</th><th>Status</th></tr></thead><tbody>' +
@@ -553,10 +555,11 @@
       (g.score != null ? '<div class="gd-score"><b>' + g.score + '%</b> of checkable guidance delivered <span class="sub">(' + g.judged + ' target' + (g.judged === 1 ? '' : 's') + ' checked, ' + g.calls + ' call' + (g.calls === 1 ? '' : 's') + ')</span></div>' : '') +
       body + '</div>';
   }
-  function changedCard(c) {
+  function changedCard(c, empty) {
     const w = Insights.whatChanged(c);
     let html = '';
-    if (w.results) {
+    // the results card above already covers the quarter from the NSE filing
+    if (w.results && !c._res) {
       html += '<h4>Results: ' + esc(w.results.quarter) + '</h4><div class="table-wrap"><table class="data"><thead><tr><th class="l"></th><th>Value</th><th>vs ' + esc(w.results.prev) + '</th><th>vs ' + esc(w.results.yago || 'year ago') + '</th></tr></thead><tbody>' +
         w.results.rows.filter(r => r.cur != null && isFinite(r.cur)).map(r => '<tr><td class="l">' + esc(r.label) + '</td><td>' + (r.isPct ? num(r.cur, 1) + '%' : num(r.cur, r.label === 'EPS' ? 2 : 0)) + '</td><td>' +
           signed(r.qoq, r.isPct ? ' pts' : '%') + '</td><td>' + signed(r.yoy, r.isPct ? ' pts' : '%') + '</td></tr>').join('') + '</tbody></table></div>';
@@ -571,6 +574,7 @@
     if (w.filings.length) {
       html += '<h4>Important filings since</h4><ul class="chg-list">' + w.filings.map(a => '<li><span class="sub">' + docWhen(a.d) + '</span> <a target="_blank" rel="noopener noreferrer" href="' + esc(a.u) + '">' + esc(cleanTitle(a.t)) + '</a></li>').join('') + '</ul>';
     }
+    if (empty && !html) { empty.push('no new concall or important filing'); return ''; }
     return '<div class="ins-card ins-changed"><div class="ins-head"><h3>What changed</h3>' + PRO_TAG + '</div>' + (html || '<p class="muted">Not enough history yet to compare the latest quarter and concall with the previous ones.</p>') + '</div>';
   }
   /* ---------- Sankhyas Score, order wins, deals & insider activity ---------- */
@@ -595,10 +599,11 @@
       (open ? '' : '<div class="score-lock"><span aria-hidden="true">🔒</span> See the 5 pillars with <a href="#/premium">Sankhyas Pro</a></div>') + '</div>';
   }
   const crFmt = v => (v == null ? '-' : '₹ ' + num(v, v < 10 ? 2 : 0) + ' Cr');
-  function ordersCard(c) {
+  function ordersCard(c, empty) {
     const act = c._activity;
     if (!act) return '';
     const list = act.orders.filter(o => o.s === c.symbol);
+    if (empty && !list.length) { empty.push('no order wins announced in 12 months'); return ''; }
     const total = list.reduce((a, o) => a + (o.amt || 0), 0), sales = c.metrics.sales;
     return '<div class="ins-card ins-orders"><div class="ins-head"><h3>Order wins</h3>' + PRO_TAG + '</div>' +
       (list.length ? '<div class="stats-row mini"><div class="stat"><div class="sub">Last 12 months</div><b>' + list.length + '</b></div><div class="stat"><div class="sub">Value stated</div><b>' + (total ? crFmt(total) : '-') + '</b></div>' +
@@ -609,10 +614,11 @@
       '<p class="table-note">From "bagging/receiving of orders" filings; values are read from the filing and some filings do not state one.</p></div>';
   }
   const DIR = { buy: ['Bought', 'up'], sell: ['Sold', 'down'], pledge: ['Pledged', 'down'], release: ['Pledge released', 'up'] };
-  function dealsCard(c) {
+  function dealsCard(c, empty) {
     const act = c._activity;
     if (!act) return '';
     const dl = act.deals.filter(x => x.s === c.symbol), ds = act.disclosures.filter(x => x.s === c.symbol);
+    if (empty && !dl.length && !ds.length) { empty.push('no bulk/block deals or insider trades'); return ''; }
     const since = new Date(Date.now() - 92 * 864e5).toISOString().slice(0, 10);
     const net = dl.filter(x => x.d >= since).reduce((a, x) => a + (x.side === 'B' ? x.v : -x.v), 0);
     return '<div class="ins-card ins-deals"><div class="ins-head"><h3>Deals &amp; insider activity</h3>' + PRO_TAG + '</div>' +
@@ -632,9 +638,9 @@
   }
   function insightsSection(c) {
     const open = Account.isPro();
-    const note = !Account.cloud || Account.config.proFreeDuringBeta ? 'Free during beta.' : open ? 'Included in your Pro plan.' : 'The red-flag score is free; the details are part of Sankhyas Pro.';
-    let cards;
-    if (open) cards = riskCard(c) + guidanceCard(c) + changedCard(c) + ordersCard(c) + dealsCard(c);
+    const note = !Account.cloud || Account.config.proFreeDuringBeta ? 'Free during beta.' : open ? 'Included in your Pro plan.' : 'The quick read, results and ownership are free; the detailed cards are part of Sankhyas Pro.';
+    let cards, empty = [];
+    if (open) cards = riskCard(c) + changedCard(c, empty) + guidanceCard(c, empty) + ordersCard(c, empty) + dealsCard(c, empty);
     else {
       const r = Insights.redFlags(c), g = Insights.guidance(c), w = Insights.whatChanged(c);
       const cls = r.band === 'High' ? 'risk-high' : r.band === 'Moderate' ? 'risk-mid' : 'risk-low';
@@ -649,27 +655,81 @@
           lockedCard('ins-deals', 'Deals &amp; insider activity', '<p class="muted">' + (dl.length + ds.length ? dl.length + ' bulk/block deal' + (dl.length === 1 ? '' : 's') + ' and ' + ds.length + ' insider/promoter disclosure' + (ds.length === 1 ? '' : 's') + '.' : 'No bulk/block deals or insider disclosures recently.') + '</p>');
       }
     }
-    return '<section class="section card" id="insights"><div class="section-head"><div><h2>Sankhyas Insights</h2><p>Sankhyas Score, forensic red flags, management\'s promises vs delivery, order wins, smart-money activity and what changed this quarter. ' + note + '</p></div></div>' +
-      resultsCard(c) + scoreCard(c, open) + '<div class="ins-grid">' + cards + '</div></section>';
+    const score = scoreCard(c, open), own = ownershipCard(c);
+    const quiet = empty.length ? '<p class="ins-quiet"><b>Nothing to report:</b> ' + empty.map(esc).join(' · ') + '.</p>' : '';
+    return '<section class="section card" id="insights"><div class="section-head"><div><h2>Sankhyas Insights</h2><p>A quick read of results, ownership, valuation and risks, generated from exchange filings and the financials. ' + note + '</p></div></div>' +
+      quickReadPanel(c) + resultsCard(c) + score + '<div class="ins-grid">' + own + cards + '</div>' + quiet + '</section>';
+  }
+  const QR_ICON = { Results: '📊', Ownership: '👥', Valuation: '🏷️', Quality: '⚙️', 'Red flags': '🚩', Management: '🎙️', Orders: '📦', Price: '📈' };
+  function quickReadPanel(c) {
+    let hpe = null;
+    try { hpe = window.AI && AI.historicPE ? AI.historicPE(c) : null; } catch (e) { hpe = null; }
+    const items = Insights.quickRead(c, { hpe, res: c._res, shp: c._shp });
+    if (!items.length) return '';
+    const n = t => items.filter(x => x.tone === t).length;
+    return '<div class="qr-panel"><div class="qr-head"><h3>Quick read</h3><div class="qr-tally"><span class="qr-t pos">' + n('pos') + ' positive</span><span class="qr-t neg">' + n('neg') + ' watch</span><span class="qr-t neu">' + n('neu') + ' neutral</span></div></div>' +
+      '<ul class="qr-list">' + items.map(x => '<li class="qr-' + x.tone + '"><span class="qr-ico" aria-hidden="true">' + (QR_ICON[x.area] || '•') + '</span><div><div class="qr-area">' + esc(x.area) +
+        '<span class="qr-dot" title="' + (x.tone === 'pos' ? 'Positive' : x.tone === 'neg' ? 'Watch' : 'Neutral') + '"></span></div><p>' + esc(x.text) + '</p></div></li>').join('') + '</ul></div>';
   }
   const VERDICT_CLS = { Strong: 'v-strong', Mixed: 'v-mixed', Weak: 'v-weak', New: 'v-new' };
   function resultsCard(c) {
     const v = c._res && Insights.resultsVerdict(c._res);
     if (!v) return '';
-    const g = x => (x == null || !isFinite(x) ? '<span class="muted">-</span>' : '<span class="' + signCls(x) + '">' + (x >= 0 ? '+' : '−') + num(Math.abs(x), 1) + '%</span>');
-    const pts = x => (x == null || !isFinite(x) ? '<span class="muted">-</span>' : '<span class="' + signCls(x) + '">' + (x >= 0 ? '+' : '−') + num(Math.abs(x), 1) + ' pts</span>');
-    const row = (label, cur, key, fmt) => '<tr><td class="l">' + label + '</td><td>' + fmt(cur) + '</td><td>' + (key === 'opm' ? pts(v.yoy.opm) : g(v.yoy[key])) + '</td><td>' + (key === 'opm' ? pts(v.qoq.opm) : g(v.qoq[key])) + '</td></tr>';
-    const crv = x => (x == null ? '-' : num(x, 0));
+    // a swing between profit and loss has no meaningful % change: say so instead
+    const chip = (x, unit, lbl, key, base) => {
+      const cur = v.cur[key], was = base && base[key];
+      if ((key === 'np' || key === 'eps') && cur != null && was != null && (cur < 0) !== (was < 0))
+        return '<span class="rk-chg ' + (cur < 0 ? 'down' : 'up') + '">' + (cur < 0 ? '▼ to loss' : '▲ from loss') + ' <small>' + lbl + '</small></span>';
+      if ((key === 'np' || key === 'eps') && cur < 0 && was < 0)
+        return '<span class="rk-chg ' + (cur < was ? 'down' : 'up') + '">' + (cur < was ? '▼ loss widened' : '▲ loss narrowed') + ' <small>' + lbl + '</small></span>';
+      if (x == null || !isFinite(x)) return '';
+      return '<span class="rk-chg ' + signCls(x) + '">' + (x >= 0 ? '▲ ' : '▼ ') + num(Math.abs(x), 1) + unit + ' <small>' + lbl + '</small></span>';
+    };
+    const tile = (label, val, key, unit) => '<div class="rk-tile"><div class="rk-label">' + label + '</div><div class="rk-val">' + val + '</div><div class="rk-chgs">' +
+      chip(v.yoy[key], unit, 'YoY', key, v.yago) + chip(v.qoq[key], unit, 'QoQ', key, v.prev) + '</div></div>';
+    const cr = x => (x == null ? '-' : '₹ ' + num(x, Math.abs(x) < 100 ? 1 : 0) + '<small> Cr</small>');
     const filed = v.filed ? v.filed.replace(/\s+\d{2}:\d{2}(:\d{2})?$/, '') : '';
-    return '<div class="res-card ' + VERDICT_CLS[v.verdict] + '"><div class="res-head"><div><div class="sub">Latest results · ' + esc(v.label) + (filed ? ' · filed ' + esc(filed) : '') + (v.cons ? '' : ' · standalone') + '</div>' +
-      '<h3>' + esc(v.label) + ' results: <span class="res-verdict">' + (v.verdict === 'New' ? 'first reported quarter' : v.verdict) + '</span></h3></div>' +
+    const oneOff = v.points.find(p => /^Includes a one-off/.test(p));
+    return '<div class="res-card ' + VERDICT_CLS[v.verdict] + '"><div class="res-head"><div><div class="sub">Latest results · filed ' + esc(filed || '-') + ' · ' + (v.cons ? 'consolidated' : 'standalone') + '</div>' +
+      '<h3>' + esc(v.label) + ' results <span class="v-pill ' + VERDICT_CLS[v.verdict] + '">' + (v.verdict === 'New' ? 'First results' : v.verdict) + '</span></h3></div>' +
       '<button class="btn btn-small" type="button" data-verdict-card="' + esc(c.symbol) + '">↗ Share card</button></div>' +
-      '<ul class="res-points">' + v.points.map(p => '<li>' + esc(p) + '</li>').join('') + '</ul>' +
-      '<div class="table-wrap"><table class="data res-table"><thead><tr><th class="l">₹ Cr</th><th>' + esc(v.label) + '</th><th>YoY</th><th>QoQ</th></tr></thead><tbody>' +
-      row('Revenue', v.cur.sales, 'sales', crv) + (v.bank ? '' : row('Operating profit', v.cur.op, 'op', crv) + row('OPM %', v.cur.opm, 'opm', x => (x == null ? '-' : num(x, 1) + '%'))) +
-      row('Net profit', v.cur.np, 'np', crv) + row('EPS (₹)', v.cur.eps, 'eps', x => (x == null ? '-' : num(x, 2))) + '</tbody></table></div>' +
-      '<p class="table-note">From the company\'s results filed with NSE (' + (v.cons ? 'consolidated' : 'standalone') + '). The verdict weighs revenue and profit growth against the same quarter last year and the change in margin; it is not a recommendation.</p></div>';
+      '<p class="res-why">' + esc(Insights.resultsWhy(v)) + '</p>' +
+      '<div class="rk-grid">' + tile('Revenue', cr(v.cur.sales), 'sales', '%') + (v.bank ? '' : tile('Operating profit', cr(v.cur.op), 'op', '%') + tile('Operating margin', v.cur.opm == null ? '-' : num(v.cur.opm, 1) + '%', 'opm', ' pts')) +
+        tile('Net profit', cr(v.cur.np), 'np', '%') + tile('EPS', v.cur.eps == null ? '-' : '₹ ' + num(v.cur.eps, 2), 'eps', '%') + '</div>' +
+      (oneOff ? '<p class="res-note">⚠ ' + esc(oneOff) + '.</p>' : '') +
+      '<p class="table-note">From the results filed with NSE. The verdict weighs revenue and profit growth against the same quarter last year and the change in margin; it is not a recommendation.</p></div>';
   }
+  // free: how promoters, foreign and domestic institutions moved, from the NSE shareholding filings
+  function ownershipCard(c) {
+    const h = c._shp && Insights.holdingStats(c._shp);
+    if (!h) return '';
+    const Q = c._shp.quarters.filter(q => q.fii != null && !(q.fii > 100 || q.promoter > 100 || q.dii > 100)).sort((a, b) => (a.q < b.q ? 1 : -1)).slice(0, 8).reverse();
+    const spark = k => {
+      const vals = Q.map(q => q[k]).filter(x => x != null);
+      if (vals.length < 2) return '';
+      const lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals), span = hi - lo || 1;
+      const pts = vals.map((x, i) => (i / (vals.length - 1) * 100).toFixed(1) + ',' + (26 - (x - lo) / span * 22).toFixed(1)).join(' ');
+      return '<svg class="own-spark" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true"><polyline points="' + pts + '" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>';
+    };
+    const d = x => (x == null || !isFinite(x) ? '<span class="muted">-</span>' : '<span class="' + signCls(x) + '">' + (x > 0 ? '+' : x < 0 ? '−' : '') + num(Math.abs(x), 2) + '</span>');
+    const row = (label, k) => '<div class="own-row"><div class="own-name">' + label + '</div><div class="own-val">' + (h[k] == null ? '-' : num(h[k], 2) + '%') + '</div>' +
+      '<div class="own-spk ' + (h[k + 'Chg4q'] > 0 ? 'up' : h[k + 'Chg4q'] < 0 ? 'down' : '') + '">' + spark(k) + '</div><div class="own-d">' + d(h[k + 'Chg1q']) + '</div><div class="own-d">' + d(h[k + 'Chg4q']) + '</div></div>';
+    const qLabel = new Date(h.latest.q + 'T00:00:00').toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+    return '<div class="ins-card own-card"><div class="ins-head"><h3>Ownership moves</h3><span class="sub">' + esc(qLabel) + '</span></div>' +
+      '<div class="own-table"><div class="own-row own-h"><div></div><div>Holding</div><div>2 years</div><div>1Q chg</div><div>1Y chg</div></div>' +
+      row('Promoters', 'promoter') + row('FIIs', 'fii') + row('DIIs', 'dii') + '</div>' +
+      '<div class="own-foot">' + (h.holders ? '<span>' + num(h.holders, 0) + ' shareholders' + (h.holdersChg1q != null ? ' (<span class="' + signCls(h.holdersChg1q) + '">' + (h.holdersChg1q >= 0 ? '+' : '−') + num(Math.abs(h.holdersChg1q), 1) + '%</span> QoQ)' : '') + '</span>' : '') +
+      (h.pledge ? '<span class="' + (h.pledge >= 5 ? 'down' : '') + '">' + num(h.pledge, 2) + '% of promoter shares pledged</span>' : '') +
+      '<a href="" data-scroll="shareholding">Full pattern ↓</a></div>' +
+      '<p class="table-note">Changes in percentage points, from the quarterly shareholding filed with NSE.</p></div>';
+  }
+  document.addEventListener('click', e => {
+    const a = e.target.closest && e.target.closest('[data-scroll]');
+    if (!a) return;
+    e.preventDefault();
+    const el = document.getElementById(a.dataset.scroll);
+    if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 118, behavior: 'smooth' });
+  });
   document.addEventListener('click', e => {
     const b = e.target.closest && e.target.closest('[data-verdict-card]');
     if (!b || !currentCompany) return;
@@ -1059,7 +1119,7 @@
     ], { highlightLast: true });
   }
   function nseShareholdingTable(c, yearly) {
-    let Q = c._shp.quarters.filter(q => q.fii != null).slice().sort((a, b) => (a.q < b.q ? -1 : 1));
+    let Q = c._shp.quarters.filter(q => q.fii != null && !(q.fii > 100 || q.promoter > 100 || q.dii > 100)).slice().sort((a, b) => (a.q < b.q ? -1 : 1));
     if (yearly) Q = Q.filter((q, i) => q.q.slice(5, 7) === '03' || i === Q.length - 1);
     const heads = Q.map(q => monYear(new Date(q.q + 'T00:00:00')));
     const col = k => Q.map(q => q[k]);
