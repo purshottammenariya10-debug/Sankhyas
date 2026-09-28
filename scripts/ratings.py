@@ -31,7 +31,7 @@ WATCH = re.compile(r"rating watch|credit watch|watch with (negative|positive|dev
 ACTIONS = [
     ("upgrade", r"upgrad|revised upward|rating (?:has been |was )?raised|enhanced from"),
     ("downgrade", r"downgrad|revised downward|rating (?:has been |was )?lowered"),
-    ("withdraw", r"withdraw"),
+    ("withdraw", r"(?:rating|ratings)\s+(?:has|have)\s+been\s+withdrawn|withdr[ae]wn? (?:its |the )?(?:credit )?ratings?|withdrawal of (?:the |its )?(?:credit )?ratings?|request for withdrawal|discontinu\w+ (?:of )?(?:the )?(?:credit )?rating"),
     ("outlook_up", r"outlook (?:has been )?revised (?:to|from \w+ to) positive|revised the outlook to positive"),
     ("outlook_down", r"outlook (?:has been )?revised (?:to|from \w+ to) negative|revised the outlook to negative"),
     ("assign", r"\bassign|\bnew rating|rated for the first time"),
@@ -158,6 +158,11 @@ def rating_details(text, title=""):
         act = "watch"
     if act:
         out["act"] = act
+    # a rating needs an agency; symbols without one are something else (a note, a grade, a table)
+    if not out.get("ag"):
+        out.pop("rt", None); out.pop("from", None); out.pop("st", None); out.pop("term", None)
+        if out.get("act") != "withdraw":
+            out.pop("act", None)
     hits = []
     for name, rx in INSTRUMENTS:
         for m in re.finditer(rx, flat, re.I):

@@ -75,12 +75,12 @@ def auditor_report(pages):
             if re.search(r"except for the (?:matters?|effects?) described in the basis for", f[max(0, m.start() - 120):m.start()], re.I):
                 continue
             on = _which(f, m.start())
-            if out["opinion"] in (None, "Unmodified") or (out["opinion"] == "Qualified" and kind != "Qualified"):
-                out["opinion"], out["opinion_on"] = kind, on
             key = "op" + on
             if key in seen:
                 continue
             seen.add(key)
+            if out["opinion"] in (None, "Unmodified") or (out["opinion"] == "Qualified" and kind != "Qualified"):
+                out["opinion"], out["opinion_on"] = kind, on
             nxt = _flat(pages[i + 1]) if i + 1 < len(pages) else ""
             basis = re.search(r"Basis for (?:Qualified |Adverse )?(?:Opinion|Disclaimer of Opinion)(?!\s*(?:section|paragraph|of our report))\s*(?:\d+\.\s*)?(.{40,700})", f[m.start():] + " " + nxt)
             title = ("Auditor could not give an opinion (disclaimer)" if kind == "Disclaimer" else "Auditor gave a " + kind.lower() + " opinion") + " on the " + on + " accounts"
@@ -109,7 +109,9 @@ def audit_firm(pages):
     """The statutory audit firm(s): from the auditor's report signature, else the directors' report."""
     rx = re.compile(r"((?:M/s\.?\s*)?[A-Z][A-Za-z&.,'’\- ]{2,70}?)\s*,?\s*Chartered Accountants\s*,?\s*(?:[A-Z][a-z]+\s*,?\s*)?\(?\s*(?:ICAI\s+)?Firm.{0,3}s?\s*Reg", re.S)
     def clean(n):
-        n = re.split(r"\bM/s\.?\s*|\b(?:of|by|namely|appointment|re-appointment|approved|that)\s+(?=[A-Z])|[.;:]\s+(?=[A-Z])", n)[-1]
+        # split off the sentence before the name, but not at initials or "Co." ("B S R & Co. LLP", "H. D.")
+        n = re.split(r"\bM/s\.?\s*|\b(?:of|by|namely|appointment|re-appointment|approved|that)\s+(?=[A-Z])|(?<=[a-z]{3})[.;:]\s+(?=[A-Z])|\bFor,?\s+(?:and\s+on\s+behalf\s+of\s+)?(?=[A-Z])", n)[-1]
+        n = re.sub(r"[.,]?\s*,?\s*Chartered Accountants.*$", "", n)
         n = re.sub(r"^(?:For\s+and\s+on\s+behalf\s+of|For|and on behalf of)\s*,?\s*", "", n.strip(" ,.("), flags=re.I)
         n = WS.sub(" ", n).strip(" ,.")
         if n.isupper():
