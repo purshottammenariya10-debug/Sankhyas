@@ -43,6 +43,21 @@ NUMBER = re.compile(r"\d+(\.\d+)?\s*(%|percent|per cent|bps|basis points|crore|c
 SPEAKER = re.compile(r"^\s*([A-Z][A-Za-z.\-' ]{1,40}|Moderator|Management|Analyst|Participant)\s*:\s*")
 
 
+def pdf_pages(data, max_pages=None):
+    """Text of each page (page 1 first); unreadable pages come back empty."""
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(data))
+    out = []
+    for i, page in enumerate(reader.pages):
+        if max_pages and i >= max_pages:
+            break
+        try:
+            out.append(page.extract_text() or "")
+        except Exception:  # noqa: BLE001
+            out.append("")
+    return out
+
+
 def pdf_text(data, max_pages=None, max_chars=None):
     from pypdf import PdfReader
     reader = PdfReader(io.BytesIO(data))
@@ -386,6 +401,41 @@ def trade_details(text):
     return out
 
 
+def rating_letters(requests, UA, limit=300):
+    """Read credit rating letters once: agency, rating, outlook and action are stored on the filing."""
+    from ratings import rating_details
+    todo = []
+    for f in sorted(FILINGS.glob("*.json")):
+        if f.name == "latest.json":
+            continue
+        doc = json.loads(f.read_text())
+        for i, a in enumerate(doc.get("announcements", [])):
+            if a.get("k") == "rating" and not a.get("rdet") and a["u"].lower().endswith(".pdf"):
+                todo.append((a["d"], f, i))
+    todo.sort(key=lambda t: t[0], reverse=True)
+    by_file, done, found = {}, 0, 0
+    for d, f, i in todo[:limit]:
+        doc = by_file.get(f) or json.loads(f.read_text())
+        by_file[f] = doc
+        a = doc["announcements"][i]
+        a["rdet"] = 1
+        done += 1
+        try:
+            r = requests.get(a["u"], headers={"User-Agent": UA, "Referer": "https://www.nseindia.com/"}, timeout=60)
+            r.raise_for_status()
+            info = rating_details(pdf_text(r.content, max_pages=5), a.get("t", "") + " " + (a.get("c") or ""))
+        except Exception as e:  # noqa: BLE001
+            print(f"{f.stem}: rating letter not read ({str(e)[:60]})", file=sys.stderr)
+            continue
+        for k2, v in info.items():
+            a[k2] = v
+        found += 1 if info.get("rt") or info.get("act") == "withdraw" else 0
+    for f, doc in by_file.items():
+        f.write_text(json.dumps(doc, separators=(",", ":")))
+    if done:
+        print(f"Rating letters: {found} ratings read from {done} filings, {max(0, len(todo) - limit)} left for later runs")
+
+
 def filing_details(requests, UA, limit=150):
     """Read order-win and insider/promoter disclosure PDFs once and store what they say on the filing."""
     todo = []
@@ -518,6 +568,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--max", type=int, default=60, help="transcripts and presentations to process per run (default 60)")
     ap.add_argument("--max-ar", type=int, default=15, help="annual reports to process per run (default 15)")
+    ap.add_argument("--max-ratings", type=int, default=300, help="credit rating letters to read per run (default 300)")
     args = ap.parse_args(argv)
     import requests
     from exchange import UA
@@ -551,7 +602,7 @@ def main(argv=None):
                 cand.append((fiscal_year(a["d"]), a["u"]))
                 break
         cand.sort(reverse=True)
-        if cand and pending(notes, cand[0][1]):
+        if cand and (pending(notes, cand[0][1]) or (not notes[cand[0][1]].get("failed") and "forensic" not in notes[cand[0][1]])):
             ars.append((cand[0][0], f, cand[0][1], "ar"))
     # every company's latest transcript and presentation first, then the one before, and so on;
     # newest first within each round
@@ -560,6 +611,7 @@ def main(argv=None):
     todo = [t[1:] for t in todo]
     find_recordings(requests, UA)
     filing_details(requests, UA)
+    rating_letters(requests, UA, limit=args.max_ratings)
     ars.sort(key=lambda t: t[0], reverse=True)
     work = todo[:args.max] + ars[:args.max_ar]
     done = failed = 0
@@ -568,8 +620,16 @@ def main(argv=None):
             r = requests.get(url, headers={"User-Agent": UA, "Referer": "https://www.nseindia.com/"}, timeout=90)
             r.raise_for_status()
             if kind == "ar":
-                text = pdf_text(r.content, max_pages=80, max_chars=400000)
+                # the whole report for the forensic check (auditor's report, CARO, notes sit near the
+                # end); the first 80 pages for the summary
+                pages = pdf_pages(r.content, max_pages=700)
+                text = "\n".join(pages[:80])[:400000]
                 note = summarize(text, per_topic=3)
+                try:
+                    from ar_forensics import forensics
+                    note["forensic"] = forensics(pages)
+                except Exception as e:  # noqa: BLE001
+                    print(f"{f.stem}: annual report check failed ({str(e)[:80]})", file=sys.stderr)
             elif kind == "ppt":
                 text = pdf_text(r.content)
                 note = summarize_ppt(text)

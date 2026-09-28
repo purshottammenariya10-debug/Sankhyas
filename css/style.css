@@ -731,3 +731,16 @@ table.trades td.l { min-width: 110px; }
   .rk-val { font-size: 17px; }
   .own-row { grid-template-columns: minmax(62px, 1fr) minmax(52px, .9fr) minmax(44px, .9fr) minmax(44px, .8fr) minmax(44px, .8fr); gap: 6px; font-size: 13px; }
 }
+
+/* Credit ratings and annual report check */
+.rt-chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.rt-chip { background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 8px; padding: 8px 10px; }
+.rt-chip b { font-size: 20px; }
+.rt-act { font-size: 12px; font-weight: 700; white-space: nowrap; }
+.rt-act.up { color: var(--green); } .rt-act.down { color: var(--red); } .rt-act.muted { color: var(--ink-3); }
+.ins-ar { grid-column: 1 / -1; }
+.ar-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px 16px; margin-bottom: 12px; font-size: 14px; }
+.ar-fact { background: var(--bg-2); border-radius: 8px; padding: 8px 10px; min-width: 0; overflow-wrap: anywhere; }
+.ar-fact a, .ins-ar .flag-list a { font-size: 12px; white-space: nowrap; }
+.ar-clean { color: var(--green); font-weight: 600; margin: 4px 0 8px; }
+.ins-ar .flag-list .sub { font-style: italic; }

@@ -27,10 +27,11 @@ const KEYS = Screener.RATIOS.map(r => r.key).concat(['change', 'changePct', 'qtr
 const round = v => (v == null || !Number.isFinite(v) ? null : Number(v.toPrecision(6)));
 
 const index = fs.existsSync(path.join(dir, 'index.json')) ? JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')) : {};
-const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !['index.json', 'metrics.json', 'calendar.json', 'activity.json', 'results.json'].includes(f));
+const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !['index.json', 'metrics.json', 'calendar.json', 'activity.json', 'results.json', 'ratings.json'].includes(f));
 const companies = [];
 let skipped = 0;
 const latestResults = [];
+const ratingEvents = [];
 const readJSON = f => { try { return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : null; } catch (e) { return null; } };
 
 // bulk and block deals (scripts/fetch_deals.py)
@@ -91,6 +92,18 @@ for (const f of files) {
           if (amt) c.metrics.orders12m = amt;
         }
         c.metrics.riskScore = Insights.redFlags(c, filings).score;
+        // credit ratings read from rating letters (scripts/ratings.py)
+        const cr = Insights.creditRatings(filings);
+        if (cr && cr.rank >= 0) {
+          c.metrics.ratingScore = 20 - cr.rank;
+          c.metrics.ratingChg = cr.down ? -1 : cr.up ? 1 : 0;
+        }
+        const ratingSince = new Date(Date.now() - 548 * 864e5).toISOString();
+        (filings.announcements || []).filter(a => a.k === 'rating' && a.rt && a.d >= ratingSince).forEach(a =>
+          ratingEvents.push({ s: c.symbol, n: c.name, d: a.d, ag: a.ag || '', rt: a.rt, ol: a.ol || '', act: a.act || '', from: a.from || '', ins: a.ins || '', ramt: a.ramt || null, st: a.st || '', term: a.term || '', u: a.u, mc: Math.round(c.metrics.marketCap || 0) }));
+        // annual report forensic check (scripts/ar_forensics.py)
+        const arc = Insights.annualReportCheck(filings);
+        if (arc) c.metrics.arIssues = (arc.flags || []).filter(x => x.sev !== 'low').length;
         const g = Insights.guidance(c, filings);
         if (g.score != null) c.metrics.guidanceScore = g.score;
       } catch (e) { /* keep the numbers-only score */ }
@@ -136,6 +149,9 @@ console.log(`metrics.json: ${companies.length} companies (${skipped} skipped), $
   const recent = latestResults.filter(r => Date.now() - Date.parse(r.qe) < 200 * 864e5).sort((a, b) => when(b) - when(a) || b.mc - a.mc).slice(0, 1500);
   recent.forEach(r => { for (const k of Object.keys(r)) if (typeof r[k] === 'number') r[k] = round(r[k]); });
   fs.writeFileSync(path.join(dir, 'results.json'), JSON.stringify({ updated: new Date().toISOString(), results: recent }));
+  ratingEvents.sort((a, b) => (a.d < b.d ? 1 : -1));
+  fs.writeFileSync(path.join(dir, 'ratings.json'), JSON.stringify({ updated: new Date().toISOString(), ratings: ratingEvents.slice(0, 4000) }));
+  console.log(`ratings.json: ${ratingEvents.length} rating actions (${ratingEvents.filter(r => r.act === 'upgrade').length} upgrades, ${ratingEvents.filter(r => r.act === 'downgrade').length} downgrades)`);
   console.log(`results.json: ${recent.length} companies with NSE quarterly results (${recent.filter(r => r.v === 'Strong').length} strong, ${recent.filter(r => r.v === 'Weak').length} weak)`);
 }
 

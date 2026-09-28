@@ -96,7 +96,7 @@ jobs:
       - name: Concall summaries (free, rule-based)
         if: github.event_name != 'push'
         continue-on-error: true
-        run: python scripts/summarize_concalls.py --max "${{ github.event.schedule == '17 */2 * * *' && '100' || '250' }}" --max-ar "${{ github.event.schedule == '17 */2 * * *' && '15' || '40' }}"
+        run: python scripts/summarize_concalls.py --max "${{ github.event.schedule == '17 */2 * * *' && '100' || '250' }}" --max-ar "${{ github.event.schedule == '17 */2 * * *' && '15' || '40' }}"  --max-ratings "${{ github.event.schedule == '17 */2 * * *' && '200' || '500' }}"
 
       - name: Build company index
         run: |

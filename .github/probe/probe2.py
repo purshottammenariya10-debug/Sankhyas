@@ -17,7 +17,7 @@ if sys.argv[1] == "ratings":
     for x in json.load(open(".github/probe/ratings.json"))["ratings"]:
         try:
             info = rating_details("\n".join(pages(x["u"], 4)), x["t"])
-            print("RT", x["s"], json.dumps(info, ensure_ascii=False))
+            print("RT", x["s"], x["u"], json.dumps(info, ensure_ascii=False))
         except Exception as e:
             print("RT", x["s"], "ERR", e)
     sys.exit()

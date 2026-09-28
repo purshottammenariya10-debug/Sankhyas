@@ -56,6 +56,9 @@
     ['FII holding rising quarters', 'fiiUpQtrs', '', 'FII up Qtrs', 'Consecutive quarters in which FIIs raised their holding'],
     ['Change in number of shareholders', 'holdersChg1q', '%', 'Chg Holders %', 'Change in the number of shareholders over the last quarter'],
     ['Results verdict', 'resVerdict', '', 'Results', 'Latest quarterly results: 1 = strong, 0 = mixed, -1 = weak (Sankhyas verdict)'],
+    ['Credit rating score', 'ratingScore', '', 'Rating Score', 'Latest long-term credit rating as a number: 20 = AAA, 17 = AA-, 14 = A-, 11 = BBB- (lowest investment grade), 1 = D'],
+    ['Credit rating change 1Year', 'ratingChg', '', 'Rating Chg', 'Credit rating actions in the last 12 months: +1 upgraded, -1 downgraded, 0 no change'],
+    ['Annual report issues', 'arIssues', '', 'AR Issues', 'High and medium severity findings in the latest annual report check (audit opinion, CARO, going concern)'],
     ['Number of Shareholders', 'shareholders', '', 'No. Eq. Shareholders', ''],
     ['Free cash flow last year', 'fcf', 'Rs.Cr.', 'Free Cash Flow Rs.Cr.', 'CFO - capex'],
     ['Cash from operations last year', 'cfo', 'Rs.Cr.', 'CF Opr Rs.Cr.', ''],
@@ -163,6 +166,8 @@
     { slug: 'sme-stocks', name: 'SME Stocks', desc: 'Profitable, growing companies listed on the NSE Emerge SME platform.', query: 'SME listed = 1 AND Return on capital employed > 15 AND Sales growth 3Years > 15' },
     { slug: 'fii-accumulation', name: 'FIIs Buying', desc: 'Foreign investors have raised their stake for three quarters in a row.', query: 'FII holding rising quarters >= 3 AND Market Capitalization > 500' },
     { slug: 'promoter-buying', name: 'Promoters Buying', desc: 'Promoters raised their holding last quarter and have not pledged shares.', query: 'Change in promoter holding > 0.5 AND Pledged percentage < 1' },
+    { slug: 'rating-upgrades', name: 'Credit Rating Upgrades', desc: 'Companies whose credit rating was upgraded in the last 12 months.', query: 'Credit rating change 1Year > 0' },
+    { slug: 'clean-audit', name: 'Clean Audit, Strong Balance Sheet', desc: 'AA- or better credit rating, no serious annual report findings and low debt.', query: 'Credit rating score >= 17 AND Annual report issues = 0 AND Debt to equity < 0.5' },
     { slug: 'strong-results', name: 'Strong Latest Results', desc: 'Companies whose latest quarterly results the Sankhyas verdict rates strong.', query: 'Results verdict = 1 AND Market Capitalization > 500' },
     { slug: 'psu-stocks', name: 'Cash Rich Companies', desc: 'Companies generating strong free cash flow.', query: 'Free cash flow last year > 2000 AND Debt to equity < 0.3' }
   ];

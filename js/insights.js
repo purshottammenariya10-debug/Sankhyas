@@ -90,8 +90,63 @@
     if (ok(m.promoter) && m.promoter > 0 && m.promoter < 20 && !/bank|financial/i.test(c.sector || '')) add('low', 5, 'Low insider ownership', 'Promoters and insiders own ' + r1(m.promoter) + '%. That is normal for professionally run companies, but worth checking.');
     return out;
   }
+  /* ---------- credit ratings read from the rating letters (scripts/ratings.py) ---------- */
+  const LONG_SCALE = ['AAA', 'AA+', 'AA', 'AA-', 'A+', 'A', 'A-', 'BBB+', 'BBB', 'BBB-', 'BB+', 'BB', 'BB-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D'];
+  const ratingRank = r => LONG_SCALE.indexOf(String(r || '').toUpperCase());
+  const RATING_ACT = { upgrade: 'Upgraded', downgrade: 'Downgraded', reaffirm: 'Reaffirmed', assign: 'Assigned', withdraw: 'Withdrawn', outlook_up: 'Outlook raised', outlook_down: 'Outlook cut', watch: 'On watch' };
+  function creditRatings(filings) {
+    const A = ((filings && filings.announcements) || []).filter(a => a.k === 'rating' && a.rt && !a.skip).sort((a, b) => (a.d < b.d ? 1 : -1));
+    if (!A.length) return null;
+    // latest long-term rating per agency
+    const byAg = {};
+    A.forEach(a => { const ag = a.ag || 'Agency'; if (!byAg[ag] && a.term !== 'short') byAg[ag] = a; });
+    const latest = Object.values(byAg).sort((a, b) => (a.d < b.d ? 1 : -1));
+    const since = new Date(Date.now() - 365 * 864e5).toISOString();
+    const changes = A.filter(a => a.d >= since && /^(upgrade|downgrade|outlook_up|outlook_down|watch)$/.test(a.act || ''));
+    const head = latest[0] || A[0];
+    return { list: A, latest, head, up: changes.filter(a => a.act === 'upgrade' || a.act === 'outlook_up').length,
+      down: changes.filter(a => a.act === 'downgrade' || a.act === 'outlook_down').length, changes, rank: ratingRank(head.rt) };
+  }
+  const ratingText = a => (a.ag ? a.ag + ' ' : '') + a.rt + (a.ol ? ' (' + a.ol + ')' : '');
+
+  /* ---------- annual report forensic check (scripts/ar_forensics.py) ---------- */
+  function annualReportCheck(filings) {
+    const f = filings || {}, notes = f.notes || {};
+    const reps = (f.annualReports || []).slice().sort((a, b) => ((a.y || '') < (b.y || '') ? 1 : -1));
+    const urls = reps.map(r => [r.u, r.y]).concat((f.announcements || []).filter(a => notes[a.u] && notes[a.u].kind === 'ar').map(a => [a.u, '']));
+    for (const [u, y] of urls) {
+      const n = notes[u];
+      if (n && n.forensic) return Object.assign({ url: u, year: y || n.y || '' }, n.forensic);
+    }
+    return null;
+  }
+  const AR_PTS = { high: 20, medium: 10, low: 3 };
+  function arFlags(filings) {
+    const ar = annualReportCheck(filings);
+    if (!ar) return [];
+    return (ar.flags || []).map(x => ({ sev: x.sev, pts: AR_PTS[x.sev] || 3, title: x.t, detail: 'Annual report ' + (ar.year || '') + (x.p ? ', page ' + x.p : '') + ': "' + x.x + '"',
+      src: ar.url + (x.p ? '#page=' + x.p : ''), kind: 'annual report' }));
+  }
+  function ratingFlags(filings) {
+    const cr = creditRatings(filings);
+    if (!cr) return [];
+    const since = new Date(Date.now() - 2 * 365 * 864e5).toISOString();
+    const out = [];
+    const dn = cr.list.find(a => a.d >= since && a.act === 'downgrade');
+    if (dn) out.push({ sev: 'medium', pts: 10, title: 'Credit rating downgraded', detail: (dn.ag || 'Rating agency') + ' cut the rating' + (dn.from ? ' from ' + dn.from : '') + ' to ' + dn.rt +
+      (dn.ol ? ' (' + dn.ol + ')' : '') + ' on ' + new Date(dn.d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '.', src: dn.u, kind: 'filing' });
+    const cur = cr.head;
+    if (cur && ratingRank(cur.rt) >= LONG_SCALE.indexOf('BB+')) out.push({ sev: ratingRank(cur.rt) >= LONG_SCALE.indexOf('C+') ? 'high' : 'medium', pts: ratingRank(cur.rt) >= LONG_SCALE.indexOf('C+') ? 20 : 10,
+      title: cur.rt === 'D' ? 'Rated in default (D)' : 'Below investment grade credit rating', detail: 'Latest rating ' + ratingText(cur) + ' on ' + new Date(cur.d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '.', src: cur.u, kind: 'filing' });
+    return out;
+  }
   function redFlags(c, filings) {
-    const flags = numberFlags(c).concat(filingFlags(filings || c._filings));
+    const F = filings || c._filings;
+    let fl = filingFlags(F);
+    const rf = ratingFlags(F);
+    // the rating letter is more precise than the filing title: prefer it
+    if (rf.some(x => x.title === 'Credit rating downgraded')) fl = fl.filter(x => x.title !== 'Credit rating downgraded');
+    const flags = numberFlags(c).concat(fl, rf, arFlags(F));
     flags.sort((a, b) => SEV[b.sev] - SEV[a.sev] || b.pts - a.pts);
     const score = Math.min(100, sum(flags.map(f => f.pts)));
     const band = score >= 45 ? 'High' : score >= 20 ? 'Moderate' : 'Low';
@@ -449,6 +504,25 @@
       add('Red flags', rf.band === 'Low' ? 'neu' : 'neg', rf.flags.length + ' warning sign' + (rf.flags.length > 1 ? 's' : '') + ' (' + rf.band.toLowerCase() + ' risk), the most serious: ' + top.title.toLowerCase() + '.');
     } else add('Red flags', 'pos', 'Clean on every forensic check: cash conversion, debt, receivables, dilution' + (rf.checked ? ', auditor exits, pledges and regulatory action' : '') + '.');
 
+    // credit rating and the annual report's audit
+    const F = c._filings;
+    const cr = F && creditRatings(F);
+    if (cr && cr.head) {
+      const when = d => new Date(d).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+      const last = cr.changes[0];
+      const rk = ratingRank(cr.head.rt);
+      add('Credit rating', cr.down ? 'neg' : cr.up ? 'pos' : rk >= 0 && rk <= 3 ? 'pos' : rk >= 10 ? 'neg' : 'neu',
+        'Rated ' + ratingText(cr.head) + (last ? '; ' + RATING_ACT[last.act].toLowerCase() + (last.from ? ' from ' + last.from : '') + ' in ' + when(last.d) : cr.head.act === 'reaffirm' ? ', reaffirmed in ' + when(cr.head.d) : ' as of ' + when(cr.head.d)) +
+        (cr.latest.length > 1 ? ' (' + cr.latest.length + ' agencies)' : '') + '.');
+    }
+    const ar = F && annualReportCheck(F);
+    if (ar) {
+      const serious = (ar.flags || []).filter(x => x.sev !== 'low');
+      add('Annual report', serious.some(x => x.sev === 'high') ? 'neg' : serious.length ? 'neu' : 'pos',
+        (ar.year ? ar.year + ': ' : '') + (serious.length ? serious.length + ' issue' + (serious.length > 1 ? 's' : '') + ' flagged, the most serious: ' + serious[0].t.replace(/ \(CARO\)$/, '').toLowerCase() + ' (page ' + serious[0].p + ')'
+          : (ar.opinion === 'Unmodified' ? 'clean audit opinion' : 'no audit qualification found') + (ar.auditor ? ' from ' + ar.auditor : '') + '; no adverse remarks in the auditor\'s CARO checklist') + '.');
+    }
+
     // 6. management: guidance delivery, then concall tone, then order wins
     const gd = guidance(c), w = whatChanged(c), act = c._activity;
     const orders = act ? act.orders.filter(x => x.s === c.symbol) : [];
@@ -496,5 +570,5 @@
     return head + ': ' + (good.length && bad.length ? list(good) + ', but ' + list(bad) : list(good.length ? good : bad)) + '.';
   }
 
-  window.Insights = { quickRead, resultsWhy, computeScores, scoreOf, scoreBand, PILLARS, redFlags, guidance, whatChanged, redFlagsMd, guidanceMd, whatChangedMd, METRIC_LABEL, resultsVerdict, holdingStats, quarterLabel };
+  window.Insights = { creditRatings, annualReportCheck, ratingRank, RATING_ACT, ratingText, quickRead, resultsWhy, computeScores, scoreOf, scoreBand, PILLARS, redFlags, guidance, whatChanged, redFlagsMd, guidanceMd, whatChangedMd, METRIC_LABEL, resultsVerdict, holdingStats, quarterLabel };
 })();

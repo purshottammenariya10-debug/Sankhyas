@@ -274,7 +274,7 @@
       '': pageHome, company: pageCompany, screens: pageScreens, screen: pageScreen, feed: pageFeed, tools: pageTools,
       market: pageMarket, results: pageResults, compare: pageCompare, watchlist: pageWatchlist,
       login: pageLogin, register: pageRegister, premium: pagePremium, about: pageAbout, ai: pageAI,
-      deals: pageDeals, orders: pageOrders, report: pageReport,
+      deals: pageDeals, orders: pageOrders, ratings: pageRatings, report: pageReport,
       ipo: pageIPO, calendar: pageCalendar, themes: pageThemes, theme: pageThemes, studio: pageStudio,
       account: pageAccount, portfolio: pagePortfolio, alerts: pageAlerts, forgot: pageForgot, reset: pageReset, terms: pageLegal, privacy: pageLegal, refunds: pageLegal, contact: pageLegal
     };
@@ -640,12 +640,13 @@
     const open = Account.isPro();
     const note = !Account.cloud || Account.config.proFreeDuringBeta ? 'Free during beta.' : open ? 'Included in your Pro plan.' : 'The quick read, results and ownership are free; the detailed cards are part of Sankhyas Pro.';
     let cards, empty = [];
-    if (open) cards = riskCard(c) + changedCard(c, empty) + guidanceCard(c, empty) + ordersCard(c, empty) + dealsCard(c, empty);
+    if (open) cards = riskCard(c) + arCheckCard(c) + ratingsCard(c) + changedCard(c, empty) + guidanceCard(c, empty) + ordersCard(c, empty) + dealsCard(c, empty);
     else {
       const r = Insights.redFlags(c), g = Insights.guidance(c), w = Insights.whatChanged(c);
       const cls = r.band === 'High' ? 'risk-high' : r.band === 'Moderate' ? 'risk-mid' : 'risk-low';
       cards = lockedCard('ins-risk', 'Red-flag scan', '<div class="risk-meter ' + cls + '"><div class="risk-score"><b>' + r.score + '</b><span>/100</span></div><div><div class="risk-band">' + r.band + ' risk</div>' +
           '<div class="risk-bar"><span style="width:' + Math.max(3, r.score) + '%"></span></div></div></div><p class="muted">' + (r.flags.length ? r.flags.length + ' warning sign' + (r.flags.length > 1 ? 's' : '') + ' found' : 'No warning signs found') + '. See each one and the filing behind it with Pro.</p>') +
+        ratingsCard(c) + (Insights.annualReportCheck(c._filings) ? lockedCard('ins-ar', 'Annual report check', '<p class="muted">' + ((Insights.annualReportCheck(c._filings).flags || []).length ? (Insights.annualReportCheck(c._filings).flags || []).length + ' finding(s) from the auditor\'s report, CARO and the notes, each with its page number.' : 'Auditor\'s opinion, CARO remarks, contingent liabilities and pay, each with its page number.') + '</p>') : '') +
         lockedCard('ins-changed', 'What changed', '<p class="muted">' + (w.results ? 'Results for ' + esc(w.results.quarter) + ' vs the previous quarter and a year ago' : 'Latest results vs the previous quarter') + (w.concall ? ', concall tone and guidance changes' : '') + (w.filings.length ? ', and ' + w.filings.length + ' important filing' + (w.filings.length > 1 ? 's' : '') : '') + '.</p>') +
         lockedCard('ins-guide', 'Guidance tracker', '<p class="muted">' + (g.rows.length ? g.rows.length + ' management target' + (g.rows.length > 1 ? 's' : '') + ' tracked from ' + g.calls + ' concall' + (g.calls > 1 ? 's' : '') + '. See what was promised and what was delivered.' : 'Management\'s concall promises, scored against what was actually delivered.') + '</p>');
       const act = c._activity;
@@ -660,7 +661,7 @@
     return '<section class="section card" id="insights"><div class="section-head"><div><h2>Sankhyas Insights</h2><p>A quick read of results, ownership, valuation and risks, generated from exchange filings and the financials. ' + note + '</p></div></div>' +
       quickReadPanel(c) + resultsCard(c) + score + '<div class="ins-grid">' + own + cards + '</div>' + quiet + '</section>';
   }
-  const QR_ICON = { Results: '📊', Ownership: '👥', Valuation: '🏷️', Quality: '⚙️', 'Red flags': '🚩', Management: '🎙️', Orders: '📦', Price: '📈' };
+  const QR_ICON = { 'Credit rating': '🏦', 'Annual report': '📘', Results: '📊', Ownership: '👥', Valuation: '🏷️', Quality: '⚙️', 'Red flags': '🚩', Management: '🎙️', Orders: '📦', Price: '📈' };
   function quickReadPanel(c) {
     let hpe = null;
     try { hpe = window.AI && AI.historicPE ? AI.historicPE(c) : null; } catch (e) { hpe = null; }
@@ -698,6 +699,44 @@
         tile('Net profit', cr(v.cur.np), 'np', '%') + tile('EPS', v.cur.eps == null ? '-' : '₹ ' + num(v.cur.eps, 2), 'eps', '%') + '</div>' +
       (oneOff ? '<p class="res-note">⚠ ' + esc(oneOff) + '.</p>' : '') +
       '<p class="table-note">From the results filed with NSE. The verdict weighs revenue and profit growth against the same quarter last year and the change in margin; it is not a recommendation.</p></div>';
+  }
+  const RATING_CLS = { upgrade: 'up', outlook_up: 'up', downgrade: 'down', outlook_down: 'down', watch: 'down', withdraw: 'muted' };
+  const ratingWhen = d => new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  function ratingActHtml(a) {
+    const lbl = Insights.RATING_ACT[a.act] || '';
+    return lbl ? '<span class="rt-act ' + (RATING_CLS[a.act] || '') + '">' + (a.act === 'upgrade' || a.act === 'outlook_up' ? '▲ ' : a.act === 'downgrade' || a.act === 'outlook_down' ? '▼ ' : '') + lbl + '</span>' : '';
+  }
+  // free: credit ratings read from the rating letters filed with the exchange
+  function ratingsCard(c) {
+    const cr = c._filings && Insights.creditRatings(c._filings);
+    if (!cr) return '';
+    const own = cr.latest.filter(a => !a.sub);
+    const chips = (own.length ? own : cr.latest).slice(0, 4).map(a => '<div class="rt-chip"><div class="sub">' + esc(a.ag || 'Agency') + '</div><b>' + esc(a.rt) + '</b>' + (a.ol ? '<span class="sub"> / ' + esc(a.ol) + '</span>' : '') +
+      '<div class="sub">' + ratingWhen(a.d) + '</div></div>').join('');
+    const rows = cr.list.slice(0, 8).map(a => '<li><span class="sub">' + docWhen(a.d) + '</span> <b>' + esc(Insights.ratingText(a)) + '</b> ' + ratingActHtml(a) +
+      (a.from ? ' <span class="sub">from ' + esc(a.from) + '</span>' : '') + '<div class="sub">' + esc([a.ins, a.ramt ? '₹ ' + num(a.ramt, 0) + ' Cr' : '', a.sub ? 'subsidiary' : '', a.st ? 'short term ' + a.st : ''].filter(Boolean).join(' · ')) +
+      ' <a target="_blank" rel="noopener noreferrer" href="' + esc(a.u) + '">letter ↗</a></div></li>').join('');
+    return '<div class="ins-card ins-ratings"><div class="ins-head"><h3>Credit ratings</h3>' + (cr.down ? '<span class="rt-act down">▼ downgraded in 12m</span>' : cr.up ? '<span class="rt-act up">▲ upgraded in 12m</span>' : '') + '</div>' +
+      '<div class="rt-chips">' + chips + '</div><ul class="act-list">' + rows + '</ul>' +
+      '<p class="table-note">Read from rating letters filed with the exchange. AAA is the highest; BBB- is the lowest investment grade; D is default.</p></div>';
+  }
+  // Pro: forensic read of the latest annual report, each finding linked to its page
+  function arCheckCard(c) {
+    const ar = c._filings && Insights.annualReportCheck(c._filings);
+    if (!ar) return '';
+    const link = p => (p ? ' <a target="_blank" rel="noopener noreferrer" href="' + esc(ar.url) + '#page=' + p + '">p. ' + p + ' ↗</a>' : '');
+    const nw = (c.bs && c.bs.equity && c.bs.reserves) ? (c.bs.equity[c.bs.equity.length - 1] || 0) + (c.bs.reserves[c.bs.reserves.length - 1] || 0) : null;
+    const facts = (ar.facts || []).map(f => {
+      let v = f.t === 'Contingent liabilities' ? '₹ ' + num(f.v, 0) + ' Cr' + (nw > 0 ? ' <span class="sub">(' + num(f.v / nw * 100, 0) + '% of net worth)</span>' : '') : esc(String(f.v));
+      if (f.t === 'Audit opinion') v = '<span class="' + (/^Unmodified/.test(f.v) ? 'up' : 'down') + '">' + (/^Unmodified/.test(f.v) ? 'Clean (unmodified)' : esc(f.v)) + '</span>';
+      return '<div class="ar-fact"><div class="sub">' + esc(f.t) + '</div><div>' + v + link(f.p) + '</div></div>';
+    }).join('');
+    const flags = (ar.flags || []).length
+      ? '<ul class="flag-list">' + ar.flags.map(f => '<li><span class="sev sev-' + f.sev + '" title="' + f.sev + ' severity"></span><div><b>' + esc(f.t) + '</b>' + link(f.p) + '<div class="sub">"' + esc(f.x) + '"</div></div></li>').join('') + '</ul>'
+      : '<p class="ar-clean">✓ No qualification, going-concern doubt, emphasis of matter or adverse CARO remark found.</p>';
+    return '<div class="ins-card ins-ar"><div class="ins-head"><h3>Annual report check' + (ar.year ? ' <span class="sub">' + esc(ar.year) + '</span>' : '') + '</h3>' + PRO_TAG + '</div>' +
+      '<div class="ar-facts">' + facts + '</div>' + flags +
+      '<p class="table-note">Read from the full annual report' + (ar.pages ? ' (' + ar.pages + ' pages)' : '') + ': the independent auditor\'s reports, the CARO annexure, the directors\' report and the notes. Quotes are the report\'s own words; click a page to check.</p></div>';
   }
   // free: how promoters, foreign and domestic institutions moved, from the NSE shareholding filings
   function ownershipCard(c) {
@@ -1397,7 +1436,8 @@
     const ratings = A.filter(a => a.k === 'rating').slice(0, 20);
     const crBody = '<ul class="doc-items">' + (ratings.length
       ? ratings.map(a => { const ag = (a.t + ' ' + (a.c || '')).match(RATING_AGENCY);
-          return '<li>' + ext(a.u, 'Rating update', '', cleanTitle(a.t)) + '<div class="doc-meta">' + docWhen(a.d) + ' from ' + esc(ag ? ag[1].toLowerCase() : (a.x || exName)) + '</div></li>'; }).join('')
+          const lbl = a.rt ? Insights.ratingText(a) + (a.act && Insights.RATING_ACT[a.act] ? ' · ' + Insights.RATING_ACT[a.act] : '') : a.act === 'withdraw' ? 'Rating withdrawn' : 'Rating update';
+          return '<li>' + ext(a.u, lbl, '', cleanTitle(a.t)) + '<div class="doc-meta">' + docWhen(a.d) + ' from ' + esc(a.ag || (ag ? ag[1].toLowerCase() : (a.x || exName))) + (a.sub ? ' · subsidiary' : '') + '</div></li>'; }).join('')
       : '<li>' + ext(P.ann, 'Rating updates') + '<div class="doc-meta">in ' + exName.toUpperCase() + ' filings</div></li>') + '</ul>';
 
     // Concalls: one row per results quarter with Transcript / AI Summary / PPT / REC. Documents we
@@ -1798,6 +1838,7 @@
       ['#/screens', 'Popular screens', 'Ready-made screens such as Magic Formula and Coffee Can.'],
       ['#/deals', 'Smart money', 'Bulk and block deals, and insider and promoter buying and selling, market-wide.'],
       ['#/orders', 'Order wins', 'Every order and contract win announced to the exchange, with its value.'],
+      ['#/ratings', 'Credit rating changes', 'Upgrades, downgrades and outlook changes from CRISIL, ICRA, CARE, India Ratings and others.'],
       ['#/ipo', 'IPO & new listings', 'Every mainboard and SME listing of the last 3 years and how it has done since.'],
       ['#/calendar', 'Results calendar', 'Upcoming board meetings for results, dividends and fund raising.'],
       ['#/themes', 'Theme tracker', 'Defence, railways, EV, PSU banks, renewables and more, with leaders and laggards.'],
@@ -2063,6 +2104,38 @@
             '<p class="table-note">Read from "bagging/receiving of orders" filings. Values in foreign currency are converted at approximate rates; some filings state no value.</p>') + '</div></div>';
       const sel = $('#ord-theme');
       if (sel) sel.onchange = () => { location.hash = link({ theme: sel.value }); };
+    });
+  }
+
+  /* ---------- Credit rating changes, market-wide ---------- */
+  function pageRatings(parts, params) {
+    setTitle('Credit rating changes');
+    const view = params.view || 'changes', days = +(params.days || 90);
+    app.innerHTML = LOADING;
+    const token = navToken;
+    Data.loadRatings().then(data => {
+      if (token !== navToken) return;
+      const pro = Account.isPro(), limit = pro ? 500 : 10;
+      const since = new Date(Date.now() - days * 864e5).toISOString();
+      const all = data ? data.ratings.filter(r => r.d >= since && !r.sub) : [];
+      const isUp = r => r.act === 'upgrade' || r.act === 'outlook_up', isDown = r => r.act === 'downgrade' || r.act === 'outlook_down' || r.act === 'watch';
+      const list = all.filter(r => view === 'all' ? true : view === 'up' ? isUp(r) : view === 'down' ? isDown(r) : isUp(r) || isDown(r));
+      const link = o => '#/ratings?' + Object.entries(Object.assign({ view, days }, o)).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+      const co = (sym, name) => Data.exists(sym) ? '<a href="#/company/' + encodeURIComponent(sym) + '">' + esc(name || sym) + '</a>' : esc(name || sym);
+      const n = f => all.filter(f).length;
+      app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Credit rating changes</h1><p>Rating actions by CRISIL, ICRA, CARE, India Ratings, Acuite, Infomerics and Brickwork, read from the rating letters companies file with the exchange.</p></div></div>' +
+        '<div class="flex flex-wrap" style="gap:12px;margin-bottom:16px"><div class="seg">' + [['changes', 'All changes'], ['up', 'Upgrades'], ['down', 'Downgrades'], ['all', 'Everything']].map(([k, l]) => '<a class="' + (k === view ? 'active' : '') + '" href="' + link({ view: k }) + '">' + l + '</a>').join('') + '</div>' +
+        '<div class="seg">' + [[30, '1 month'], [90, '3 months'], [365, '1 year']].map(([k, l]) => '<a class="' + (k === days ? 'active' : '') + '" href="' + link({ days: k }) + '">' + l + '</a>').join('') + '</div></div>' +
+        (!data ? '<p class="muted">Rating changes appear with the live data, from exchange filings.</p>'
+          : '<div class="stats-row"><div class="stat"><div class="sub">Upgrades</div><b class="up">' + n(isUp) + '</b></div><div class="stat"><div class="sub">Downgrades &amp; watch</div><b class="down">' + n(isDown) + '</b></div>' +
+            '<div class="stat"><div class="sub">Reaffirmed</div><b>' + n(r => r.act === 'reaffirm') + '</b></div><div class="stat"><div class="sub">Companies</div><b>' + new Set(all.map(r => r.s)).size + '</b></div></div>' +
+            '<div class="table-wrap"><table class="data list"><thead><tr><th class="l">Date</th><th class="l">Company</th><th class="l">Agency</th><th class="l">Rating</th><th class="l">Action</th><th class="l">Instrument</th><th>₹ Cr</th><th></th></tr></thead><tbody>' +
+            (list.length ? list.slice(0, limit).map(r => '<tr><td class="l">' + docWhen(r.d) + '</td><td class="l">' + co(r.s, r.n) + '</td><td class="l">' + esc(r.ag || '-') + '</td><td class="l"><b>' + esc(r.rt || '-') + '</b>' +
+              (r.ol ? ' <span class="sub">' + esc(r.ol) + '</span>' : '') + (r.from ? '<div class="sub">from ' + esc(r.from) + '</div>' : '') + '</td><td class="l">' + (ratingActHtml(r) || '<span class="muted">-</span>') + '</td><td class="l">' + esc(r.ins || '') + '</td><td>' +
+              (r.ramt ? num(r.ramt, 0) : '<span class="muted">-</span>') + '</td><td><a target="_blank" rel="noopener noreferrer" href="' + esc(r.u) + '">letter ↗</a></td></tr>').join('')
+              : '<tr><td colspan="8" class="muted" style="text-align:center;padding:20px">No rating actions of this kind in this period yet.</td></tr>') +
+            '</tbody></table></div>' + proLock(Math.min(limit, list.length), list.length, 'rating actions') +
+            '<p class="table-note">Ratings of subsidiaries are left out. A rating is an agency\'s view of credit risk, not of the share price; it is not investment advice.</p>') + '</div></div>';
     });
   }
 
@@ -2470,6 +2543,7 @@
     ['red_flags', 'Red-flag score changes', 'company'],
     ['insider_buy', 'Promoter / insider buying', 'company'],
     ['order_win', 'New order wins', 'company'],
+    ['rating_change', 'Credit rating upgraded or downgraded', 'company'],
     ['bulk_deal', 'Bulk or block deals', 'company'],
     ['concall', 'Concall transcript or presentation filed', 'company'],
     ['price_above', 'Price rises above', 'price'],

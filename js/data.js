@@ -594,6 +594,13 @@
     if (!_resultsList) _resultsList = getJSON('data/yahoo/results.json').catch(() => null);
     return _resultsList;
   }
+  /** Credit rating actions across companies, newest first (scripts/build_index.mjs). Cached. */
+  let _ratings = null;
+  function loadRatings() {
+    if (mode === 'sample') return Promise.resolve(null);
+    if (!_ratings) _ratings = getJSON('data/yahoo/ratings.json').catch(() => null);
+    return _ratings;
+  }
   /** Upcoming board meetings (results calendar) built by scripts/build_index.mjs. */
   function loadCalendar() {
     if (mode === 'sample') return Promise.resolve(null);
@@ -649,7 +656,7 @@
 
   window.Data = {
     TODAY, YEARS, QUARTERS: QUARTERS.map(q => q.label), SH_QUARTERS,
-    init, getCompany: getAny, loadCompany, loadFilings, loadCalendar, loadActivity, loadShareholding, loadResults, loadResultsList, latestFilings, listCompanies, search, median, cagr,
+    init, getCompany: getAny, loadCompany, loadFilings, loadCalendar, loadActivity, loadShareholding, loadResults, loadResultsList, loadRatings, latestFilings, listCompanies, search, median, cagr,
     mode: () => mode,
     liveInfo: () => ({
       count: mode === 'summary' ? Object.keys(summaries).length : Object.keys(live).length,

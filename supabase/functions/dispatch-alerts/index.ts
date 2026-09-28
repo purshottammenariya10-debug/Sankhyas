@@ -40,11 +40,12 @@ Deno.serve(async (req) => {
   const { data: rules } = await db.from('alerts').select('id, user_id, kind, symbol, params, channels, created_at').eq('active', true);
   if (!rules || !rules.length) return json({ rules: 0 });
 
-  const [activity, latest, metrics, resultsList] = await Promise.all([
+  const [activity, latest, metrics, resultsList, ratings] = await Promise.all([
     getJSON('data/yahoo/activity.json').catch(() => ({ orders: [], disclosures: [], deals: [] })),
     getJSON('data/filings/latest.json').catch(() => ({ items: [] })),
     getJSON('data/yahoo/metrics.json').catch(() => ({ companies: [] })),
     getJSON('data/yahoo/results.json').catch(() => ({ results: [] })),
+    getJSON('data/yahoo/ratings.json').catch(() => ({ ratings: [] })),
   ]);
   // latest quarterly results with the Sankhyas verdict, by symbol
   const RES: Record<string, any> = {};
@@ -98,6 +99,10 @@ Deno.serve(async (req) => {
       case 'order_win':
         for (const o of activity.orders || []) if (syms.has(o.s) && fresh(o.d, r))
           evs.push({ key: o.u, sym: o.s, text: `${nm(o.s)} won an order${o.amt ? ' worth ' + cr(o.amt) : ''}${o.cust ? ' from ' + o.cust : ''}. ${o.u}` });
+        break;
+      case 'rating_change':
+        for (const a of ratings.ratings || []) if (syms.has(a.s) && !a.sub && ['upgrade', 'downgrade', 'outlook_up', 'outlook_down', 'watch'].includes(a.act) && fresh(a.d, r))
+          evs.push({ key: a.u, sym: a.s, text: `${nm(a.s)}: ${a.ag || 'a rating agency'} ${({ upgrade: 'upgraded', downgrade: 'downgraded', outlook_up: 'raised the outlook on', outlook_down: 'cut the outlook on', watch: 'put on watch' } as Record<string, string>)[a.act]} its rating${a.from ? ' from ' + a.from : ''} to ${a.rt}${a.ol ? ' (' + a.ol + ')' : ''}. ${a.u}` });
         break;
       case 'insider_buy':
         for (const x of activity.disclosures || []) if (syms.has(x.s) && x.dir === 'buy' && fresh(x.d, r))

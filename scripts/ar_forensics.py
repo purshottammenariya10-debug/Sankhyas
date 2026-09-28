@@ -113,7 +113,8 @@ def audit_firm(pages):
                 if 3 <= len(n) <= 60 and n not in firms and not re.search(r"cost|secretar", n, re.I):
                     firms.append(n)
             if firms:
-                return " and ".join(firms[:2]), i + 1
+                joint = len(firms) > 1 and re.search(r"joint (?:statutory )?auditors", f, re.I)
+                return (" and ".join(firms[:2]) if joint else firms[0]), i + 1
     return None, None
 
 
@@ -213,6 +214,17 @@ def policy_changes(pages):
 TITLES = r"(?:Chairman|Chairperson|Managing Director|Executive Director|Director|Whole[- ]time Director|Vice Chairman|CEO|CFO|Chief Executive Officer|Chief Financial Officer|Company Secretary|Non[- ]Executive|Independent|and|&|-|–|,|\(|\))"
 
 
+def _name_before(seg, pos):
+    """The person named just before a figure: the last run of capitalised words, titles removed."""
+    back = seg[max(0, pos - 110):pos]
+    back = re.split(r"\d(?:\.\d+)?\s*:\s*1\b|\d+\.\d+|%", back)[-1]
+    back = re.sub(r"\b" + TITLES + r"\b|\bMr\.?|\bMs\.?|\bMrs\.?|\bShri\b|\bSh\.|\bSmt\.?|\bDr\.?", " ", back)
+    words = re.findall(r"[A-Z][A-Za-z.]*(?:\s+[A-Z][A-Za-z.]*){0,3}", back)
+    name = words[-1] if words else ""
+    name = re.sub(r"\d+$", "", name).strip(" .")
+    return name if 3 <= len(name) <= 40 and not re.search(r"^(Name|Designation|Ratio|Executive|Directors?|Non|Sr|No)$", name) else ""
+
+
 def remuneration(pages):
     for i, p in enumerate(pages):
         f = _flat(p)
@@ -223,17 +235,16 @@ def remuneration(pages):
         stop = re.search(r"percentage increase in the median|\(ii\)|\bii\)|2\s*\.?\s*The percentage", seg, re.I)
         if stop and stop.start() > 200:
             seg = seg[:stop.start()]
-        ratios = [(float(r.group(2)), r.start(), r.group(1)) for r in re.finditer(r"((?:[A-Z][A-Za-z.]*\s){1,5})[^0-9]{0,70}?(\d{1,4}(?:\.\d{1,2})?)\s*:\s*1\b", seg)]
+        ratios = [(float(r.group(1)), r.start()) for r in re.finditer(r"(?<![\d.])(\d{1,4}(?:\.\d{1,2})?)\s*:\s*1\b", seg)]
         if not ratios and not re.search(r"\(in lacs\)|\(in lakhs\)|amount in|remuneration of directors?/? ?kmp for|\(₹|\(`|\(rs", seg, re.I):
             # "Name  Ratio  % increase" tables: the first number after each name is the ratio
-            ratios = [(float(r.group(2)), r.start(), r.group(1)) for r in re.finditer(r"((?:[A-Z][A-Za-z.]*\s){2,5})(?:\([^)]{0,50}\)\s*)?(\d{1,4}(?:\.\d{1,2})?)\b(?!\s*%)", seg)]
+            ratios = [(float(r.group(2)), r.start(2)) for r in re.finditer(r"([A-Za-z)])\s+(\d{1,4}(?:\.\d{1,2})?)\b(?!\s*%)", seg)]
         ratios = [x for x in ratios if 1 <= x[0] <= 3000]
         if not ratios:
             continue
-        v, pos, name = max(ratios)
-        name = re.sub(r"\b" + TITLES + r"\b", " ", name)
-        name = WS.sub(" ", re.sub(r"^(?:Mr|Ms|Mrs|Shri|Sh|Smt|Dr)\.?\s+", "", name.strip())).strip(" .,-")
-        return {"t": "Highest pay vs median employee", "v": f"{v:g}x" + (f" ({name})" if 2 < len(name) < 40 else ""), "n": v, "p": i + 1}
+        v, pos = max(ratios)
+        name = _name_before(seg, pos)
+        return {"t": "Highest pay vs median employee", "v": f"{v:g}x" + (f" ({name})" if name else ""), "n": v, "p": i + 1}
     return None
 
 
