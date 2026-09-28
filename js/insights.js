@@ -98,12 +98,14 @@
     const A = ((filings && filings.announcements) || []).filter(a => a.k === 'rating' && a.rt && !a.skip).sort((a, b) => (a.d < b.d ? 1 : -1));
     if (!A.length) return null;
     // latest long-term rating per agency
+    // the company's own ratings; a subsidiary's only when there is nothing else
+    const own = A.filter(a => !a.sub).length ? A.filter(a => !a.sub) : A;
     const byAg = {};
-    A.forEach(a => { const ag = a.ag || 'Agency'; if (!byAg[ag] && a.term !== 'short') byAg[ag] = a; });
+    own.forEach(a => { const ag = a.ag || 'Agency'; if (!byAg[ag] && a.term !== 'short') byAg[ag] = a; });
     const latest = Object.values(byAg).sort((a, b) => (a.d < b.d ? 1 : -1));
     const since = new Date(Date.now() - 365 * 864e5).toISOString();
-    const changes = A.filter(a => a.d >= since && /^(upgrade|downgrade|outlook_up|outlook_down|watch)$/.test(a.act || ''));
-    const head = latest[0] || A[0];
+    const changes = own.filter(a => a.d >= since && /^(upgrade|downgrade|outlook_up|outlook_down|watch)$/.test(a.act || ''));
+    const head = latest[0] || own[0];
     return { list: A, latest, head, up: changes.filter(a => a.act === 'upgrade' || a.act === 'outlook_up').length,
       down: changes.filter(a => a.act === 'downgrade' || a.act === 'outlook_down').length, changes, rank: ratingRank(head.rt) };
   }
@@ -132,7 +134,7 @@
     if (!cr) return [];
     const since = new Date(Date.now() - 2 * 365 * 864e5).toISOString();
     const out = [];
-    const dn = cr.list.find(a => a.d >= since && a.act === 'downgrade');
+    const dn = cr.list.find(a => a.d >= since && a.act === 'downgrade' && !a.sub);
     if (dn) out.push({ sev: 'medium', pts: 10, title: 'Credit rating downgraded', detail: (dn.ag || 'Rating agency') + ' cut the rating' + (dn.from ? ' from ' + dn.from : '') + ' to ' + dn.rt +
       (dn.ol ? ' (' + dn.ol + ')' : '') + ' on ' + new Date(dn.d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '.', src: dn.u, kind: 'filing' });
     const cur = cr.head;

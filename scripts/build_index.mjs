@@ -100,7 +100,7 @@ for (const f of files) {
         }
         const ratingSince = new Date(Date.now() - 548 * 864e5).toISOString();
         (filings.announcements || []).filter(a => a.k === 'rating' && a.rt && a.d >= ratingSince).forEach(a =>
-          ratingEvents.push({ s: c.symbol, n: c.name, d: a.d, ag: a.ag || '', rt: a.rt, ol: a.ol || '', act: a.act || '', from: a.from || '', ins: a.ins || '', ramt: a.ramt || null, st: a.st || '', term: a.term || '', u: a.u, mc: Math.round(c.metrics.marketCap || 0) }));
+          ratingEvents.push({ s: c.symbol, n: c.name, d: a.d, ag: a.ag || '', rt: a.rt, ol: a.ol || '', act: a.act || '', from: a.from || '', ins: a.ins || '', ramt: a.ramt || null, st: a.st || '', term: a.term || '', sub: a.sub ? 1 : undefined, u: a.u, mc: Math.round(c.metrics.marketCap || 0) }));
         // annual report forensic check (scripts/ar_forensics.py)
         const arc = Insights.annualReportCheck(filings);
         if (arc) c.metrics.arIssues = (arc.flags || []).filter(x => x.sev !== 'low').length;
