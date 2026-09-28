@@ -747,7 +747,7 @@
     const score = scoreCard(c, open), own = ownershipCard(c);
     const quiet = empty.length ? '<p class="ins-quiet"><b>Nothing to report:</b> ' + empty.map(esc).join(' · ') + '.</p>' : '';
     return '<section class="section card" id="insights"><div class="section-head"><div><h2>Sankhyas Insights</h2><p>A quick read of results, ownership, valuation and risks, generated from exchange filings and the financials. ' + note + '</p></div></div>' +
-      quickReadPanel(c) + resultsCard(c) + score + '<div class="ins-grid">' + own + cards + '</div>' + quiet + '</section>';
+      quickReadPanel(c) + resultsCard(c) + segmentCard(c, open) + score + '<div class="ins-grid">' + own + cards + '</div>' + quiet + '</section>';
   }
   const QR_ICON = { 'Credit rating': '🏦', 'Annual report': '📘', Results: '📊', Ownership: '👥', Valuation: '🏷️', Quality: '⚙️', 'Red flags': '🚩', Management: '🎙️', Orders: '📦', Price: '📈' };
   function quickReadPanel(c) {
@@ -787,6 +787,38 @@
         tile('Net profit', cr(v.cur.np), 'np', '%') + tile('EPS', v.cur.eps == null ? '-' : '₹ ' + num(v.cur.eps, 2), 'eps', '%') + '</div>' +
       (oneOff ? '<p class="res-note">⚠ ' + esc(oneOff) + '.</p>' : '') +
       '<p class="table-note">From the results filed with NSE. The verdict weighs revenue and profit growth against the same quarter last year and the change in margin; it is not a recommendation.</p></div>';
+  }
+  // business segments from the results filing: revenue mix (free), growth and margins by segment (Pro)
+  const SEG_COLORS = ['#5b5bd6', '#e0a526', '#2f9e8f', '#d4577a', '#7a8ca3', '#8f6ad8', '#4a9be0', '#b7791f'];
+  function segmentCard(c, pro) {
+    const qs = (c._res && c._res.quarters) || [];
+    const cur = qs.find(q => q.seg && q.seg.length >= 2);
+    if (!cur) return '';
+    const key = n => String(n).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const ya = qs.find(q => q.seg && q.qe.slice(0, 4) === String(+cur.qe.slice(0, 4) - 1) && q.qe.slice(5) === cur.qe.slice(5) && q.cons === cur.cons);
+    const old = {};
+    (ya ? ya.seg : []).forEach(s => { old[key(s.n)] = s; });
+    const tot = cur.seg.reduce((a, s) => a + Math.max(0, s.rev || 0), 0) || 1;
+    const rows = cur.seg.map(s => { const o = old[key(s.n)];
+      return Object.assign({}, s, { share: (s.rev || 0) / tot * 100, m: s.rev > 0 && s.ebit != null ? s.ebit / s.rev * 100 : null,
+        yoy: o && o.rev > 0 && s.rev != null ? (s.rev / o.rev - 1) * 100 : null, eyoy: o && o.ebit > 0 && s.ebit != null ? (s.ebit / o.ebit - 1) * 100 : null,
+        mchg: o && o.rev > 0 && o.ebit != null && s.rev > 0 && s.ebit != null ? s.ebit / s.rev * 100 - o.ebit / o.rev * 100 : null }); })
+      .sort((a, b) => (b.rev || 0) - (a.rev || 0));
+    const qlabel = (() => { const d = new Date(cur.qe + 'T00:00:00'), m = d.getMonth() + 1, fy = m > 3 ? d.getFullYear() + 1 : d.getFullYear(); return 'Q' + ({ 6: 1, 9: 2, 12: 3, 3: 4 }[m] || '?') + ' FY' + String(fy).slice(2); })();
+    const bar = '<div class="seg-bar">' + rows.filter(r => r.share > 0).map((r, i) => '<span style="width:' + r.share.toFixed(2) + '%;background:' + SEG_COLORS[i % SEG_COLORS.length] + '" title="' + esc(r.n) + ': ' + num(r.share, 1) + '%"></span>').join('') + '</div>' +
+      '<div class="seg-legend">' + rows.filter(r => r.share > 0).map((r, i) => '<span><i style="background:' + SEG_COLORS[i % SEG_COLORS.length] + '"></i>' + esc(r.n) + ' <b>' + num(r.share, 0) + '%</b></span>').join('') + '</div>';
+    const cr = x => (x == null ? '<span class="muted">-</span>' : '₹' + num(x, Math.abs(x) < 100 ? 1 : 0) + ' Cr');
+    const pc = (x, u) => (x == null || !isFinite(x) ? '<span class="muted">-</span>' : '<span class="' + signCls(x) + '">' + (x > 0 ? '+' : '') + num(x, 1) + (u || '%') + '</span>');
+    // the segment that grew fastest and the one whose margin moved most, in words
+    const grown = rows.filter(r => r.yoy != null && r.share >= 5 && !/^others?$|^unallocated|^corporate/i.test(r.n)).sort((a, b) => b.yoy - a.yoy);
+    const said = grown.length >= 2 ? '<p class="sub">' + esc(grown[0].n) + ' grew fastest (' + (grown[0].yoy > 0 ? '+' : '') + num(grown[0].yoy, 0) + '% YoY)' +
+      (grown[grown.length - 1].yoy < 0 ? '; ' + esc(grown[grown.length - 1].n) + ' shrank (' + num(grown[grown.length - 1].yoy, 0) + '%)' : '; ' + esc(grown[grown.length - 1].n) + ' grew slowest (' + num(grown[grown.length - 1].yoy, 0) + '%)') + '.</p>' : '';
+    const table = '<div class="table-wrap"><table class="data"><thead><tr><th class="l">Segment</th><th>Revenue</th><th>Share</th><th>YoY</th><th>Segment profit</th><th>Margin</th><th>Margin vs last year</th></tr></thead><tbody>' +
+      rows.map(r => '<tr><td class="l">' + esc(r.n) + '</td><td>' + cr(r.rev) + '</td><td>' + num(r.share, 1) + '%</td><td>' + pc(r.yoy) + '</td><td>' + cr(r.ebit) + (r.eyoy != null ? ' <small>' + pc(r.eyoy) + '</small>' : '') +
+        '</td><td>' + (r.m == null ? '<span class="muted">-</span>' : num(r.m, 1) + '%') + '</td><td>' + pc(r.mchg, ' pts') + '</td></tr>').join('') + '</tbody></table></div>';
+    return '<div class="ins-card ins-seg"><div class="ins-head"><h3>Business segments <span class="sub">' + qlabel + ' · ' + (cur.cons ? 'consolidated' : 'standalone') + '</span></h3>' + PRO_TAG + '</div>' + bar +
+      (pro ? said + table + '<p class="table-note">Segment profit is before interest, unallocated costs and tax, as reported in the results filing' + (ya ? '; growth is against the same quarter last year' : '') + '.</p>'
+        : '<div class="lock-cta"><span aria-hidden="true">🔒</span> <b>Growth and margins by segment with Sankhyas Pro</b><div class="sub">Which business is driving results: revenue, profit and margin for each segment, against last year.</div><a class="btn btn-primary btn-small" href="#/premium">See Pro plans</a></div>') + '</div>';
   }
   const RATING_CLS = { upgrade: 'up', outlook_up: 'up', downgrade: 'down', outlook_down: 'down', watch: 'down', withdraw: 'muted' };
   const ratingWhen = d => new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
