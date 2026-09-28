@@ -1,0 +1,19 @@
+name: Probe (temporary)
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q pypdf requests
+      - name: Rating letters
+        run: python .github/probe/probe.py ratings
+      - name: Annual reports A
+        run: python .github/probe/probe.py ar TCS=https://nsearchives.nseindia.com/annual_reports/AR_29263_TCS_2025_2026_A_17427580_15052026234830.pdf ADANIENT=https://nsearchives.nseindia.com/annual_reports/AR_29299_ADANIENT_2025_2026_A_17942605_29052026223750.pdf PATANJALI=https://nsearchives.nseindia.com/annual_reports/AR_31537_PATANJALI_2025_2026_A_28779425_05092026162732.pdf BAJAJHIND=https://nsearchives.nseindia.com/annual_reports/AR_30148_BAJAJHIND_2025_2026_A_3648753_03082026165236.pdf
+      - name: Annual reports B
+        run: python .github/probe/probe.py ar INDIACEM=https://nsearchives.nseindia.com/annual_reports/AR_29876_INDIACEM_2025_2026_A_2407224_17072026210449.pdf NAHARINDUS=https://nsearchives.nseindia.com/annual_reports/AR_31568_NAHARINDUS_2025_2026_A_2540639_05092026174252.pdf VAKRANGEE=https://nsearchives.nseindia.com/annual_reports/AR_30878_VAKRANGEE_2025_2026_A_11890070_31082026160712.pdf RCOM=https://nsearchives.nseindia.com/annual_reports/AR_28972_RCOM_2024_2025_A_1610447_08092025212210.pdf
+      - name: Annual reports C
+        run: python .github/probe/probe.py ar HDFCBANK=https://nsearchives.nseindia.com/annual_reports/AR_29735_HDFCBANK_2025_2026_A_12667766_11072026001055.pdf DPABHUSHAN=https://nsearchives.nseindia.com/annual_reports/AR_31309_DPABHUSHAN_2025_2026_A_4617857_03092026195948.pdf SUZLON=https://nsearchives.nseindia.com/annual_reports/AR_30489_SUZLON_2025_2026_U_14174862_21082026161146.pdf ELGIRUBCO=https://nsearchives.nseindia.com/annual_reports/AR_30112_ELGIRUBCO_2025_2026_A_2474806_31072026192733.pdf
