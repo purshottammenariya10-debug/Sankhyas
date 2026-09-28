@@ -27,7 +27,7 @@ const KEYS = Screener.RATIOS.map(r => r.key).concat(['change', 'changePct', 'qtr
 const round = v => (v == null || !Number.isFinite(v) ? null : Number(v.toPrecision(6)));
 
 const index = fs.existsSync(path.join(dir, 'index.json')) ? JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')) : {};
-const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !['index.json', 'metrics.json', 'calendar.json', 'activity.json', 'results.json', 'ratings.json', 'ipo.json'].includes(f));
+const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !['index.json', 'metrics.json', 'calendar.json', 'activity.json', 'results.json', 'ratings.json', 'ipo.json', 'ipo_leads.json'].includes(f));
 const companies = [];
 let skipped = 0;
 const latestResults = [];

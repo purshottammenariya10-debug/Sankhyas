@@ -23,6 +23,8 @@ from exchange import NSE_HOME, nse_session  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "data" / "yahoo" / "ipo.json"
+LEADS = ROOT / "data" / "yahoo" / "ipo_leads.json"   # symbol -> lead managers, kept between runs
+LEAD_BACKFILL = 40                                     # past issues looked up per run for their lead managers
 EQUITY_SERIES = {"EQ", "BE", "SME", "SM", "ST"}
 
 
@@ -165,6 +167,26 @@ def main():
         if it.get("band") and it.get("lot"):
             it["min"] = round(it["band"][1] * it["lot"])                 # minimum investment, Rs
 
+    # lead managers of past issues, for each lead manager's track record on the research notes:
+    # remembered from the issues seen while open, and looked up for a few older issues each run
+    leads = json.loads(LEADS.read_text()) if LEADS.exists() else {}
+    for it in list(issues.values()) + closed:
+        if it.get("lead"):
+            leads[it["s"]] = it["lead"]
+    cutoff = (dt.date.today() - dt.timedelta(days=3 * 366)).isoformat()
+    todo = [p for p in past if p["s"] not in leads and (p["ld"] or p["end"]) >= cutoff][:LEAD_BACKFILL]
+    for p in todo:
+        try:
+            got = detail(nse, p["s"], "SME" if p["board"] == "SME" else "EQ")
+        except Exception:  # noqa: BLE001
+            got = {}
+        leads[p["s"]] = got.get("lead", "")        # "" = asked, NSE had none; not asked again
+    LEADS.parent.mkdir(parents=True, exist_ok=True)
+    LEADS.write_text(json.dumps(leads, separators=(",", ":")))
+    for p in past:
+        if leads.get(p["s"]):
+            p["lead"] = leads[p["s"]]
+
     open_, upcoming = [], []
     for it in issues.values():
         (upcoming if it.get("start") and it["start"] > today else open_).append(it)
@@ -189,7 +211,6 @@ def main():
                        "ratio": f"{m.group(1)}:{m.group(2)}", "fv": fv, "price": round(price, 2) if price else None, "subject": subj[:160]})
     rights.sort(key=lambda x: x["ex"] or x["rec"], reverse=False)
 
-    cutoff = (dt.date.today() - dt.timedelta(days=3 * 366)).isoformat()
     doc = {"updated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), "open": open_, "upcoming": upcoming, "closed": closed,
            "past": [p for p in past if (p["ld"] or p["end"]) >= cutoff], "rights": rights}
     if not (open_ or upcoming or past) and prev:
@@ -197,7 +218,8 @@ def main():
         return 0
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(doc, separators=(",", ":")))
-    print(f"ipo.json: {len(open_)} open, {len(upcoming)} upcoming, {len(closed)} closed awaiting listing, {len(doc['past'])} past (3 years), {len(rights)} rights issues")
+    print(f"ipo.json: {len(open_)} open, {len(upcoming)} upcoming, {len(closed)} closed awaiting listing, {len(doc['past'])} past (3 years), {len(rights)} rights issues, "
+          f"lead managers known for {sum(1 for p in doc['past'] if p.get('lead'))} past issues ({len(todo)} looked up this run)")
     return 0
 
 
