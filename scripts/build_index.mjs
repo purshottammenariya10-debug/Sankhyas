@@ -74,6 +74,8 @@ for (const f of files) {
     const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
     if (!j.prices || !j.prices.close || j.prices.close.length < 2) { skipped++; continue; }
     const c = Data._buildLive(j);
+    // NSE's dummy test symbols and mutual-fund segregated portfolios are not companies
+    if (/NSETEST$/.test(c.symbol) || /mutual fund|segregated portfolio/i.test(c.name || '')) { skipped++; continue; }
     const ff = path.join(filingsDir, c.symbol + '.json');
     const dl = dealsBy[c.symbol];
     if (dl) {

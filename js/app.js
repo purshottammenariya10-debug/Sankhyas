@@ -439,6 +439,7 @@
           c._filings = f;
           refreshDocuments();
           refreshInsights(c);
+          refreshSummary(c);
         }
         // fill the gaps live: concall history for companies the data job has not reached yet, and
         // summaries other visitors already generated
@@ -464,6 +465,7 @@
         const el = $('#sh-table');
         if (el) el.innerHTML = shareholdingTable(c, !!$('#sh-tabs [data-sh=y].active'));
         refreshInsights(c);
+        refreshSummary(c);
       });
     }
     bindNotes(c);
@@ -491,15 +493,101 @@
       }).join('') + '</ul>' +
       '<div class="flex" style="margin-top:12px"><button class="btn btn-small" id="edit-ratios">✎ Edit ratios</button>' +
       '<span class="sub">Showing ' + (c.standalone ? 'standalone' : 'consolidated') + ' figures.' + (c.live ? '' : ' <a href="' + hrefOther + '" data-view>View ' + other + '</a>') + '</span></div>' +
-      '</div><div class="about"><h3>About</h3><p>' + (c.about ? esc(c.about.length > 600 ? c.about.slice(0, 600).replace(/\s+\S*$/, '') + '…' : c.about) :
-      esc(c.name) + ' is one of India\'s leading companies in the ' + esc(c.industry.toLowerCase()) +
-      ' space, part of the ' + esc(c.sector) + ' sector. The company is listed on BSE and NSE' + (c.psu ? ' and is a public sector undertaking under the Government of India.' : '.')) + '</p>' +
-      '<h3>Key Points</h3><ul>' +
-      '<li><b>Scale:</b> Trailing twelve month revenue of ₹ ' + num(m.sales, 0) + ' Cr. with an operating margin of ' + num(m.opm, 1) + '%.</li>' +
-      '<li><b>Growth:</b> Sales have compounded at ' + num(m.salesGrowth5, 1) + '% over the last 5 years; profits at ' + num(m.profitGrowth5, 1) + '%.</li>' +
-      (c.live ? '<li><b>Ownership:</b> Insiders hold ' + num(m.promoter, 2) + '% and institutions ' + num(m.fii, 2) + '%.</li>'
-        : '<li><b>Ownership:</b> Promoters hold ' + num(m.promoter, 2) + '%, FIIs ' + num(m.fii, 2) + '% and DIIs ' + num(m.dii, 2) + '%.</li>') +
-      '</ul></div></div></section>';
+      aboutPointsHtml(c) + '</div>' + aboutBlock(c) + '</div></section>';
+  }
+  /* ---------- About: a short description, facts, and key points built only from data we have ---------- */
+  function aboutProfile(c) {
+    const text = String(c.about || '').replace(/\s+/g, ' ').trim();
+    const pick = rx => { const m = text.match(rx); return m ? m[1].trim() : ''; };
+    const facts = {
+      founded: pick(/\b(?:was )?(?:founded|incorporated|established|formed) in (\d{4})/i),
+      hq: pick(/\b(?:is )?(?:based|headquartered) in ([A-Z][A-Za-z .'-]+?)(?:,\s*India)?\./),
+      parent: pick(/\bsubsidiary of ([A-Z][A-Za-z0-9 .&'()-]+?)\.(?:\s|$)/),
+      former: pick(/\bformerly known as ([A-Z][A-Za-z0-9 .&'()-]+?)(?:\s+and\s+changed|\.|,)/)
+    };
+    // sentences that only restate those facts move out of the description
+    const sentences = text.split(/(?<=\.)\s+(?=[A-Z])/).filter(x => !/^(?:The company|It) (?:was (?:formerly known|founded|incorporated|established)|is (?:based|headquartered)|operates as a subsidiary)/i.test(x));
+    // long "It offers A, a ...; B, a ...; C, a ..." product lists become "It offers A, B, C and 12 more"
+    const shorten = x => {
+      const parts = x.split(/;\s+(?:and\s+)?/);
+      if (parts.length < 6) return x;
+      const lead = parts[0].match(/^(.*?\b(?:offers|provides|operates|manufactures|sells|markets|produces|includes)\s+)/i);
+      const names = parts.map((q, i) => (i === 0 && lead ? q.slice(lead[1].length) : q).split(/,\s+(?:a|an|the|which)\s/i)[0].trim()).filter(n => n && n.length < 60);
+      if (!lead || names.length < 6) return x;
+      return lead[1] + names.slice(0, 3).join(', ') + ' and ' + (names.length - 3) + ' more.';
+    };
+    const short = [];
+    let len = 0;
+    for (const x of sentences.map(shorten)) {
+      if (short.length && len + x.length > 420) break;
+      short.push(x);
+      len += x.length;
+      if (short.length >= 3) break;
+    }
+    return { facts, short: short.join(' '), full: text, trimmed: short.join(' ').length < text.length - 40 };
+  }
+  function aboutData(c) {
+    const m = c.metrics, P = aboutProfile(c), fin = /financ|bank|insur|nbfc/i.test((c.sector || '') + ' ' + (c.industry || ''));
+    const ok = v => v != null && isFinite(v);
+    const pct = (v, d) => num(v, d == null ? 1 : d) + '%';
+    const desc = P.short
+      ? '<p>' + esc(P.short) + '</p>' + (P.trimmed ? '<details class="about-more"><summary>Read full description</summary><p>' + esc(P.full) + '</p></details>' : '')
+      : '<p>' + esc(c.name) + ' is a listed company in the ' + esc((c.industry || '').toLowerCase()) + ' industry, part of the ' + esc(c.sector || '') + ' sector' + (c.psu ? ', and a public sector undertaking of the Government of India' : '') + '.</p>';
+    // facts
+    const summary = Data.getCompany(c.symbol) || {};
+    const listed = c.listed || summary.listed;
+    const cr = c._filings && Insights.creditRatings(c._filings);
+    const ar = c._filings && Insights.annualReportCheck(c._filings);
+    const chips = [
+      P.facts.founded && ['Founded', P.facts.founded],
+      P.facts.hq && ['Headquarters', P.facts.hq],
+      P.facts.parent && ['Part of', P.facts.parent],
+      P.facts.former && ['Formerly', P.facts.former],
+      listed && ['Listed', new Date(listed).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })],
+      cr && cr.head && ['Credit rating', Insights.ratingText(cr.head)],
+      ar && ar.auditor && ['Auditor', ar.auditor],
+      c.isin && ['ISIN', c.isin]
+    ].filter(Boolean);
+    const factHtml = chips.length ? '<dl class="about-facts">' + chips.map(([k, v]) => '<div><dt>' + k + '</dt><dd>' + esc(v) + '</dd></div>').join('') + '</dl>' : '';
+    // key points: each one only when its numbers exist
+    const pts = [];
+    const peers = Data.listCompanies().filter(x => x.industry === c.industry && x.metrics.marketCap > 0).sort((a, b) => b.metrics.marketCap - a.metrics.marketCap);
+    const rank = peers.findIndex(x => x.symbol === c.symbol) + 1;
+    if (ok(m.sales) && m.sales > 0) pts.push(['Scale', '₹ ' + num(m.sales, 0) + ' Cr revenue over the last 12 months' + (ok(m.opm) && !fin ? ' at a ' + pct(m.opm) + ' operating margin' : '') +
+      (rank && peers.length >= 3 ? '; #' + rank + ' of ' + peers.length + ' in ' + (c.industry || 'its industry') + ' by market cap' : '') + '.']);
+    const gY = ok(m.salesGrowth5) ? 5 : ok(m.salesGrowth3) ? 3 : 0;
+    if (gY) {
+      const sg = m['salesGrowth' + gY], pg = m['profitGrowth' + gY];
+      pts.push(['Growth', 'Sales ' + (sg >= 0 ? 'grew ' : 'shrank ') + pct(Math.abs(sg)) + ' a year over ' + gY + ' years' + (ok(pg) ? '; profit ' + (pg >= 0 ? 'grew ' : 'fell ') + pct(Math.abs(pg)) + ' a year' : '') + '.']);
+    }
+    const ret = fin ? m.roe : m.roce, retAvg = fin ? m.avgRoe5 : m.avgRoce5;
+    if (ok(ret)) pts.push(['Returns', (fin ? 'ROE ' : 'ROCE ') + pct(ret) + (ok(retAvg) ? ' (5-year average ' + pct(retAvg) + ')' : '') + (ok(m.roe) && !fin ? ', ROE ' + pct(m.roe) : '') + '.']);
+    if (!fin && ok(m.de)) pts.push(['Balance sheet', m.de < 0.05 ? 'Almost debt free.' : 'Debt is ' + num(m.de, 2) + 'x equity' + (ok(m.interestCoverage) && m.interestCoverage < 900 ? ', with interest covered ' + num(m.interestCoverage, 1) + ' times' : '') + '.']);
+    const h = c._shp && Insights.holdingStats(c._shp);
+    if (h) pts.push(['Ownership', (h.promoter > 0 ? 'Promoters ' + pct(h.promoter, 2) + ', ' : 'No promoter group; ') + 'FIIs ' + pct(h.fii, 2) + ', DIIs ' + pct(h.dii, 2) + (h.pledge ? '; ' + pct(h.pledge, 2) + ' of promoter shares pledged' : '') + ' (' + new Date(h.latest.q + 'T00:00:00').toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) + ').']);
+    else if (ok(m.promoter)) pts.push(['Ownership', 'Insiders hold ' + pct(m.promoter, 2) + (ok(m.fii) ? ' and institutions ' + pct(m.fii, 2) : '') + '.']);
+    const payout = c.pl && c.pl.payout ? c.pl.payout[c.pl.payout.length - 1] : null;
+    if (ok(m.divYield) && m.divYield > 0) pts.push(['Dividends', 'Yield ' + pct(m.divYield, 2) + (ok(payout) && payout > 0 ? ', paying out ' + pct(payout, 0) + ' of profit' : '') + '.']);
+    if (!fin && ok(m.cfo) && ok(m.np) && m.np > 0 && ok(m.fcf)) pts.push(['Cash', 'Operating cash flow ₹ ' + num(m.cfo, 0) + ' Cr last year; free cash flow ₹ ' + num(m.fcf, 0) + ' Cr.']);
+    return { desc, factHtml, pts };
+  }
+  function aboutBlock(c) {
+    const a = aboutData(c);
+    return '<div class="about"><h3>About</h3>' + a.desc + a.factHtml + '</div>';
+  }
+  // key points sit under the ratios, so both columns carry weight
+  function aboutPointsHtml(c) {
+    const pts = aboutData(c).pts;
+    return pts.length ? '<div class="key-points"><h3>Key points</h3><ul class="about-points">' + pts.map(([k, v]) => '<li><b>' + k + ':</b> ' + esc(v) + '</li>').join('') + '</ul></div>' : '';
+  }
+  function refreshSummary(c) {
+    const el = $('#summary');
+    if (!el) return;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = summarySection(c);
+    el.replaceWith(tmp.firstChild);
+    $$('#summary [data-view]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); routeKeepScroll = true; location.hash = a.getAttribute('href'); }));
+    bindTopRatios(c);
   }
   function bindTopRatios(c) {
     $('#edit-ratios').onclick = () => {

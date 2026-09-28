@@ -435,14 +435,29 @@
   const live = {};
   let liveMeta = null;
 
+  // face value = share capital / number of shares, snapped to the usual denominations
+  function faceValueOf(equity, sharesOut) {
+    const n = (equity || []).length;
+    for (let i = n - 1; i >= 0; i--) {
+      const e = equity[i], sh = sharesOut && sharesOut[i];
+      if (e > 0 && sh > 0) {
+        const fv = e / sh;
+        const best = [0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 4, 5, 10, 20, 50, 100, 1000].find(d => Math.abs(fv / d - 1) < 0.06);
+        return best != null ? best : null;
+      }
+    }
+    return null;
+  }
   function buildLive(j) {
     const known = bySymbol[j.symbol] || {};
     const a = j.annual || { periods: [] }, qq = j.quarterly || { periods: [] }, qt = j.quote || {};
     const col = (src, k) => (src[k] || src.periods.map(() => null)).map(v => (v == null ? null : v));
-    const shares = qt.shares || known.shares || null;
     const pl = {};
     ['sales', 'expenses', 'op', 'otherIncome', 'interest', 'depreciation', 'pbt', 'tax', 'np', 'eps'].forEach(k => { pl[k] = col(a, k); });
     const sharesOut = col(a, 'sharesOut');
+    // Yahoo often leaves the share count out of the quote: use the latest balance-sheet count (crore shares)
+    const lastShares = sharesOut.filter(v => v != null && v > 0).slice(-1)[0] || null;
+    const shares = qt.shares || lastShares || known.shares || null;
     pl.opm = pl.op.map((v, i) => div(v, pl.sales[i]) != null ? v / pl.sales[i] * 100 : null);
     pl.payout = col(a, 'dividendsPaid').map((d, i) => (d != null && pl.np[i] > 0 ? Math.abs(d) / pl.np[i] * 100 : null));
     pl.eps = pl.eps.map((v, i) => (v != null ? v : div(pl.np[i], shares)));
@@ -479,7 +494,7 @@
       // with Yahoo data, prefer Yahoo's classification so every company uses the same sector names
       sector: j.sector || known.sector || 'Others', industry: j.industry || known.industry || '',
       website: (j.website || known.website || '').replace(/^https?:\/\//, '').replace(/\/$/, ''),
-      bseCode: j.bse || known.bseCode || '', exchange: /\.BO$/i.test(j.yahoo || '') ? 'BSE' : 'NSE', yahoo: j.yahoo || '', isin: j.isin || '', faceValue: known.faceValue != null ? known.faceValue : null,
+      bseCode: j.bse || known.bseCode || '', exchange: /\.BO$/i.test(j.yahoo || '') ? 'BSE' : 'NSE', yahoo: j.yahoo || '', isin: j.isin || '', faceValue: known.faceValue != null ? known.faceValue : faceValueOf(bs.equity, sharesOut),
       psu: !!known.psu, promoter: ins || 0, shares, about: j.about || '',
       standalone: false, live: true, updated: j.updated,
       years: a.periods, quarters: qq.periods, shQuarters: ['Latest'],
