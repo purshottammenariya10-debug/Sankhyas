@@ -311,7 +311,9 @@ def main(argv=None):
         if d and repair_shp_scale(d):
             (SHP_DIR / f"{s}.json").write_text(json.dumps(d, separators=(",", ":")))
     never = sorted([s for s in nse_syms if not docs[s]], key=lambda s: -mcap.get(s, 0))
-    incomplete = [s for s in nse_syms if docs[s] and any(q.get("fii") is None for q in docs[s]["quarters"])]
+    # latest quarter missing first (largest companies first), then gaps in older quarters
+    latest_missing = sorted([s for s in nse_syms if docs[s] and docs[s]["quarters"] and docs[s]["quarters"][0].get("fii") is None], key=lambda s: -mcap.get(s, 0))
+    incomplete = latest_missing + [s for s in nse_syms if docs[s] and any(q.get("fii") is None for q in docs[s]["quarters"])]
     stale = sorted([s for s in nse_syms if docs[s] and age_days(docs[s]) > 15], key=lambda s: -age_days(docs[s]))
     queue = list(dict.fromkeys(never + incomplete + stale))[:args.max_shp]
     for sym in queue:
