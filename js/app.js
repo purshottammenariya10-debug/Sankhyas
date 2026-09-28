@@ -2188,8 +2188,8 @@
       const tiles = '<div class="stats-row">' +
         tile('Price band', band ? '₹' + num(band[0], 0) + (band[1] !== band[0] ? '–' + num(band[1], 0) : '') : '-', it && it.lot ? it.lot + ' shares a lot · ₹' + num(it.min || it.lot * upper, 0) : '') +
         tile('Issue size', cr(o.total || (it && it.size)), o.total ? (o.fresh ? 'fresh ' + cr(o.fresh) : '') + (o.fresh && o.ofs ? ' + ' : '') + (o.ofs ? 'OFS ' + cr(o.ofs) : '') : '') +
-        tile('Value at the top of the band', cr(v.mcap), v.ps ? num(v.ps, 1) + '× last year\'s revenue' : '') +
-        tile('P/E at the top of the band', v.pe ? num(v.pe, 1) : '<span class="muted">-</span>', v.ind_pe && v.ind_pe.avg ? 'listed peers average ' + num(v.ind_pe.avg, 1) : v.eps_year ? 'on ' + v.eps_year + ' EPS' : '') +
+        (v.mcap ? tile('Value at the top of the band', (v.mcap_est ? '~' : '') + cr(v.mcap), v.ps ? num(v.ps, 1) + '× last year\'s revenue' : v.mcap_est ? 'estimated from profit and EPS' : '') : '') +
+        tile('P/E at the top of the band', v.pe ? num(v.pe, 1) : v.eps != null && v.eps <= 0 ? '<span class="muted">loss-making</span>' : '<span class="muted">-</span>', v.ind_pe && v.ind_pe.avg ? 'listed peers average ' + num(v.ind_pe.avg, 1) : v.eps_year ? 'on ' + v.eps_year + ' EPS' : '') +
         (it && it.x != null ? tile('Subscribed', num(it.x, it.x < 10 ? 2 : 1) + '×', it.subs && it.subs.rii != null ? [['retail', it.subs.rii], ['QIB', it.subs.qib], ['NII', it.subs.nii]].filter(q => q[1] != null).map(q => q[0] + ' ' + num(q[1], 1) + '×').join(' · ') : '') : '') + '</div>';
 
       // free: what it does, where the money goes (company vs sellers), the numbers
@@ -2199,8 +2199,8 @@
       if (o.fresh != null || o.ofs != null) {
         const f = o.fresh || 0, s = o.ofs || 0, t = f + s || 1;
         split = card('Who gets the money', '<div class="split-bar"><span class="sb-fresh" style="width:' + (f / t * 100).toFixed(1) + '%"></span><span class="sb-ofs" style="width:' + (s / t * 100).toFixed(1) + '%"></span></div>' +
-          '<div class="split-legend"><div><i class="sb-fresh"></i><b>Fresh issue ' + cr(f) + '</b> <span class="sub">' + Math.round(f / t * 100) + '% · new shares; the money goes to the company</span></div>' +
-          '<div><i class="sb-ofs"></i><b>Offer for sale ' + cr(s) + '</b> <span class="sub">' + Math.round(s / t * 100) + '% · existing shareholders sell; the money goes to them</span></div></div>' +
+          '<div class="split-legend">' + (f ? '<div><i class="sb-fresh"></i><b>Fresh issue ' + cr(f) + '</b> <span class="sub">' + Math.round(f / t * 100) + '% · new shares; the money goes to the company</span></div>' : '') +
+          (s ? '<div><i class="sb-ofs"></i><b>Offer for sale ' + cr(s) + '</b> <span class="sub">' + Math.round(s / t * 100) + '% · existing shareholders sell; the money goes to them</span></div>' : '') + '</div>' +
           (s === 0 ? '<p class="sub">The whole issue is new shares: no existing shareholder is selling.</p>' : f === 0 ? '<p class="sub">The whole issue is an offer for sale: the company raises no money.</p>' : ''), 'note-split');
       }
       let fin = '';
@@ -2243,16 +2243,18 @@
       const leads = leadList(it && it.lead);
       if (leads.length || n.brlm) {
         const listed = ipoListed(ipo).filter(y => y.lead && y.s !== sym);
+        let known = 0;
         const rows = leads.map(l => {
           const kk = leadKey(l), mine = listed.filter(y => leadList(y.lead).some(z => leadKey(z) === kk));
           const g = mine.map(y => y.lgain).filter(v => v != null), r = mine.map(y => y.ret).filter(v => v != null);
           const ad = ((n.brlm && n.brlm.rows) || []).find(b => leadKey(b.n) === kk || leadKey(b.n).indexOf(kk) === 0 || kk.indexOf(leadKey(b.n)) === 0);
+          if (ad || mine.length) known++;
           return '<tr><td class="l">' + esc(l) + '</td><td>' + (ad ? ad.total + ' <span class="sub">(' + ad.below + ' below issue price)</span>' : '<span class="muted">-</span>') + '</td><td>' + (mine.length || '<span class="muted">-</span>') + '</td><td>' +
             (g.length ? '<span class="' + signCls(Data.median(g)) + '">' + num(Data.median(g), 1) + '%</span>' : '<span class="muted">-</span>') + '</td><td>' + (r.length ? Math.round(r.filter(v => v > 0).length / r.length * 100) + '%' : '<span class="muted">-</span>') + '</td></tr>';
         });
         brlm = card('Lead managers\' track record', (n.brlm && n.brlm.all ? '<p>The lead managers handled <b>' + n.brlm.all[0] + '</b> public issues in the past three years; <b>' + n.brlm.all[1] + '</b> closed below the issue price on listing day.</p>' : '') +
-          (rows.length ? '<div class="table-wrap"><table class="data"><thead><tr><th class="l">Lead manager</th><th>Issues, 3 years (their disclosure)</th><th>Listings we track</th><th>Median listing gain</th><th>Above issue price today</th></tr></thead><tbody>' + rows.join('') + '</tbody></table></div>' +
-            '<p class="sub">"Listings we track" are NSE issues from the last three years with this lead manager; the history fills in over the coming days.</p>' : ''), 'wide');
+          (rows.length && known ? '<div class="table-wrap"><table class="data"><thead><tr><th class="l">Lead manager</th><th>Issues, 3 years (their disclosure)</th><th>Listings we track</th><th>Median listing gain</th><th>Above issue price today</th></tr></thead><tbody>' + rows.join('') + '</tbody></table></div>' +
+            '<p class="sub">"Listings we track" are NSE issues from the last three years with this lead manager; the history fills in over the coming days.</p>' : leads.length ? '<p>' + leads.map(esc).join(', ') + '.</p><p class="sub">Their record on past NSE listings (listing-day gains, how many trade above the issue price) appears here as the history fills in.</p>' : ''), 'wide');
       }
       const risks = n.risks && n.risks.length ? card('Risks the company lists first', '<ol class="note-risks">' + n.risks.slice(0, 10).map(r => '<li>' + esc(r) + '</li>').join('') + '</ol><p class="sub">In the order the company states them. The prospectus has the full list.</p>') : '';
       const checks = [];

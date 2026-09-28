@@ -398,7 +398,7 @@ def basis(pages):
         # "A Limited, B and C Limited and D Ltd": split at commas and at an "and" that follows a company suffix
         names = re.split(r",\s*(?:and\s+)?|(?<=Limited)\s+and\s+|(?<=Ltd)\s+and\s+|(?<=Ltd\.)\s+and\s+", (ident.group(1) or ident.group(2))) if ident else []
         if not names:
-            names = re.findall(r"([A-Z][A-Za-z&.'()-]*(?:\s+[A-Za-z&.'()-]+){0,6}?\s+(?:Limited|Ltd\.?))\s*\*{0,2}\s*(?=\d|Consolidated|Standalone|\()", seg)
+            names = re.findall(r"([A-Z][\w&.'()-]*(?:\s+[\w&.'()-]+){0,6}?\s+(?:Limited|Ltd\.?))\s*\*{0,2}\s*(?=\d|Consolidated|Standalone|\()", seg)
         if not names:
             names = re.findall(r"([A-Z][\w&.'-]*(?:\s+[A-Z(&][\w&.'()-]*){0,6}\s+(?:Limited|Ltd\.?))\s*\*?\s*(?:Consolidated|Standalone)", seg)
         for n in names:
@@ -529,7 +529,8 @@ def risk_heads(pages):
             continue
         head = re.sub(r"\s\d{1,3}\s(?=[a-z])", " ", flat(m.group(2)))        # page number in the middle of a heading
         head = re.split(r"(?<=[a-z)%])\s?\.\s+(?=[A-Z])", head, 1)[0]
-        out.append(head[:240].rstrip(" ."))
+        head = re.sub(r"(\w) -(?=\w)", r"\1-", head)
+        out.append((head if len(head) <= 300 else head[:300].rsplit(" ", 1)[0] + "…").rstrip(" ."))
         if len(out) >= 8:
             break
     return out
@@ -545,6 +546,17 @@ def pre_offer_shares(pages):
 
 
 # ---------- note ----------
+def tidy_about(t, n=900):
+    if not t:
+        return t
+    t = re.sub(r"(\w) -(?=\w)", r"\1-", t)            # "consumer -focused" (a PDF text artefact)
+    t = re.split(r"\s(?:Notes?\s*:|\(\d\)\s+[A-Z“\"])|\s\d\.\s“", t)[0].strip()
+    if len(t) > n:
+        cut = t[:n].rsplit(". ", 1)[0]
+        t = (cut if len(cut) > 200 else t[:n].rsplit(" ", 1)[0]) + "."
+    return t
+
+
 def build_note(it, rhp_pages, ad_pages):
     unit = doc_unit(rhp_pages)
     ad = advert(ad_pages) if ad_pages else {}
@@ -558,6 +570,8 @@ def build_note(it, rhp_pages, ad_pages):
             terms[k] = ad[k]
     about_s, ps = summary_bits(rhp_pages, unit)
     biz, pb = business(rhp_pages)
+    biz = tidy_about(biz, 1400)
+    about_s["about"] = tidy_about(about_s.get("about"))
     note["about"] = {"t": ad.get("about") or about_s.get("about") or biz, "long": biz if biz and biz != (ad.get("about") or about_s.get("about")) else None, "p": pb or ps}
     note["promoters"] = terms.get("promoters")
     # the offer: fresh issue (money to the company) vs offer for sale (money to the sellers)
@@ -594,6 +608,15 @@ def build_note(it, rhp_pages, ad_pages):
     elif shares and upper:
         post = shares + (int(fresh * 1e7 / upper) if fresh else 0)
         val["mcap"] = round(post * upper / 1e7, 2)
+    elif upper and b.get("eps") and note.get("kpi") and note["kpi"].get("pat"):
+        # shares before the issue from the latest year's profit and EPS (profit / EPS), plus the new shares
+        per = note["kpi"]["periods"]
+        i = next((j for j, p in enumerate(per) if p == b.get("eps_year")), None)
+        pat = note["kpi"]["pat"][i] if i is not None else None
+        if pat and b["eps"] and pat * b["eps"] > 0:
+            pre = pat * 1e7 / b["eps"]
+            val["mcap"] = round((pre + (fresh * 1e7 / upper if fresh else 0)) * upper / 1e7, 2)
+            val["mcap_est"] = 1
     if val["mcap"] if "mcap" in val else None:
         rev = (note.get("kpi") or {}).get("rev")
         if rev:
