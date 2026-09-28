@@ -8,7 +8,8 @@ themselves come straight from nsearchives.nseindia.com, which answers everywhere
     data/shp/<SYMBOL>.json      {"quarters": [{"q": "2026-06-30", "promoter": 71.77, "fii": 9.06, "dii": 13.47,
                                                "gov": 0.0, "public": 5.7, "holders": 2605182, "pledge": 0.0}, ...]}
     data/results/<SYMBOL>.json  {"quarters": [{"qe": "2026-06-30", "cons": true, "filed": "...", "sales": 72275.0,
-                                               "op": 18630.0, "np": 13420.0, "eps": 36.9, ...}, ...]}   (Rs crore)
+                                               "op": 18630.0, "np": 13420.0, "eps": 36.9, ...,
+                                               "seg": [{"n": "Retail", "rev": 90409.0, "ebit": 4529.0}, ...]}, ...]}   (Rs crore)
 
 Each run spends a budget on the companies that need it most: companies that filed results in the
 last few days first, then those never fetched, then the stalest.
@@ -143,7 +144,48 @@ def parse_results(text):
     if out.get("np_owners") == 0 and out.get("np"):
         out["np_owners"] = None  # left blank as 0 by some filers without minority interest
     out["bank"] = ("InterestEarned", "OneD") in f
+    seg = parse_segments(f)
+    if seg:
+        out["seg"] = seg
+    out["sv"] = SEG_VERSION
     return out
+
+
+# ---------- business segments (Ind AS 108 segment reporting in the same results file) ----------
+SEG_VERSION = 1
+SEG_SKIP = re.compile(r"^\s*(?:\(?add\)?|\(?less\)?|total|unallocable|unallocated|inter[- ]?segment|elimination|eliminations|reconcil)", re.I)
+
+
+def parse_segments(f):
+    """[{"n": "Retail", "rev": 90409.0, "ebit": 4529.0}, ...] for the quarter (Rs crore): revenue from
+    contexts OneReportable<k>D, segment result (profit before interest and tax) from OneReportableFinance<k>D;
+    each carries the segment's name in DescriptionOfReportableSegment. Single-segment companies file none."""
+    if re.match(r"single", f.get(("IsCompanyReportingMultisegmentOrSingleSegment", "OneD"), ""), re.I):
+        return None
+    by = {}
+    for (name, ctx), val in f.items():
+        m = re.fullmatch(r"OneReportable(Finance)?(\d+)D", ctx)
+        if not m:
+            continue
+        key = (bool(m.group(1)), int(m.group(2)))
+        row = by.setdefault(key, {})
+        if name == "DescriptionOfReportableSegment":
+            row["n"] = re.sub(r"\s+", " ", val).strip(" .:-")
+        elif name == "SegmentRevenue" or (name == "SegmentRevenueFromOperations" and "v" not in row):
+            row["v"] = num(val)
+        elif name == "SegmentProfitLossBeforeTaxAndFinanceCosts":
+            row["v"] = num(val)
+    revs = {r["n"]: r["v"] for (fin, k), r in sorted(by.items()) if not fin and r.get("n") and r.get("v") is not None}
+    ebit = {r["n"]: r["v"] for (fin, k), r in sorted(by.items()) if fin and r.get("n") and r.get("v") is not None}
+    out = []
+    for n in list(dict.fromkeys(list(revs) + list(ebit))):
+        if SEG_SKIP.match(n) or len(n) > 90:
+            continue
+        rv, eb = revs.get(n), ebit.get(n)
+        if not rv and not eb:
+            continue                                  # reconciliation rows filed as 0
+        out.append({"n": n, "rev": None if rv is None else round(rv / 1e7, 2), "ebit": None if eb is None else round(eb / 1e7, 2)})
+    return out if len(out) >= 2 else None
 
 
 # ---------- runner ----------
@@ -192,7 +234,7 @@ def update_results(nse, sym, stats):
     for qe in sorted(by_q, reverse=True)[:KEEP_RES]:
         cons, r = by_q[qe]
         old = have.get(qe)
-        if old and old.get("cons") == cons and old.get("src") == r["xbrl"]:
+        if old and old.get("cons") == cons and old.get("src") == r["xbrl"] and old.get("sv") == SEG_VERSION:
             continue
         try:
             text = requests.get(r["xbrl"], headers=HEADERS, timeout=60).text
@@ -296,7 +338,9 @@ def main(argv=None):
     docs = {s: load(RES_DIR / f"{s}.json") for s in nse_syms}
     never = sorted([s for s in nse_syms if not docs[s]], key=lambda s: -mcap.get(s, 0))
     stale = sorted([s for s in nse_syms if docs[s] and age_days(docs[s]) > 20], key=lambda s: -age_days(docs[s]))
-    queue = list(dict.fromkeys([s for s in fresh if not docs[s] or age_days(docs[s]) > 0.25] + never + stale))[:args.max_results]
+    # quarters read before business segments were parsed are read again, largest companies first
+    no_seg = sorted([s for s in nse_syms if docs[s] and docs[s].get("quarters") and docs[s]["quarters"][0].get("sv") != SEG_VERSION], key=lambda s: -mcap.get(s, 0))
+    queue = list(dict.fromkeys([s for s in fresh if not docs[s] or age_days(docs[s]) > 0.25] + no_seg[:120] + never + stale))[:args.max_results]
     for sym in queue:
         try:
             update_results(nse, sym, stats)
