@@ -502,7 +502,9 @@
     // 5. forensic checks
     const rf = redFlags(c);
     if (rf.flags.length) {
-      const top = rf.flags.slice().sort((a, b) => SEV[b.sev] - SEV[a.sev])[0];
+      // the Annual report line below covers the audit findings: lead with something else when there is one
+      const pool = c._filings && annualReportCheck(c._filings) && rf.flags.some(f => f.kind !== 'annual report') ? rf.flags.filter(f => f.kind !== 'annual report') : rf.flags;
+      const top = pool.slice().sort((a, b) => SEV[b.sev] - SEV[a.sev])[0];
       add('Red flags', rf.band === 'Low' ? 'neu' : 'neg', rf.flags.length + ' warning sign' + (rf.flags.length > 1 ? 's' : '') + ' (' + rf.band.toLowerCase() + ' risk), the most serious: ' + top.title.toLowerCase() + '.');
     } else add('Red flags', 'pos', 'Clean on every forensic check: cash conversion, debt, receivables, dilution' + (rf.checked ? ', auditor exits, pledges and regulatory action' : '') + '.');
 
