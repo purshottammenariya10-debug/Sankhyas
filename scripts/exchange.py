@@ -102,7 +102,8 @@ class NseRelay:
         from urllib.parse import quote, urlencode
         # %20 for spaces: the relay only accepts plain URL characters, not '+'
         path = url.replace(NSE_HOME, "", 1) + ("?" + urlencode(params or {}, safe=",", quote_via=quote) if params else "")
-        if "?" not in path:
+        # most relay paths are "endpoint?query"; the IPO lists take no query and are allowed bare
+        if "?" not in path and path not in ("/api/ipo-current-issue", "/api/public-past-issues"):
             path += "?"
         for attempt in range(retries + 1):
             wait = self.delay - (time.time() - self._last)
