@@ -68,6 +68,12 @@ def auditor_report(pages):
             # the separate report on internal financial controls has its own opinion: not the accounts
             if re.search(r"internal financial controls?", f[max(0, m.start() - 700):m.start() + 300], re.I):
                 continue
+            # an opinion quoted from a subsidiary's or other auditor's report inside the consolidated report
+            if re.search(r"component auditors?|other auditors?|auditors? of (?:the |a |one of the )?(?:subsidiar|associate|joint venture)|reproduced (?:as )?below|in their (?:audit )?report", f[max(0, m.start() - 600):m.start()], re.I):
+                continue
+            # adverse opinions on the accounts are rare; on internal financial controls they are common
+            if kind == "Adverse" and re.search(r"internal financial controls?", f, re.I):
+                continue
             # a reference to the basis paragraph ("described in the Basis for Qualified Opinion section")
             if re.match(r"\s*(?:section|paragraph)", f[m.end():m.end() + 20], re.I):
                 continue
@@ -83,7 +89,7 @@ def auditor_report(pages):
                 out["opinion"], out["opinion_on"] = kind, on
             nxt = _flat(pages[i + 1]) if i + 1 < len(pages) else ""
             basis = re.search(r"Basis for (?:Qualified |Adverse )?(?:Opinion|Disclaimer of Opinion)(?!\s*(?:section|paragraph|of our report))\s*(?:\d+\.\s*)?(.{40,700})", f[m.start():] + " " + nxt)
-            title = ("Auditor could not give an opinion (disclaimer)" if kind == "Disclaimer" else "Auditor gave a " + kind.lower() + " opinion") + " on the " + on + " accounts"
+            title = ("Auditor could not give an opinion (disclaimer)" if kind == "Disclaimer" else ("Auditor gave an " if kind == "Adverse" else "Auditor gave a ") + kind.lower() + " opinion") + " on the " + on + " accounts"
             out["flags"].append({"sev": "high", "t": title, "x": _clip(basis.group(1) if basis else f[m.end():m.end() + 500]), "p": i + 1})
         if out["opinion"] is None and re.search(r"\bOpinion\b.{0,2500}(?:true and fair view|in our opinion)", f) and re.search(r"Basis for Opinion", f):
             out["opinion"] = "Unmodified"
@@ -102,6 +108,9 @@ def auditor_report(pages):
                 continue
             seen.add(k[:60])
             out["flags"].append({"sev": "medium", "t": "Auditor drew attention to a matter (emphasis of matter)", "x": _clip(txt, 300), "p": i + 1})
+    # a report was found and nothing in it was modified
+    if out["opinion"] is None and _audit_pages(pages) and any(re.search(r"Basis for Opinion|true and fair view", _flat(pages[i])) for i in _audit_pages(pages)):
+        out["opinion"] = "Unmodified"
     return out
 
 

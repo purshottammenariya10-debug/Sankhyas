@@ -401,6 +401,10 @@ def trade_details(text):
     return out
 
 
+RATING_VERSION = 2       # bump to read every rating letter again after a parser fix
+FORENSIC_VERSION = 2    # the same for the annual report check
+
+
 def rating_letters(requests, UA, limit=300):
     """Read credit rating letters once: agency, rating, outlook and action are stored on the filing."""
     from ratings import rating_details
@@ -410,7 +414,7 @@ def rating_letters(requests, UA, limit=300):
             continue
         doc = json.loads(f.read_text())
         for i, a in enumerate(doc.get("announcements", [])):
-            if a.get("k") == "rating" and not a.get("rdet") and a["u"].lower().endswith(".pdf"):
+            if a.get("k") == "rating" and (a.get("rdet") or 0) < RATING_VERSION and a["u"].lower().endswith(".pdf"):
                 todo.append((a["d"], f, i))
     todo.sort(key=lambda t: t[0], reverse=True)
     by_file, done, found = {}, 0, 0
@@ -418,7 +422,9 @@ def rating_letters(requests, UA, limit=300):
         doc = by_file.get(f) or json.loads(f.read_text())
         by_file[f] = doc
         a = doc["announcements"][i]
-        a["rdet"] = 1
+        a["rdet"] = RATING_VERSION
+        for k2 in ("skip", "sub", "ag", "rt", "from", "st", "ol", "term", "act", "ins", "ramt"):
+            a.pop(k2, None)
         done += 1
         try:
             r = requests.get(a["u"], headers={"User-Agent": UA, "Referer": "https://www.nseindia.com/"}, timeout=60)
@@ -602,7 +608,7 @@ def main(argv=None):
                 cand.append((fiscal_year(a["d"]), a["u"]))
                 break
         cand.sort(reverse=True)
-        if cand and (pending(notes, cand[0][1]) or (not notes[cand[0][1]].get("failed") and "forensic" not in notes[cand[0][1]])):
+        if cand and (pending(notes, cand[0][1]) or (not notes[cand[0][1]].get("failed") and (notes[cand[0][1]].get("forensic") or {}).get("v", 1) < FORENSIC_VERSION)):
             ars.append((cand[0][0], f, cand[0][1], "ar"))
     # every company's latest transcript and presentation first, then the one before, and so on;
     # newest first within each round
@@ -628,6 +634,7 @@ def main(argv=None):
                 try:
                     from ar_forensics import forensics
                     note["forensic"] = forensics(pages)
+                    note["forensic"]["v"] = FORENSIC_VERSION
                 except Exception as e:  # noqa: BLE001
                     print(f"{f.stem}: annual report check failed ({str(e)[:80]})", file=sys.stderr)
             elif kind == "ppt":

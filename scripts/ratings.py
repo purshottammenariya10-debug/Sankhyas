@@ -79,8 +79,15 @@ def _normalise(t):
 OUTLOOK_ORDER = {"negative": 0, "developing": 1, "stable": 1, "positive": 2}
 
 
+# rating rationales end with what could move the rating ("factors that could lead to an upgrade /
+# downgrade"): those words are not the action taken, so the action is read from the text before them
+SENSITIVITY = re.compile(r"rating sensitivit|factors that could (?:individually or collectively )?lead|could lead to (?:positive|negative) rating action|what could change the rating|positive factors|negative factors|key rating drivers|detailed rationale|analytical approach", re.I)
+
+
 def rating_details(text, title=""):
     flat = _normalise((title or "") + " . " + (text or ""))
+    cut = SENSITIVITY.search(flat)
+    body = flat[:cut.start()] if cut and cut.start() > 60 else flat
     out = {}
     first = RATING.search(flat)
     esg = re.search(r"\bESG\b|sustainability rating|environmental, social", flat, re.I)
@@ -130,13 +137,15 @@ def rating_details(text, title=""):
         out["term"] = "short" if (rank(out["rt"]) or 0) >= 100 else "long"
     # action: explicit words first (title counts most), then infer from the old and new rating
     act = None
-    for scope in ((title or "") + " " + flat[:1500], flat):
+    for scope in ((title or "") + " " + body[:1500], body):
         for name, rx in ACTIONS:
             if re.search(rx, scope, re.I):
                 act = name
                 break
         if act:
             break
+    if out.get("from") and out.get("rt") and (rank(out["from"]) is None or rank(out["rt"]) is None or (rank(out["from"]) >= 100) != (rank(out["rt"]) >= 100)):
+        out.pop("from")
     if out.get("from") and out.get("rt") and rank(out["from"]) is not None and rank(out["rt"]) is not None:
         a, b = rank(out["from"]), rank(out["rt"])
         if (a >= 100) == (b >= 100) and a != b:
@@ -154,7 +163,7 @@ def rating_details(text, title=""):
         if a is not None and b is not None and a != b:
             act = "outlook_up" if b > a else "outlook_down"
             out["ol"] = new.title()
-    if act in (None, "reaffirm", "assign") and WATCH.search(flat):
+    if act in (None, "reaffirm", "assign") and WATCH.search(body):
         act = "watch"
     if act:
         out["act"] = act
