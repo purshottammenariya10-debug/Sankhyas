@@ -269,6 +269,9 @@
     const { parts, params } = parseHash();
     const p0 = parts[0] || '';
     $$('.nav-item').forEach(a => a.classList.toggle('active', a.dataset.nav === p0 || (p0 === 'screen' && a.dataset.nav === 'screens')));
+    const tab = p0 === '' ? 'home' : p0 === 'screen' ? 'screens' : p0;
+    $$('#tabbar [data-tab]').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    closeSheet();
     $('#nav-search-wrap').style.visibility = p0 === '' ? 'hidden' : 'visible';
     const routes = {
       '': pageHome, company: pageCompany, screens: pageScreens, screen: pageScreen, feed: pageFeed, tools: pageTools,
@@ -3246,6 +3249,76 @@
     app.innerHTML = '<div class="container page" style="text-align:center"><h1>Page not found</h1><p class="muted">We could not find what you were looking for.</p><a class="btn btn-primary" href="#/">Go home</a></div>';
   }
 
+  /* ---------- the installable app: tab bar, "More" sheet, install button, offline service worker ---------- */
+  const MORE_LINKS = [
+    ['Research', [['#/ai', '✦', 'Ask AI'], ['#/feed', '📰', 'Feed'], ['#/results/latest', '📊', 'Latest results'], ['#/calendar', '📅', 'Results calendar'], ['#/ipo', '🔔', 'IPOs'],
+      ['#/ratings', '🏦', 'Credit ratings'], ['#/deals', '💼', 'Smart money'], ['#/orders', '📦', 'Order wins']]],
+    ['Tools', [['#/market', '🏭', 'Sectors'], ['#/themes', '🧭', 'Themes'], ['#/compare', '⚖️', 'Compare'], ['#/portfolio', '🩻', 'Portfolio X-ray'], ['#/alerts', '⏰', 'Alerts'],
+      ['#/studio', '🖼️', 'Post studio'], ['#/tools', '🧰', 'All tools']]],
+    ['Account', [['#/premium', '⭐', 'Sankhyas Pro'], ['#/account', '👤', 'My account'], ['#/contact', '💬', 'Help & contact']]]
+  ];
+  let installEvt = null;
+  const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+  function installApp() {
+    if (installEvt) {
+      installEvt.prompt();
+      installEvt.userChoice.finally(() => { installEvt = null; syncInstall(); });
+    } else if (isIOS()) {
+      alert('To install Sankhyas: tap the Share button in Safari, then "Add to Home Screen".');
+    } else {
+      alert('Open your browser menu and choose "Install app" or "Add to Home screen".');
+    }
+  }
+  function syncInstall() {
+    const can = !isStandalone() && (installEvt || isIOS());
+    const b = $('#install-app');
+    if (b) b.hidden = !can;
+    const s = $('#more-install');
+    if (s) s.hidden = !can;
+  }
+  function closeSheet() {
+    const sh = $('#more-sheet');
+    if (sh) sh.classList.remove('open');
+    document.body.classList.remove('sheet-open');
+  }
+  function openSheet() {
+    let sh = $('#more-sheet');
+    if (!sh) {
+      sh = document.createElement('div');
+      sh.id = 'more-sheet';
+      sh.className = 'more-sheet';
+      sh.innerHTML = '<div class="ms-backdrop" data-close></div><div class="ms-panel" role="dialog" aria-label="More"><div class="ms-grab"></div>' +
+        MORE_LINKS.map(([h, items]) => '<h4>' + h + '</h4><div class="ms-grid">' + items.map(([href, ico, label]) => '<a href="' + href + '"><span aria-hidden="true">' + ico + '</span>' + label + '</a>').join('') + '</div>').join('') +
+        '<div class="ms-row"><button type="button" class="btn btn-small" id="more-theme">◐ Dark mode</button><button type="button" class="btn btn-small btn-primary" id="more-install" hidden>⤓ Install app</button></div></div>';
+      document.body.appendChild(sh);
+      sh.addEventListener('click', e => { if (e.target.closest('[data-close]') || e.target.closest('a')) closeSheet(); });
+      $('#more-theme').onclick = () => { closeSheet(); $('#theme-toggle').click(); };
+      $('#more-install').onclick = () => { closeSheet(); installApp(); };
+    }
+    syncInstall();
+    sh.classList.add('open');
+    document.body.classList.add('sheet-open');
+  }
+  function appShell() {
+    $('#tab-more').onclick = () => ($('#more-sheet') && $('#more-sheet').classList.contains('open') ? closeSheet() : openSheet());
+    $('#tab-search').onclick = () => {
+      closeSheet();
+      window.scrollTo(0, 0);
+      $('#nav-search-wrap').style.visibility = 'visible';
+      const s = $('#home-search') || $('#nav-search');
+      s.focus();
+    };
+    $('#install-app').onclick = installApp;
+    window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; syncInstall(); });
+    window.addEventListener('appinstalled', () => { installEvt = null; syncInstall(); });
+    if (isStandalone()) document.documentElement.classList.add('standalone');
+    syncInstall();
+    if ('serviceWorker' in navigator && location.protocol === 'https:') {
+      window.addEventListener('load', () => navigator.serviceWorker.register('sw.js', { scope: './' }).catch(() => {}));
+    }
+  }
+
   /* ---------- boot ---------- */
   attachSearch($('#nav-search'), c => { location.hash = '#/company/' + c.symbol; });
   $('#menu-toggle').onclick = () => $('#nav-links').classList.toggle('open');
@@ -3259,6 +3332,7 @@
   document.addEventListener('keydown', e => {
     if (e.key === '/' && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); const s = $('#home-search') || $('#nav-search'); s.focus(); }
   });
+  appShell();
   renderAuth();
   if (!document.body.getAttribute('data-route')) app.innerHTML = '<div class="container page muted">Loading market data…</div>';
   let booted = false;

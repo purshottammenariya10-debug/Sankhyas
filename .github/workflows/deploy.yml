@@ -118,7 +118,7 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p _site
-          cp -r index.html css js assets _site/
+          cp -r index.html manifest.webmanifest sw.js css js assets _site/
           mkdir -p _site/data
           [ -d data/yahoo ] && cp -r data/yahoo _site/data/ || true
           [ -d data/filings ] && cp -r data/filings _site/data/ || true

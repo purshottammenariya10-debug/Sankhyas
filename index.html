@@ -2,13 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Sankhyas - India&#39;s AI-Powered Financial Research Terminal</title>
   <meta name="description" content="Sankhyas: India&#39;s AI-Powered Financial Research Terminal. Financials, ratios, charts, peers, shareholding and custom stock screens.">
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="assets/logo-192.png" type="image/png" sizes="192x192">
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
   <meta name="theme-color" content="#103d48">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Sankhyas">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
   <link rel="stylesheet" href="css/style.css">
@@ -34,12 +39,22 @@
         <a href="#/screens" class="nav-item" data-nav="screens">Screens</a>
         <a href="#/tools" class="nav-item" data-nav="tools">Tools</a>
         <a href="#/watchlist" class="nav-item" data-nav="watchlist">Watchlist</a>
+        <button class="nav-item nav-install" id="install-app" type="button" hidden>⤓ Install app</button>
         <div id="auth-slot" class="flex"></div>
       </div>
     </div>
   </nav>
 
   <main id="app"></main>
+
+  <!-- phone-sized screens: app-style tab bar -->
+  <nav class="tabbar" id="tabbar" aria-label="Main">
+    <a href="#/" data-tab="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span></a>
+    <a href="#/screens" data-tab="screens"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6 7v6l-4 2v-8z"/></svg><span>Screens</span></a>
+    <button type="button" data-tab="search" id="tab-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Search</span></button>
+    <a href="#/watchlist" data-tab="watchlist"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.8-5.2 2.8 1-5.8-4.3-4.1 5.9-.9z"/></svg><span>Watchlist</span></a>
+    <button type="button" data-tab="more" id="tab-more"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>More</span></button>
+  </nav>
 
   <footer class="footer">
     <div class="container">

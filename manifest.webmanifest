@@ -1,0 +1,25 @@
+{
+  "name": "Sankhyas - Stock research for India",
+  "short_name": "Sankhyas",
+  "description": "Financials, results, screens, IPO notes, red flags and alerts for every NSE and BSE company.",
+  "id": "./",
+  "start_url": "./?source=app#/",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#103d48",
+  "categories": ["finance", "business", "news"],
+  "lang": "en-IN",
+  "icons": [
+    { "src": "assets/logo-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "assets/logo-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "assets/logo-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Watchlist", "url": "./#/watchlist", "icons": [{ "src": "assets/logo-192.png", "sizes": "192x192" }] },
+    { "name": "Stock screens", "url": "./#/screens", "icons": [{ "src": "assets/logo-192.png", "sizes": "192x192" }] },
+    { "name": "IPOs", "url": "./#/ipo", "icons": [{ "src": "assets/logo-192.png", "sizes": "192x192" }] },
+    { "name": "Latest results", "url": "./#/results/latest", "icons": [{ "src": "assets/logo-192.png", "sizes": "192x192" }] }
+  ]
+}
