@@ -2,16 +2,43 @@ name: Probe (temporary)
 on:
   workflow_dispatch:
 jobs:
-  probe:
+  pSRIT:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install -q pypdf requests
-      - name: SRIT
-        run: python .github/probe/rhp.py SRIT
-      - name: ORIENTCABL
-        run: python .github/probe/rhp.py ORIENTCABL
-      - name: MONEYVIEW
-        run: python .github/probe/rhp.py MONEYVIEW
+      - run: python .github/probe/rhp.py SRIT 2>/dev/null
+  pORIENTCABL:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q pypdf requests
+      - run: python .github/probe/rhp.py ORIENTCABL 2>/dev/null
+  pMONEYVIEW:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q pypdf requests
+      - run: python .github/probe/rhp.py MONEYVIEW 2>/dev/null
+  pRUNWALENTR:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q pypdf requests
+      - run: python .github/probe/rhp.py RUNWALENTR 2>/dev/null
+  pAONESTEELS:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q pypdf requests
+      - run: python .github/probe/rhp.py AONESTEELS 2>/dev/null
