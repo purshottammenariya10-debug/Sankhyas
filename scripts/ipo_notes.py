@@ -128,7 +128,7 @@ def heading_pages(pages, rx, after=6):
         if i < after:
             continue
         top = "\n".join([l for l in p.split("\n") if l.strip()][:6])
-        if re.search(rx, top, re.M) and not re.search(r"TABLE OF CONTENTS|SECTION [IVX]+\s*[:–-]", top):
+        if re.search(rx, top, re.M) and not re.search(r"TABLE OF CONTENTS|\.{8,}", top):
             out.append(i)
     return out
 
@@ -238,6 +238,23 @@ def offer_terms(pages):
             out["ofs_sh"] = int(num(m.group(1)))
         elif re.search(r"FRESH ISSUE", f, re.I) and not re.search(r"OFFER FOR SALE", f, re.I):
             out["ofs_cr"] = 0
+    # the cover's "DETAILS OF THE ISSUE/OFFER" table: fresh issue, offer for sale, total, each
+    # "Up to 16,800,000 Equity Shares ... aggregating up to ₹[●] million" or "Not applicable"
+    m = re.search(r"DETAILS OF THE (?:ISSUE|OFFER)(?: TO (?:THE )?PUBLIC)?(.{0,2500}?)(?:The|This) (?:Offer|Issue) is being made", f, re.I)
+    if m and ("fresh_cr" not in out or "ofs_cr" not in out):
+        cells = re.findall(r"(Not applicable|(?:Up to |upto )?(?:[\d,]+|\[●\]) Equity Shares.{0,160}?aggregating (?:up ?to )?₹\s*(?:([\d,.]+)|\[●\])\s*(million|lakhs?|lacs|crores?)?)", m.group(1), re.I)
+        if len(cells) >= 2:
+            for key, cell in zip(("fresh", "ofs"), cells[:2]):
+                if key + "_cr" in out or key + "_sh" in out:
+                    continue
+                if cell[0].lower().startswith("not applicable"):
+                    out[key + "_cr"] = 0
+                    continue
+                sh = re.match(r"(?:Up to |upto )?([\d,]+) Equity Shares", cell[0], re.I)
+                if sh:
+                    out[key + "_sh"] = int(num(sh.group(1)))
+                if cell[1]:
+                    out[key + "_cr"] = cr(num(cell[1]), UNIT_CR.get((cell[2] or "million").lower(), 0.1))
     promoters = re.search(r"OUR PROMOTERS?\s*:\s*(.{3,300}?)(?=\s*(?:DETAILS OF|INITIAL PUBLIC|PUBLIC OFFER|OFFER OF|$))", f)
     if promoters:
         out["promoters"] = promoters.group(1).strip(" .")
@@ -285,6 +302,21 @@ def kpis(pages, unit):
         return None, s + 1
     header = seg[max(0, rv.start() - 900):rv.start()]
     per = _periods(header)
+    if len(per) < 2:
+        wide = text[max(0, m.end() + rv.start() - 4000):m.end() + rv.start()]
+        ms = list(PERIOD.finditer(wide))
+        clusters, cur = [], []
+        for mm in ms:
+            if cur and mm.start() - cur[-1].end() > 250:
+                clusters.append(cur)
+                cur = []
+            cur.append(mm)
+        if cur:
+            clusters.append(cur)
+        clusters = [c for c in clusters if len(c) >= 2]
+        if clusters:
+            header = wide[clusters[-1][0].start() - 50:clusters[-1][-1].end() + 5]
+            per = _periods(header)
     # the header can carry the same years twice (amount and growth columns): keep the first run
     seen, ordered = set(), []
     for p in per:
@@ -359,11 +391,14 @@ def basis(pages):
     # listed peers, named in the comparison table
     m = re.search(r"(?:Comparison (?:of|with) (?:Accounting Ratios with )?listed industry peers|Comparison with listed industry peers|Listed Industry Peers|Peer Group Comparison)", text, re.I)
     peers = []
+    m = m or re.search(r"(?i)peer", text)
     if m and not re.search(r"no (?:listed )?(?:industry )?peers|not have any (?:listed )?(?:industry )?peers|no comparable", f[f.find(flat(text[m.start():m.start() + 80])):][:1500], re.I):
         seg = flat(text[m.start():m.start() + 6000])
         ident = re.search(r"identified as (.{10,800}?)\s*\(the “?(?:Industry )?Peers|peers? (?:of our Company )?(?:are|include)\s*(.{10,600}?)\.", seg, re.I)
         # "A Limited, B and C Limited and D Ltd": split at commas and at an "and" that follows a company suffix
         names = re.split(r",\s*(?:and\s+)?|(?<=Limited)\s+and\s+|(?<=Ltd)\s+and\s+|(?<=Ltd\.)\s+and\s+", (ident.group(1) or ident.group(2))) if ident else []
+        if not names:
+            names = re.findall(r"([A-Z][A-Za-z&.'()-]*(?:\s+[A-Za-z&.'()-]+){0,6}?\s+(?:Limited|Ltd\.?))\s*\*{0,2}\s*(?=\d|Consolidated|Standalone|\()", seg)
         if not names:
             names = re.findall(r"([A-Z][\w&.'-]*(?:\s+[A-Z(&][\w&.'()-]*){0,6}\s+(?:Limited|Ltd\.?))\s*\*?\s*(?:Consolidated|Standalone)", seg)
         for n in names:
@@ -442,9 +477,14 @@ def summary_bits(pages, unit):
 
 def business(pages):
     """First paragraphs of 'Our Business' after its 'Overview' heading."""
-    for s in heading_pages(pages, r"^\s*OUR BUSINESS\s*$")[:2]:
+    for s in heading_pages(pages, r"^\s*(?:SECTION [IVX]+\s*[:–-]\s*)?OUR BUSINESS\s*$")[:2]:
         text = "\n".join(pages[s:s + 3])
         m = re.search(r"\n\s*Overview\s*\n(.{200,3000})", text, re.S)
+        m = m or re.search(r"\n\s*(?:Overview|OVERVIEW|Business Overview|Overview of (?:our )?Business|Introduction)\s*\n(.{200,3000})", text, re.S)
+        if not m:
+            w = re.search(r"\b(We are (?:a|an|one|India|the|amongst|among)\b.{40,900}?\.)(?=\s+[A-Z])", flat(text))
+            if w:
+                return re.sub(r"\s\d{1,3}\s(?=[a-z])", " ", w.group(1)), s + 1
         if m:
             paras = [flat(p) for p in re.split(r"\n\s*\n|\.\s*\n(?=[A-Z])", m.group(1)) if len(flat(p)) > 60]
             t = ". ".join(p.rstrip(".") for p in paras[:2]) + "."
@@ -478,16 +518,18 @@ def contingent(pages, unit):
 
 def risk_heads(pages):
     """First few risk factor headings from the RHP (used when the advertisement has none)."""
-    s, text = section(pages, r"^\s*(?:SECTION [IVX]+\s*[:–-]\s*)?RISK FACTORS\s*$", 8)
+    s, text = section(pages, r"^\s*(?:SECTION [IVX]+\s*[:–-]\s*)?RISK FACTORS\s*$", 14, after=10)
     if s is None:
         return []
     out = []
-    for m in re.finditer(r"(?m)^\s*(\d{1,2})\.\s+([A-Z][^\n]{15,}(?:\n(?!\s*\d{1,2}\.\s)[^\n]{0,200}){0,3})", text):
-        if int(m.group(1)) != len(out) + 1:
+    ir = re.search(r"Internal Risk Factors|INTERNAL RISK FACTORS|Risks? (?:relating|related) to our (?:Business|Company)", text)
+    text = text[ir.start():] if ir else text
+    for m in re.finditer(r"(?m)^\s*(\d{1,2})\.\s+([A-Z][^\n]{15,}(?:\n(?!\s*\d{1,2}\.\s)[^\n]{0,200}){0,4})", text):
+        if not len(out) < int(m.group(1)) <= len(out) + 2:
             continue
-        head = flat(m.group(2))
-        head = re.split(r"(?<=[a-z)])\.\s", head, 1)[0]
-        out.append(head[:220])
+        head = re.sub(r"\s\d{1,3}\s(?=[a-z])", " ", flat(m.group(2)))        # page number in the middle of a heading
+        head = re.split(r"(?<=[a-z)%])\s?\.\s+(?=[A-Z])", head, 1)[0]
+        out.append(head[:240].rstrip(" ."))
         if len(out) >= 8:
             break
     return out
@@ -583,6 +625,7 @@ def main():
     ap.add_argument("--max", type=int, default=6, help="prospectuses read per run (each is 300-700 pages)")
     ap.add_argument("--sym", action="append", help="only these symbols (repeatable); ignores the saved notes")
     ap.add_argument("--debug", action="store_true")
+    ap.add_argument("--skip", type=int, default=0, help=argparse.SUPPRESS)
     ap.add_argument("--ipo", help="read the issue list from this file instead of data/yahoo/ipo.json")
     ap.add_argument("--print", action="store_true", help="print each note")
     args = ap.parse_args()
@@ -606,7 +649,7 @@ def main():
                 continue
         todo.append(it)
     # issues bidding now first, then the ones opening soon, then the closed ones
-    todo = todo[:args.max]
+    todo = todo[args.skip:args.skip + args.max]
     done = 0
     for it in todo:
         try:
