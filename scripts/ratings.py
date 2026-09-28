@@ -142,7 +142,12 @@ def rating_details(text, title=""):
         if (a >= 100) == (b >= 100) and a != b:
             act = "upgrade" if b < a else "downgrade"
     ol = re.search(r"outlook\s+(?:has been\s+)?revised\s+(?:to\s+['\"‘“]?(\w+)['\"’”]?\s+from\s+['\"‘“]?(\w+)|from\s+['\"‘“]?(\w+)['\"’”]?\s+to\s+['\"‘“]?(\w+))|revised (?:its |the |rating )?outlook\s+(?:on [^.]{0,60}?)?to\s+['\"‘“]?(\w+)['\"’”]?\s+from\s+['\"‘“]?(\w+)", flat, re.I)
-    if ol and act in (None, "reaffirm", "assign"):
+    ol2 = None if ol else re.search(r"outlook\s+(?:has been\s+)?revised\s+from\s+['\"‘“]?(\w+)", flat, re.I)
+    if ol2 and head and head[2]:
+        a, b = OUTLOOK_ORDER.get(ol2.group(1).lower()), OUTLOOK_ORDER.get(head[2].lower())
+        if a is not None and b is not None and a != b and not out.get("from"):
+            act = "outlook_up" if b > a else "outlook_down"
+    if ol and (act in (None, "reaffirm", "assign") or (act in ("upgrade", "downgrade") and not out.get("from"))):
         g = ol.groups()
         new, old = (g[0], g[1]) if g[0] else (g[3], g[2]) if g[2] else (g[4], g[5])
         a, b = OUTLOOK_ORDER.get((old or "").lower()), OUTLOOK_ORDER.get((new or "").lower())
@@ -153,10 +158,14 @@ def rating_details(text, title=""):
         act = "watch"
     if act:
         out["act"] = act
+    hits = []
     for name, rx in INSTRUMENTS:
-        if re.search(rx, flat, re.I):
-            out["ins"] = name
-            break
+        for m in re.finditer(rx, flat, re.I):
+            hits.append((m.start(), name))
+    if hits:
+        hp = head[0] if head else len(flat)
+        before = [h for h in hits if h[0] <= hp]
+        out["ins"] = (max(before) if before else min(hits))[1]
     best = None
     for m in AMT.finditer(flat):
         try:

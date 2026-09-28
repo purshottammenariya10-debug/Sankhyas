@@ -65,6 +65,12 @@ def auditor_report(pages):
         f = _flat(pages[i])
         for m in re.finditer(r"\b(Qualified|Adverse) Opinion\b|\bDisclaimer of Opinion\b", f):
             kind = "Disclaimer" if m.group(0).startswith("Disclaimer") else m.group(1)
+            # the separate report on internal financial controls has its own opinion: not the accounts
+            if re.search(r"internal financial controls?", f[max(0, m.start() - 700):m.start() + 300], re.I):
+                continue
+            # a reference to the basis paragraph ("described in the Basis for Qualified Opinion section")
+            if re.match(r"\s*(?:section|paragraph)", f[m.end():m.end() + 20], re.I):
+                continue
             # "basis for qualified opinion" in the reporting paragraphs repeats the heading: take the first
             if re.search(r"except for the (?:matters?|effects?) described in the basis for", f[max(0, m.start() - 120):m.start()], re.I):
                 continue
@@ -75,18 +81,22 @@ def auditor_report(pages):
             if key in seen:
                 continue
             seen.add(key)
-            basis = re.search(r"Basis for (?:Qualified |Adverse )?(?:Opinion|Disclaimer of Opinion)\s*(?:\d+\.\s*)?(.{40,700})", f)
+            nxt = _flat(pages[i + 1]) if i + 1 < len(pages) else ""
+            basis = re.search(r"Basis for (?:Qualified |Adverse )?(?:Opinion|Disclaimer of Opinion)(?!\s*(?:section|paragraph|of our report))\s*(?:\d+\.\s*)?(.{40,700})", f[m.start():] + " " + nxt)
             title = ("Auditor could not give an opinion (disclaimer)" if kind == "Disclaimer" else "Auditor gave a " + kind.lower() + " opinion") + " on the " + on + " accounts"
             out["flags"].append({"sev": "high", "t": title, "x": _clip(basis.group(1) if basis else f[m.end():m.end() + 500]), "p": i + 1})
-        if out["opinion"] is None and re.search(r"\bOpinion\b.{0,600}true and fair view", f):
+        if out["opinion"] is None and re.search(r"\bOpinion\b.{0,2500}(?:true and fair view|in our opinion)", f) and re.search(r"Basis for Opinion", f):
             out["opinion"] = "Unmodified"
         gc = re.search(r"Material Uncertainty (?:Related|Relating) to Going Concern\s*(.{40,600})", f, re.I) or \
             re.search(r"((?:[^.]{0,300})material uncertainty exists that may cast significant doubt on the (?:Company|Group|Bank).{0,5}s ability to continue as a going concern[^.]{0,200})", f, re.I)
         if gc and "gc" not in seen:
             seen.add("gc")
             out["flags"].append({"sev": "high", "t": "Doubt over its ability to continue as a going concern", "x": _clip(gc.group(1)), "p": i + 1})
-        for em in re.finditer(r"Emphasis of Matters?(?: Paragraph)?\s*(?:\d+\.\s*)?(.{60,700}?)(?=Our (?:opinion|conclusion) is not (?:modified|qualified)|Key Audit Matters?|Other Matters?|Information Other than|$)", f, re.I):
-            txt = re.sub(r"^(?:Without qualifying our (?:opinion|report),?\s*)?", "", em.group(1).strip(), flags=re.I)
+        for em in re.finditer(r"Emphasis of Matters?(?: Paragraph)?\s*(?:\d+\.\s*)?(.{60,900})", f + " " + (_flat(pages[i + 1]) if i + 1 < len(pages) else ""), re.I):
+            if re.match(r"\s*(?:paragraph|section)?\s*(?:above|below)", em.group(1), re.I) or em.start() > len(f):
+                continue
+            txt = re.split(r"Our (?:opinion|conclusion) is not (?:modified|qualified)|Key Audit Matters?\b|Other Matters?\b|Information Other than", em.group(1))[0]
+            txt = re.sub(r"^(?:Without qualifying our (?:opinion|report),?\s*)?", "", txt.strip(), flags=re.I)
             k = _key(txt)
             if not k or k[:60] in seen or len([x for x in out["flags"] if x["t"].startswith("Auditor drew attention")]) >= 3:
                 continue
@@ -99,9 +109,12 @@ def audit_firm(pages):
     """The statutory audit firm(s): from the auditor's report signature, else the directors' report."""
     rx = re.compile(r"((?:M/s\.?\s*)?[A-Z][A-Za-z&.,'’\- ]{2,70}?)\s*,?\s*Chartered Accountants\s*,?\s*(?:[A-Z][a-z]+\s*,?\s*)?\(?\s*(?:ICAI\s+)?Firm.{0,3}s?\s*Reg", re.S)
     def clean(n):
-        n = re.split(r"\bM/s\.?\s*|\b(?:of|by|namely|appointment|re-appointment|approved|that)\s+(?=[A-Z])", n)[-1]
-        n = re.sub(r"^(?:For|and on behalf of|For and on behalf of)\s+", "", n.strip(" ,.("), flags=re.I)
-        return WS.sub(" ", n).strip(" ,.")
+        n = re.split(r"\bM/s\.?\s*|\b(?:of|by|namely|appointment|re-appointment|approved|that)\s+(?=[A-Z])|[.;:]\s+(?=[A-Z])", n)[-1]
+        n = re.sub(r"^(?:For\s+and\s+on\s+behalf\s+of|For|and on behalf of)\s*,?\s*", "", n.strip(" ,.("), flags=re.I)
+        n = WS.sub(" ", n).strip(" ,.")
+        if n.isupper():
+            n = " ".join(w if len(w) <= 3 or w in ("LLP",) else w.title() for w in n.split())
+        return n
     for want in (_audit_pages(pages), range(len(pages))):
         for i in want:
             f = _flat(pages[i])
@@ -115,6 +128,14 @@ def audit_firm(pages):
             if firms:
                 joint = len(firms) > 1 and re.search(r"joint (?:statutory )?auditors", f, re.I)
                 return (" and ".join(firms[:2]) if joint else firms[0]), i + 1
+    # directors' report: "M/s. Brahmayya & Co., Chartered Accountants ... Statutory Auditors"
+    for i, p in enumerate(pages):
+        f = _flat(p)
+        if not re.search(r"statutory auditors?", f, re.I):
+            continue
+        m = re.search(r"M/s\.?\s*([A-Z][A-Za-z&.,'’\- ]{2,60}?)\s*,?\s*Chartered Accountants", f)
+        if m and re.search(r"statutory auditor", f[max(0, m.start() - 400):m.end() + 400], re.I):
+            return clean(m.group(1)), i + 1
     return None, None
 
 
@@ -222,7 +243,8 @@ def _name_before(seg, pos):
     words = re.findall(r"[A-Z][A-Za-z.]*(?:\s+[A-Z][A-Za-z.]*){0,3}", back)
     name = words[-1] if words else ""
     name = re.sub(r"\d+$", "", name).strip(" .")
-    return name if 3 <= len(name) <= 40 and not re.search(r"^(Name|Designation|Ratio|Executive|Directors?|Non|Sr|No)$", name) else ""
+    bad = re.search(r"\b(Name|Designation|Ratio|Executive|Directors?|Non|Sr|No|Remuneration|Time|Whole|Total|Median|Employees?|Category|Key|Managerial)\b", name)
+    return name if 3 <= len(name) <= 40 and not bad else ""
 
 
 def remuneration(pages):
@@ -232,6 +254,8 @@ def remuneration(pages):
         if not m:
             continue
         seg = f[m.end():m.end() + 2200]
+        if re.search(r"annexure|forms? part of|(?:is|are) (?:given|provided|annexed|attached)", seg[:260], re.I) and not re.search(r"\d\s*:\s*1\b", seg[:600]):
+            continue
         stop = re.search(r"percentage increase in the median|\(ii\)|\bii\)|2\s*\.?\s*The percentage", seg, re.I)
         if stop and stop.start() > 200:
             seg = seg[:stop.start()]
@@ -239,7 +263,7 @@ def remuneration(pages):
         if not ratios and not re.search(r"\(in lacs\)|\(in lakhs\)|amount in|remuneration of directors?/? ?kmp for|\(₹|\(`|\(rs", seg, re.I):
             # "Name  Ratio  % increase" tables: the first number after each name is the ratio
             ratios = [(float(r.group(2)), r.start(2)) for r in re.finditer(r"([A-Za-z)])\s+(\d{1,4}(?:\.\d{1,2})?)\b(?!\s*%)", seg)]
-        ratios = [x for x in ratios if 1 <= x[0] <= 3000]
+        ratios = [x for x in ratios if 1 <= x[0] <= 3000 and not (1990 <= x[0] <= 2100 and float(x[0]).is_integer())]
         if not ratios:
             continue
         v, pos = max(ratios)
