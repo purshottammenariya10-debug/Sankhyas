@@ -931,3 +931,17 @@ body.chart-full-open .tabbar { display: none; }
   .ind-pop { position: fixed; left: 16px; right: 16px; top: auto; bottom: 90px; }
   .chart-info { font-size: 12.5px; }
 }
+
+/* watchlists: list tabs and the "add to lists" picker */
+.wl-tabs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: -4px 0 16px; padding-bottom: 2px; }
+.wl-tabs::-webkit-scrollbar { display: none; }
+.wl-tab { flex: none; padding: 6px 14px; border-radius: 20px; border: 1px solid var(--line); background: var(--bg); color: var(--ink-2); font: inherit; font-size: 13.5px; font-weight: 500; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.wl-tab span { color: var(--ink-3); font-size: 12px; margin-left: 2px; }
+.wl-tab.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.wl-tab.active span { color: rgba(255,255,255,.8); }
+.wl-tab-new { border-style: dashed; color: var(--primary); }
+.wl-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.wl-add-co { max-width: 420px; margin-bottom: 14px; }
+.wl-pick label { display: flex; gap: 10px; align-items: center; padding: 9px 2px; border-bottom: 1px solid var(--line-2); margin: 0; font-weight: 500; cursor: pointer; }
+.wl-pick label span:nth-child(2) { flex: 1; }
+.wl-pick + .flex input { flex: 1; }

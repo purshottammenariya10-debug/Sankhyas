@@ -15,14 +15,15 @@
   };
 
   /* ---------- sync across devices (signed-in cloud accounts; public.user_data) ----------
-     Each group is one row: watchlist, screens, portfolio, notes {SYM: text}, cc_extra {SYM: [...]},
+     Each group is one row: watchlist (every followed symbol, read by the alert sender), watchlists
+     (named lists), screens, portfolio, notes {SYM: text}, cc_extra {SYM: [...]},
      prefs {topratios, screencols, chart_style}. The newer side wins; the first sync on a device
      merges both sides so nothing saved before logging in is lost. */
   const Sync = (function () {
-    const DIRECT = { watchlist: 'watchlist', screens: 'screens', portfolio: 'portfolio' };
+    const DIRECT = { watchlist: 'watchlist', watchlists: 'watchlists', screens: 'screens', portfolio: 'portfolio' };
     const PREFS = ['topratios', 'screencols', 'chart_style'];
     const PREFIX = { notes_: 'notes', cc_extra_: 'cc_extra' };
-    const GROUPS = ['watchlist', 'screens', 'portfolio', 'notes', 'cc_extra', 'prefs'];
+    const GROUPS = ['watchlist', 'watchlists', 'screens', 'portfolio', 'notes', 'cc_extra', 'prefs'];
     let timer = null, dirty = {}, applying = false, status = { at: null, error: null };
     const meta = () => store.get('sync_meta', {});
     const setMeta = m => rawSet('sync_meta', m);
@@ -53,6 +54,7 @@
       if (empty(local)) return remote;
       if (empty(remote)) return local;
       if (g === 'watchlist') return remote.concat(local.filter(x => remote.indexOf(x) < 0));
+      if (g === 'watchlists') { const ids = remote.map(x => x.id); return remote.concat(local.filter(x => ids.indexOf(x.id) < 0)).slice(0, MAX_LISTS); }
       if (g === 'screens') { const names = remote.map(x => x.name); return remote.concat(local.filter(x => names.indexOf(x.name) < 0)); }
       if (g === 'portfolio') { const syms = remote.map(x => x.s); return remote.concat(local.filter(x => syms.indexOf(x.s) < 0)); }
       return Object.assign({}, local, remote);
@@ -102,15 +104,89 @@
     };
   })();
   const user = () => Account.user();
+  /* Watchlists: up to MAX_LISTS named lists [{id, name, syms: [...], cols: [...] | null}] in 'watchlists'.
+     'watchlist' stays the plain list of every followed symbol (the alert sender and the rest of the
+     site read it), rewritten whenever a list changes. Older accounts' single list becomes "Watchlist". */
+  const MAX_LISTS = 10;
+  const DEFAULT_WL_COLS = ['price', 'ret1m', 'pe', 'marketCap', 'divYield', 'qtrProfitVar', 'qtrSalesVar', 'roce', 'ret1y'];
+  function watchLists() {
+    let ls = store.get('watchlists', null);
+    const flat = store.get('watchlist', []);
+    if (!Array.isArray(ls) || !ls.length) {
+      ls = [{ id: 'w1', name: 'Watchlist', syms: flat.slice(), cols: null }];
+      rawSet('watchlists', ls);   // not a user change: do not mark it newer than the account's copy
+      return ls;
+    }
+    // symbols followed through the plain list (another device, older page) but in no named list
+    const inAny = new Set(ls.reduce((a, l) => a.concat(l.syms), []));
+    const orphans = flat.filter(x => !inAny.has(x));
+    if (orphans.length) { ls[0].syms = ls[0].syms.concat(orphans); rawSet('watchlists', ls); }
+    return ls;
+  }
+  function saveLists(ls) {
+    store.set('watchlists', ls);
+    const all = [];
+    ls.forEach(l => l.syms.forEach(x => { if (all.indexOf(x) < 0) all.push(x); }));
+    store.set('watchlist', all);
+  }
   const watchlist = () => store.get('watchlist', []);
   const inWatchlist = s => watchlist().indexOf(s) >= 0;
-  function toggleWatch(sym) {
-    const w = watchlist();
-    const i = w.indexOf(sym);
-    if (i >= 0) w.splice(i, 1); else w.push(sym);
-    store.set('watchlist', w);
-    toast(i >= 0 ? sym + ' removed from watchlist' : sym + ' added to watchlist');
-    return i < 0;
+  const listsWith = sym => watchLists().filter(l => l.syms.indexOf(sym) >= 0);
+  function setInList(id, sym, on) {
+    const ls = watchLists(), l = ls.find(x => x.id === id);
+    if (!l) return;
+    const i = l.syms.indexOf(sym);
+    if (on && i < 0) l.syms.push(sym);
+    if (!on && i >= 0) l.syms.splice(i, 1);
+    saveLists(ls);
+  }
+  function newList(name) {
+    const ls = watchLists();
+    if (ls.length >= MAX_LISTS) { toast('You can have up to ' + MAX_LISTS + ' watchlists'); return null; }
+    let n = ls.length + 1, id;
+    do id = 'w' + Date.now().toString(36) + (n++); while (ls.some(l => l.id === id));
+    const l = { id, name: (name || '').trim().slice(0, 40) || 'Watchlist ' + (ls.length + 1), syms: [], cols: null };
+    ls.push(l);
+    saveLists(ls);
+    return l;
+  }
+  // one list: follow / unfollow; several: pick the lists
+  function toggleWatch(sym, done) {
+    const ls = watchLists();
+    if (ls.length === 1) {
+      const on = ls[0].syms.indexOf(sym) < 0;
+      setInList(ls[0].id, sym, on);
+      toast(on ? sym + ' added to ' + ls[0].name : sym + ' removed from ' + ls[0].name);
+      if (done) done();
+      return on;
+    }
+    pickLists(sym, done);
+    return null;
+  }
+  function pickLists(sym, done) {
+    const body = () => '<p class="sub" style="margin-top:0">Tick the lists ' + esc(sym) + ' should be in.</p><div class="wl-pick">' +
+      watchLists().map(l => '<label><input type="checkbox" value="' + esc(l.id) + '"' + (l.syms.indexOf(sym) >= 0 ? ' checked' : '') + '><span>' + esc(l.name) + '</span><span class="sub">' + l.syms.length + '</span></label>').join('') + '</div>' +
+      (watchLists().length < MAX_LISTS ? '<div class="flex" style="margin-top:12px"><input type="text" id="wl-new-name" placeholder="New list name" maxlength="40"><button class="btn" id="wl-new-add" type="button">+ Add list</button></div>' : '<p class="sub">You have ' + MAX_LISTS + ' lists, the most allowed.</p>');
+    const bd = modal('Add ' + sym + ' to watchlists', '<div id="wl-pick-body"></div>', [
+      { label: 'Done', primary: true, onClick: b => {
+        const ls = watchLists(), want = $$('#wl-pick-body input[type=checkbox]', b).filter(x => x.checked).map(x => x.value);
+        ls.forEach(l => { const i = l.syms.indexOf(sym), on = want.indexOf(l.id) >= 0; if (on && i < 0) l.syms.push(sym); if (!on && i >= 0) l.syms.splice(i, 1); });
+        saveLists(ls);
+        toast(want.length ? sym + ' is in ' + want.length + (want.length === 1 ? ' list' : ' lists') : sym + ' removed from your watchlists');
+        if (done) done();
+      } }
+    ]);
+    const fill = checked => {
+      $('#wl-pick-body', bd).innerHTML = body();
+      checked.forEach(id => { const cb = $('#wl-pick-body input[value="' + id + '"]', bd); if (cb) cb.checked = true; });
+      const add = $('#wl-new-add', bd);
+      if (add) add.onclick = () => {
+        const keep = $$('#wl-pick-body input[type=checkbox]', bd).filter(x => x.checked).map(x => x.value);
+        const l = newList($('#wl-new-name', bd).value);
+        if (l) fill(keep.concat([l.id]));
+      };
+    };
+    fill([]);
   }
 
   /* ---------- formatting ---------- */
@@ -382,6 +458,7 @@
     setTitle(c.name + ' share price');
     document.title = c.name + ' share price | Sankhyas';
     const followed = inWatchlist(sym);
+    const followLabel = () => { const n = listsWith(sym).length, many = watchLists().length > 1; return n ? '✓ ' + (many ? 'In ' + n + (n === 1 ? ' list' : ' lists') : 'Following') : '+ Follow'; };
 
     app.innerHTML =
       '<div class="company-head" id="top"><div class="container">' +
@@ -401,7 +478,7 @@
       '<button class="btn" id="share-btn" title="Make an image for Instagram, X or WhatsApp">↗ Share card</button>' +
       '<a class="btn" href="#/report/' + encodeURIComponent(c.symbol) + '" title="Printable research report (PDF)">⤓ Research PDF</a>' +
       '<a class="btn" href="#/alerts?s=' + encodeURIComponent(c.symbol) + '" title="Email, Telegram or WhatsApp alerts for this company">🔔 Alerts</a>' +
-      '<button class="btn ' + (followed ? 'active' : 'btn-primary') + '" id="follow-btn">' + (followed ? '✓ Following' : '+ Follow') + '</button>' +
+      '<button class="btn ' + (followed ? 'active' : 'btn-primary') + '" id="follow-btn">' + followLabel() + '</button>' +
       '</div></div></div>' +
       '<div class="sub-nav" id="sub-nav"><div class="container"><span class="sub-nav-name">' + esc(c.symbol) + '</span>' +
       COMPANY_SECTIONS.map(s => '<a href="" data-target="' + s[0] + '">' + esc(s[1]) + '</a>').join('') + '</div></div>' +
@@ -414,10 +491,12 @@
     // actions
     $('#follow-btn').onclick = () => {
       if (!requireLogin('follow companies')) return;
-      const now = toggleWatch(sym);
-      const b = $('#follow-btn');
-      b.className = 'btn ' + (now ? 'active' : 'btn-primary');
-      b.textContent = now ? '✓ Following' : '+ Follow';
+      toggleWatch(sym, () => {
+        const b = $('#follow-btn');
+        if (!b) return;
+        b.className = 'btn ' + (inWatchlist(sym) ? 'active' : 'btn-primary');
+        b.textContent = followLabel();
+      });
     };
     $('#export-btn').onclick = () => exportCompany(c);
     $('#share-btn').onclick = () => openCardModal((c._res ? ['verdict'] : []).concat(c.listed && c.listPrice != null ? ['results', 'snapshot', 'redflags', 'listing'] : ['results', 'snapshot', 'redflags']), () => Promise.resolve(c), c.symbol);
@@ -3271,7 +3350,7 @@
   }
 
   /* ---------- Watchlist ---------- */
-  function pageWatchlist() {
+  function pageWatchlist(parts) {
     setTitle('Watchlist');
     if (Account.cloud && !user()) {
       app.innerHTML = loginGate('Your watchlist', 'Login to follow companies and see their prices, results and ratios in one list, synced on every device.', '#/watchlist');
@@ -3279,16 +3358,64 @@
       return;
     }
     const all = Data.listCompanies();
+    let cur = (parts && parts[0]) || store.get('wl_current', null);
     const draw = () => {
-      const w = watchlist();
-      const list = all.filter(c => w.indexOf(c.symbol) >= 0);
-      app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Watchlist</h1><p>' + list.length + ' companies' + (user() ? '' : ' &middot; saved in this browser') + '</p></div>' +
-        '<div class="nav-search" style="min-width:260px"><svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" id="wl-search" placeholder="Add company to watchlist" autocomplete="off"></div></div>' +
-        (list.length ? '<div id="wl-table"></div>' : '<div class="info-box">Your watchlist is empty. Search above or use the <b>Follow</b> button on any company page.</div>') + '</div></div>';
-      attachSearch($('#wl-search'), c => { if (!inWatchlist(c.symbol)) toggleWatch(c.symbol); draw(); });
-      if (list.length) sortableList($('#wl-table'), list, ['price', 'ret1m', 'pe', 'marketCap', 'divYield', 'qtrProfitVar', 'qtrSalesVar', 'roce', 'ret1y'], { remove: s => { toggleWatch(s); draw(); } });
+      const ls = watchLists();
+      let l = ls.find(x => x.id === cur) || ls[0];
+      cur = l.id;
+      try { localStorage.setItem('sankhyas_wl_current', JSON.stringify(cur)); } catch (e) { /* ignore */ }
+      const list = all.filter(c => l.syms.indexOf(c.symbol) >= 0);
+      const cols = (l.cols && l.cols.length ? l.cols : DEFAULT_WL_COLS).filter(k => RBY[k]);
+      app.innerHTML = '<div class="container page"><div class="card">' +
+        '<div class="wl-tabs" role="tablist">' + ls.map(x => '<button type="button" role="tab" class="wl-tab' + (x.id === cur ? ' active' : '') + '" data-list="' + esc(x.id) + '">' + esc(x.name) + ' <span>' + x.syms.length + '</span></button>').join('') +
+        (ls.length < MAX_LISTS ? '<button type="button" class="wl-tab wl-tab-new" id="wl-add">+ New list</button>' : '') + '</div>' +
+        '<div class="section-head"><div><h1>' + esc(l.name) + '</h1><p>' + list.length + (list.length === 1 ? ' company' : ' companies') + ' &middot; ' + ls.length + ' of ' + MAX_LISTS + ' lists' + (user() ? '' : ' &middot; saved in this browser') + '</p></div>' +
+        '<div class="wl-actions"><button class="btn btn-small" id="wl-rename">✎ Rename</button><button class="btn btn-small" id="wl-cols">⚙ Columns</button>' +
+        (list.length ? '<button class="btn btn-small" id="wl-export">⤓ Export</button>' : '') +
+        (ls.length > 1 ? '<button class="btn btn-small btn-plain" id="wl-delete">Delete list</button>' : '') + '</div></div>' +
+        '<div class="nav-search wl-add-co"><svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" id="wl-search" placeholder="Add a company to ' + esc(l.name) + '" autocomplete="off"></div>' +
+        (list.length ? '<div id="wl-table"></div>' : '<div class="info-box">This list is empty. Search above, or use the <b>Follow</b> button on any company page.</div>') + '</div></div>';
+      $$('[data-list]').forEach(b => b.onclick = () => { cur = b.dataset.list; draw(); });
+      const add = $('#wl-add');
+      if (add) add.onclick = () => nameDialog('New watchlist', '', 'Create', name => { const n = newList(name); if (n) { cur = n.id; draw(); } });
+      $('#wl-rename').onclick = () => nameDialog('Rename watchlist', l.name, 'Save', name => {
+        const xs = watchLists(), t = xs.find(x => x.id === cur); t.name = name; saveLists(xs); draw();
+      });
+      $('#wl-cols').onclick = () => {
+        const sel = cols.slice();
+        const bd = modal('Columns for ' + l.name, '<p class="sub" style="margin-top:0">Pick the numbers to show for this list. Each list keeps its own columns.</p><input type="search" id="wl-col-find" placeholder="Find a ratio, e.g. ROE, growth, holding" style="margin-bottom:10px">' +
+          '<div class="check-grid" id="wl-col-grid">' + RATIOS.map(r => '<label data-name="' + esc((r.name + ' ' + r.label + ' ' + r.desc).toLowerCase()) + '"><input type="checkbox" value="' + r.key + '"' + (sel.indexOf(r.key) >= 0 ? ' checked' : '') + '>' + esc(r.name) + '</label>').join('') + '</div>', [
+          { label: 'Reset', onClick: () => { const xs = watchLists(); xs.find(x => x.id === cur).cols = null; saveLists(xs); draw(); } },
+          { label: 'Save columns', primary: true, onClick: b => {
+            const picked = $$('#wl-col-grid input:checked', b).map(i => i.value);
+            // keep the existing order, new picks go at the end
+            const order = sel.filter(k => picked.indexOf(k) >= 0).concat(picked.filter(k => sel.indexOf(k) < 0));
+            const xs = watchLists(); xs.find(x => x.id === cur).cols = order.length ? order : null; saveLists(xs); draw();
+          } }
+        ]);
+        $('#wl-col-find', bd).addEventListener('input', e => { const f = e.target.value.toLowerCase().trim(); $$('#wl-col-grid label', bd).forEach(x => { x.hidden = !!f && x.dataset.name.indexOf(f) < 0; }); });
+      };
+      const ex = $('#wl-export');
+      if (ex) ex.onclick = () => downloadCSV(l.name.replace(/[^\w -]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() + '.csv', [['Name', 'NSE Code'].concat(cols.map(k => RBY[k].label))].concat(
+        list.map(c => [c.name, c.symbol].concat(cols.map(k => { const v = c.metrics[k]; return v == null || !isFinite(v) ? '' : Math.round(v * 100) / 100; })))));
+      const del = $('#wl-delete');
+      if (del) del.onclick = () => modal('Delete ' + l.name + '?', '<p>The list and its ' + l.syms.length + ' companies will be removed. Companies that are also in your other lists stay there.</p>', [
+        { label: 'Cancel' },
+        { label: 'Delete list', primary: true, onClick: () => { saveLists(watchLists().filter(x => x.id !== cur)); cur = null; draw(); } }
+      ]);
+      attachSearch($('#wl-search'), c => { setInList(cur, c.symbol, true); toast(c.symbol + ' added to ' + l.name); draw(); });
+      if (list.length) sortableList($('#wl-table'), list, cols, { remove: s => { setInList(cur, s, false); draw(); } });
     };
     draw();
+  }
+  function nameDialog(title, value, okLabel, onOk) {
+    const bd = modal(title, '<div class="field"><label>Name</label><input type="text" id="wl-name" maxlength="40" value="' + esc(value) + '" placeholder="e.g. Long term, Banks, IPO watch"></div>', [
+      { label: 'Cancel' },
+      { label: okLabel, primary: true, onClick: b => { const v = $('#wl-name', b).value.trim(); if (!v) { $('#wl-name', b).focus(); return false; } onOk(v.slice(0, 40)); } }
+    ]);
+    const inp = $('#wl-name', bd);
+    inp.focus(); inp.select();
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('.modal-foot .btn-primary', bd).click(); } });
   }
 
   /* ---------- Portfolio X-ray ----------
