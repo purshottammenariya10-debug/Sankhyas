@@ -32,7 +32,9 @@ HIST = ROOT / "data" / "history"
 YAHOO = ROOT / "data" / "yahoo"
 KEEP_YEARS = 12
 LAKH_PER_CR = 100.0
-PL_KEYS = ("sales", "expenses", "op", "otherIncome", "interest", "depreciation", "pbt", "tax", "np", "eps", "equity", "reserves")
+# reserves are left out: NSE states them in lakh some years and in crore others
+PL_KEYS = ("sales", "expenses", "op", "otherIncome", "interest", "depreciation", "pbt", "tax", "np", "eps", "equity")
+SPLITS = (1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 20, 25, 50, 100)
 
 
 def num(v):
@@ -83,7 +85,7 @@ def parse_year(d):
     if sales is None or pbt is None or np_ is None:
         return None
     # operating profit (EBITDA) the way the site computes it from Yahoo: before interest, depreciation, other income and one-offs
-    op = None if bank else pbt + (interest or 0) + (dep or 0) - (other or 0) - exc
+    op = None if bank or other is None else pbt + (interest or 0) + (dep or 0) - other - exc     # unknown other income: no guess
     out = {
         "sales": cr(sales), "op": cr(op), "expenses": cr(sales - op) if op is not None else None, "otherIncome": cr(other),
         "interest": cr(interest), "depreciation": cr(dep), "pbt": cr(pbt), "tax": round(tax / pbt * 100, 2) if tax is not None and pbt else None,
@@ -164,6 +166,8 @@ def merge(sym):
     start = dt.datetime.strptime(periods[0], "%b %Y").date()       # Yahoo's oldest year
     room = max(0, KEEP_YEARS - len(periods))
     add = sorted(e for e in years if dt.date.fromisoformat(e) < start and years[e].get("sales"))[-room:] if ok and room else []
+    if add:
+        adjust_eps(add, years, a)
     if not add:
         a["histN"] = 0
         changed = n > 0
@@ -177,6 +181,28 @@ def merge(sym):
         ydoc["annual"] = a
         yp.write_text(json.dumps(ydoc, separators=(",", ":")))
     return bool(add)
+
+
+def adjust_eps(add, years, a):
+    """Old EPS is as filed, before later bonus issues and splits. The share count implied by profit / EPS
+    jumps by a clean multiple (2x for a 1:1 bonus, 5x for a 1:5 split) where one happened: divide the
+    EPS of every earlier year by it, so the whole series is on today's share base."""
+    seq = [(years[e].get("np"), years[e].get("eps")) for e in add] + list(zip(a.get("np") or [], a.get("eps") or []))
+    implied = [n / e if n and e and n > 0 and e > 0 else None for n, e in seq]
+    factor = 1.0
+    newer = None
+    for i in range(len(seq) - 1, -1, -1):
+        if implied[i] is None:
+            continue
+        if newer is not None:
+            r = implied[newer] / implied[i]
+            if r >= 1.4:
+                k = min(SPLITS, key=lambda s: abs(r / s - 1))
+                if abs(r / k - 1) < 0.25:
+                    factor *= k
+        newer = i
+        if i < len(add) and factor != 1 and years[add[i]].get("eps") is not None:
+            years[add[i]] = dict(years[add[i]], eps=round(years[add[i]]["eps"] / factor, 2))
 
 
 def main():
