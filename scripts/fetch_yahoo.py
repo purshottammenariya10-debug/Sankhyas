@@ -201,6 +201,29 @@ def trim_ohlc(px):
             px[k] = px[k][-OHLC_DAYS:]
 
 
+NOT_MONEY = {"periods", "tax", "sharesOut"}
+
+
+def to_inr(block, cur, fx_hist):
+    """Yahoo reports a few Indian companies' statements in another currency (Infosys and Wipro in US
+    dollars). Convert every money row to rupees at the exchange rate at each period's end."""
+    periods = block.get("periods") or []
+    if not periods or fx_hist is None or fx_hist.empty:
+        return block
+    closes = fx_hist["Close"].dropna()
+    rates = []
+    for p in periods:
+        end = dt.datetime.strptime(p, "%b %Y") + dt.timedelta(days=31)
+        before = closes[closes.index.tz_localize(None) <= end] if closes.index.tz is not None else closes[closes.index <= end]
+        rates.append(float(before.iloc[-1]) if len(before) else float(closes.iloc[0]))
+    for k, v in block.items():
+        if k in NOT_MONEY or not isinstance(v, list) or len(v) != len(periods):
+            continue
+        block[k] = [None if x is None else round(x * r, 2) for x, r in zip(v, rates)]
+    block["cur"] = cur
+    return block
+
+
 def build_company(symbol, t, yahoo=None, meta=None):
     """Build the JSON document for one company from a yfinance Ticker-like object.
 
@@ -216,7 +239,7 @@ def build_company(symbol, t, yahoo=None, meta=None):
         info = t.info or {}
     except Exception:  # info endpoint is flaky; statements and prices still work
         info = {}
-    return {
+    doc = {
         "symbol": symbol,
         "yahoo": yahoo or symbol + ".NS",
         "bse": meta.get("bse") or None,
@@ -234,6 +257,17 @@ def build_company(symbol, t, yahoo=None, meta=None):
         "annual": annual_block(t),
         "quarterly": income_block(t.quarterly_income_stmt),
     }
+    cur = (info.get("financialCurrency") or "INR").upper()
+    if cur != "INR":
+        try:
+            import yfinance as yf
+            fx = yf.Ticker(f"{cur}INR=X").history(period="10y", interval="1d")
+            doc["annual"] = to_inr(doc["annual"], cur, fx)
+            doc["quarterly"] = to_inr(doc["quarterly"], cur, fx)
+        except Exception as e:  # noqa: BLE001
+            print(f"  {symbol}: statements in {cur}, conversion failed ({str(e)[:60]}); left out", file=sys.stderr)
+            doc["annual"], doc["quarterly"] = {"periods": []}, {"periods": []}
+    return doc
 
 
 def load_universe():
@@ -332,6 +366,15 @@ def main(argv=None):
         priority = {s.strip().upper() for s in (ROOT / "scripts" / "symbols.txt").read_text().split() if s.strip()}
         ranked = sorted(entries, key=lambda e: (-file_age(e["symbol"]), e["symbol"] not in priority, e["symbol"]))
         todo = [e for e in ranked if file_age(e["symbol"]) > 20 * 3600][:args.max_full]
+        # companies whose statements looked like another currency (flagged by fetch_history.py) go first
+        refetch = ROOT / "data" / "history" / "_refetch.json"
+        if refetch.exists():
+            try:
+                want = set(json.loads(refetch.read_text()))
+            except ValueError:
+                want = set()
+            first = [e for e in entries if e["symbol"] in want]
+            todo = first + [e for e in todo if e["symbol"] not in want][:max(0, args.max_full - len(first))]
         live_only = True
     else:
         syms = args.symbols or [s.strip() for s in (ROOT / "scripts" / "symbols.txt").read_text().split() if s.strip()]

@@ -34,6 +34,7 @@ KEEP_YEARS = 12
 LAKH_PER_CR = 100.0
 # reserves are left out: NSE states them in lakh some years and in crore others
 PL_KEYS = ("sales", "expenses", "op", "otherIncome", "interest", "depreciation", "pbt", "tax", "np", "eps", "equity")
+FOREIGN = set()
 SPLITS = (1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 20, 25, 50, 100)
 
 
@@ -162,6 +163,8 @@ def merge(sym):
             ys = a["sales"][periods.index(label(end))]
             if ys:
                 ok = 0.85 <= ys / y["sales"] <= 1.15
+                if 1 / 110 <= ys / y["sales"] <= 1 / 60 and not a.get("cur"):
+                    FOREIGN.add(sym)               # Yahoo's figures look like US dollars: refetch and convert
                 break
     start = dt.datetime.strptime(periods[0], "%b %Y").date()       # Yahoo's oldest year
     room = max(0, KEEP_YEARS - len(periods))
@@ -251,9 +254,11 @@ def main():
                     print(f"  {s}: history failed ({str(e)[:80]})", file=sys.stderr)
                     continue
                 p.write_text(json.dumps(doc, separators=(",", ":")))
-    merged = sum(1 for p in HIST.glob("*.json") if merge(p.stem))
-    have = len(list(HIST.glob("*.json")))
-    print(f"History: {fetched} companies fetched ({years} years read) in {time.time() - t0:.0f}s; {have} companies have history, {merged} merged into the annual tables")
+    merged = sum(1 for p in HIST.glob("*.json") if not p.stem.startswith("_") and merge(p.stem))
+    (HIST / "_refetch.json").write_text(json.dumps(sorted(FOREIGN)))
+    have = len([p for p in HIST.glob("*.json") if not p.stem.startswith("_")])
+    print(f"History: {fetched} companies fetched ({years} years read) in {time.time() - t0:.0f}s; {have} companies have history, {merged} merged into the annual tables; "
+          f"{len(FOREIGN)} with statements in another currency queued for a Yahoo refresh")
     return 0
 
 
