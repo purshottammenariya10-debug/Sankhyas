@@ -278,12 +278,14 @@
       market: pageMarket, results: pageResults, compare: pageCompare, watchlist: pageWatchlist,
       login: pageLogin, register: pageRegister, premium: pagePremium, about: pageAbout, ai: pageAI,
       deals: pageDeals, orders: pageOrders, ratings: pageRatings, report: pageReport,
-      ipo: pageIPO, calendar: pageCalendar, themes: pageThemes, theme: pageThemes, studio: pageStudio,
+      ipo: pageIPO, admin: pageAdmin, calendar: pageCalendar, themes: pageThemes, theme: pageThemes, studio: pageStudio,
       account: pageAccount, portfolio: pagePortfolio, alerts: pageAlerts, forgot: pageForgot, reset: pageReset, terms: pageLegal, privacy: pageLegal, refunds: pageLegal, contact: pageLegal
     };
     const fn = routes[p0] || pageNotFound;
     const prevY = window.scrollY;
     fn(parts.slice(1), params);
+    // visit counting for the owners' dashboard (the dashboard itself is not counted)
+    if (p0 !== 'admin' && window.Account && Account.trackView) Account.trackView('#/' + p0, (p0 === 'company' || p0 === 'ipo') && parts[1] ? parts[1].toUpperCase() : null);
     if (!(p0 === 'company' && routeKeepScroll)) window.scrollTo(0, 0); else window.scrollTo(0, prevY);
     routeKeepScroll = false;
     document.title = (pageTitle ? pageTitle + ' | ' : '') + 'Sankhyas';
@@ -2351,6 +2353,63 @@
         '<p class="table-note">Read from the red herring prospectus (' + n.pages + ' pages) and the price band advertisement filed on NSE, ' + d((n.updated || '').slice(0, 10)) + '. "p." is the page of the PDF. ' +
         'Money is in ₹ crore. This note sets out facts from the offer documents; it is not a recommendation to apply or not. Read the prospectus, especially its risk factors, before you invest.</p></div></div>';
     });
+  }
+
+  /* ---------- Owners' dashboard (#/admin): visitors, sign-ups, Pro, what people look at ---------- */
+  let adminChart = [];
+  function pageAdmin(parts, params) {
+    setTitle('Dashboard');
+    const days = [7, 30, 90].indexOf(+params.days) >= 0 ? +params.days : 30;
+    const shell = body => '<div class="container page"><div class="card admin-page"><div class="section-head"><div><h1>Sankhyas dashboard</h1><p>Visitors, sign-ups and usage. Only the Sankhyas team can open this page.</p></div>' +
+      '<div class="seg">' + [7, 30, 90].map(d => '<a class="' + (d === days ? 'active' : '') + '" href="#/admin?days=' + d + '">' + d + ' days</a>').join('') + '</div></div>' + body + '</div></div>';
+    if (!Account.cloud) { app.innerHTML = shell('<p class="muted">Accounts are not switched on for this site, so there is nothing to show.</p>'); return; }
+    if (!user()) { app.innerHTML = shell('<p>Please <a href="#/login?next=' + encodeURIComponent('#/admin') + '">log in</a> with the owner account.</p>'); return; }
+    app.innerHTML = shell('<p class="muted">Loading…</p>');
+    const token = navToken;
+    Account.adminStats(days).then(s => {
+      if (token !== navToken) return;
+      const n = v => num(v || 0, 0);
+      const tile = (label, value, sub) => '<div class="stat"><div class="sub">' + label + '</div><b>' + value + '</b>' + (sub ? '<div class="sub">' + sub + '</div>' : '') + '</div>';
+      const u = s.users || {}, dev = s.devices || {}, devTot = Object.values(dev).reduce((a, b) => a + b, 0) || 1;
+      const list = (title, rows, cols) => '<div class="ins-card"><div class="ins-head"><h3>' + title + '</h3></div>' + (rows.length
+        ? '<div class="table-wrap"><table class="data"><thead><tr>' + cols.map((c, i) => '<th' + (i ? '' : ' class="l"') + '>' + c[0] + '</th>').join('') + '</tr></thead><tbody>' +
+          rows.map(r => '<tr>' + cols.map((c, i) => '<td' + (i ? '' : ' class="l"') + '>' + c[1](r) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>'
+        : '<p class="muted">Nothing recorded yet.</p>') + '</div>';
+      const when = t => (t ? new Date(t).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '-');
+      const pageName = k => ({ '#/': 'Home', '#/company': 'Company pages', '#/ipo': 'IPOs', '#/screens': 'Screens', '#/screen': 'Screen results', '#/watchlist': 'Watchlist', '#/results': 'Results', '#/feed': 'Feed', '#/ai': 'Ask AI', '#/premium': 'Pro plans', '#/login': 'Log in', '#/register': 'Sign up' }[k] || k);
+      const body =
+        '<div class="stats-row">' + tile('Visitors', n(s.visitors), 'today ' + n(s.today && s.today.visitors)) + tile('Page views', n(s.views), 'today ' + n(s.today && s.today.views)) +
+          tile('Visits (sessions)', n(s.sessions), s.visitors ? num(s.views / Math.max(1, s.sessions), 1) + ' pages a visit' : '') +
+          tile('Sign-ups', n(u.total), '+' + n(u.new) + ' in ' + days + ' days') + tile('Active users', n(u.active), 'logged in within ' + days + ' days') +
+          tile('Pro users', n(s.pro), s.revenue ? '₹' + n(s.revenue / 100) + ' received' : 'no payments yet') +
+          tile('Using the app', n(s.app_visitors), 'visitors from the installed app') + tile('Alerts set', n(s.alerts), n(s.watchlists) + ' saved watchlists') + '</div>' +
+        '<div class="admin-charts"><div class="ins-card"><div class="ins-head"><h3>Visitors a day</h3></div><div class="admin-chart"><canvas id="adm-visits"></canvas></div></div>' +
+          '<div class="ins-card"><div class="ins-head"><h3>Sign-ups a day</h3></div><div class="admin-chart"><canvas id="adm-signups"></canvas></div></div></div>' +
+        '<div class="admin-grid">' +
+          list('Most visited pages', s.pages || [], [['Page', r => esc(pageName(r.k))], ['Views', r => n(r.views)], ['Visitors', r => n(r.visitors)]]) +
+          list('Most viewed companies and IPOs', s.companies || [], [['Symbol', r => '<a href="#/company/' + encodeURIComponent(r.k) + '">' + esc(r.k) + '</a>'], ['Views', r => n(r.views)], ['Visitors', r => n(r.visitors)]]) +
+          list('Where visitors come from', s.refs || [], [['Site', r => esc(r.k)], ['Visitors', r => n(r.visitors)]]) +
+          list('Devices', Object.keys(dev).map(k => ({ k, v: dev[k] })).sort((a, b) => b.v - a.v), [['Device', r => esc(r.k.charAt(0).toUpperCase() + r.k.slice(1))], ['Visitors', r => n(r.v)], ['Share', r => num(r.v / devTot * 100, 0) + '%']]) +
+        '</div>' +
+        list('Latest sign-ups', s.recent_users || [], [['Email', r => esc(r.email || '-')], ['Joined', r => when(r.created)], ['Last login', r => when(r.last)], ['Email confirmed', r => (r.confirmed ? 'Yes' : '<span class="down">No</span>')], ['Plan', r => esc(r.plan)]]) +
+        '<p class="table-note">Visitors are counted by an anonymous id kept in each browser (no IP address, no cookies); browsers that ask not to be tracked are not counted. Days are in IST. Updated ' + when(s.generated) + '.</p>';
+      app.innerHTML = shell(body);
+      adminChart.forEach(ch => { try { ch.destroy(); } catch (e) { /* ignore */ } });
+      adminChart = [];
+      if (window.Chart) {
+        // one series per chart (never two scales on one chart); every day in the range, zero when nothing happened
+        const dates = [];
+        for (let i = days - 1; i >= 0; i--) dates.push(new Date(Date.now() - i * 864e5 + 5.5 * 3600e3).toISOString().slice(0, 10));
+        const by = (arr, key) => { const m = {}; (arr || []).forEach(x => { m[x.day] = x[key]; }); return dates.map(d => m[d] || 0); };
+        const primary = cssVar('--primary'), ink3 = cssVar('--ink-3'), line = cssVar('--line-2');
+        const labels = dates.map(d => new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }));
+        const opts = { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { intersect: false, mode: 'index' } },
+          scales: { x: { grid: { display: false }, ticks: { color: ink3, maxTicksLimit: 8 } }, y: { beginAtZero: true, grid: { color: line }, ticks: { color: ink3, precision: 0 } } } };
+        const v = $('#adm-visits'), g = $('#adm-signups');
+        if (v) adminChart.push(new Chart(v, { type: 'line', data: { labels, datasets: [{ label: 'Visitors', data: by(s.daily, 'visitors'), borderColor: primary, backgroundColor: primary, borderWidth: 2, pointRadius: 0, pointHoverRadius: 5, tension: 0.25 }] }, options: opts }));
+        if (g) adminChart.push(new Chart(g, { type: 'bar', data: { labels, datasets: [{ label: 'Sign-ups', data: by(s.signups_daily, 'n'), backgroundColor: primary, borderRadius: 4, maxBarThickness: 18 }] }, options: opts }));
+      }
+    }).catch(e => { if (token === navToken) app.innerHTML = shell('<p class="down">' + esc(e.message || 'Could not load the dashboard.') + '</p>'); });
   }
 
   /* ---------- Results calendar ---------- */

@@ -118,6 +118,7 @@
     Account.error = friendly(e);
   });
 
+  const trackLast = { key: '', at: 0 };
   const Account = {
     cloud, ready, PLANS, error: null,
     config: cfg,
@@ -240,6 +241,45 @@
         if (!error) await loadProfile();
         return error ? { error: friendly(error) } : {};
       }
+    },
+    /* Visit counting for the owners' dashboard: one row per page, an anonymous visitor id kept in
+       this browser (no IP address, no cookie). Skipped when the browser asks not to be tracked. */
+    trackView(path, symbol) {
+      Account.ready.then(() => {
+        try {
+          // only the real site counts (not previews or local copies)
+          if (!client || !/(^|\.)sankhyas\.com$/.test(location.hostname) || navigator.doNotTrack === '1' || window.doNotTrack === '1') return;
+          const rnd = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 36);
+          let vid = localStorage.getItem('sankhyas_vid');
+          if (!vid) { vid = rnd(); localStorage.setItem('sankhyas_vid', vid); }
+          let sid = sessionStorage.getItem('sankhyas_sid');
+          const first = !sid;
+          if (!sid) { sid = rnd(); sessionStorage.setItem('sankhyas_sid', sid); }
+          const key = path + '|' + (symbol || '');
+          if (key === trackLast.key && Date.now() - trackLast.at < 15000) return;
+          trackLast.key = key; trackLast.at = Date.now();
+          let ref = null;
+          if (first && document.referrer) { try { const h = new URL(document.referrer).host; if (h && h !== location.host) ref = h.slice(0, 120); } catch (e) { /* ignore */ } }
+          const w = window.innerWidth;
+          client.from('page_views').insert({
+            visitor: vid, session: sid, path: String(path).slice(0, 120), symbol: symbol ? String(symbol).slice(0, 30) : null, ref,
+            device: w < 700 ? 'mobile' : w < 1024 ? 'tablet' : 'desktop',
+            app: matchMedia('(display-mode: standalone)').matches || navigator.standalone === true,
+            user_id: state.user && cloud ? state.user.id : null
+          }).then(() => {}, () => {});
+        } catch (e) { /* private mode or storage blocked: not counted */ }
+      });
+    },
+    async isAdmin() {
+      if (!client || !state.user) return false;
+      const { data } = await client.rpc('is_admin');
+      return data === true;
+    },
+    async adminStats(days) {
+      if (!client || !state.user) throw new Error('Please log in first.');
+      const { data, error } = await client.rpc('admin_stats', { days });
+      if (error) throw new Error(error.message === 'not allowed' ? 'This page is only for the Sankhyas team.' : friendly(error));
+      return data;
     },
     async payments() {
       if (!client || !state.user) return [];
