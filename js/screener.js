@@ -121,7 +121,7 @@
     expr = expr.replace(/<>/g, '!=');
     const stripped = expr.replace(/m\.[A-Za-z0-9]+/g, '');
     const bad = stripped.match(/[A-Za-z_][A-Za-z0-9_ ]*/);
-    if (bad) throw new Error('Unknown ratio: "' + bad[0].trim() + '". Pick a ratio from the list on the right.');
+    if (bad) throw new Error('Unknown ratio: "' + bad[0].trim() + '". Type a few letters and pick a ratio from the suggestions, or browse the ratio list.');
     if (!/^[\s\d.<>=!&|()+\-*\/%]*$/.test(stripped)) throw new Error('Query contains unsupported characters.');
     if (!used.length) throw new Error('Query must use at least one ratio.');
     let fn;
@@ -172,5 +172,16 @@
     { slug: 'psu-stocks', name: 'Cash Rich Companies', desc: 'Companies generating strong free cash flow.', query: 'Free cash flow last year > 2000 AND Debt to equity < 0.3' }
   ];
 
-  window.Screener = { RATIOS, BY_KEY, compile, run, PRESETS };
+  // themes shown as filters on the screens page
+  const CATS = {
+    Quality: ['the-bull-cartel', 'coffee-can-portfolio', 'bluest-of-the-blue-chips', 'sankhyas-top-scorers', 'clean-compounders'],
+    Value: ['magic-formula', 'low-pe-high-roe', 'undervalued-growth', 'high-dividend-yield'],
+    Growth: ['growth-stocks', 'quarterly-growers', 'order-book-momentum', 'sme-stocks', 'strong-results'],
+    Safety: ['debt-free-companies', 'rating-upgrades', 'clean-audit', 'psu-stocks'],
+    Ownership: ['high-promoter-holding', 'fii-accumulation', 'promoter-buying'],
+    Momentum: ['near-52-week-low', 'golden-crossover']
+  };
+  Object.keys(CATS).forEach(c => CATS[c].forEach(slug => { const p = PRESETS.find(x => x.slug === slug); if (p) p.cat = c; }));
+
+  window.Screener = { RATIOS, BY_KEY, compile, run, PRESETS, CATS: Object.keys(CATS) };
 })();

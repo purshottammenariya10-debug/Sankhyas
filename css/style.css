@@ -864,3 +864,36 @@ body.sheet-open { overflow: hidden; }
 .admin-chart { position: relative; height: 220px; }
 .admin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; margin-bottom: 14px; }
 @media (max-width: 700px) { .admin-charts, .admin-grid { grid-template-columns: 1fr; } }
+
+/* screens: type-ahead, live count, starters, filters */
+.ac-wrap { position: relative; flex: 1; min-width: 0; }
+.ac-wrap > input, .ac-wrap > textarea { width: 100%; }
+.ac-suggest { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; }
+.ac-suggest .ac-head { padding: 6px 14px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); background: var(--bg-2); border-bottom: 1px solid var(--line-2); position: sticky; top: 0; }
+.ac-suggest .ac-item { align-items: center; padding: 9px 14px; border-bottom: 1px solid var(--line-2); }
+.ac-suggest .ac-item:last-child { border-bottom: 0; }
+.ac-suggest .ac-item small { display: block; font-size: 12px; color: var(--ink-3); margin-top: 2px; line-height: 1.35; }
+.ac-suggest .ac-sym { white-space: nowrap; }
+.ac-op { display: inline-block; min-width: 34px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--primary); }
+.query-status { font-size: 13px; color: var(--ink-3); margin-top: 6px; min-height: 18px; }
+.query-status.ok { color: var(--green); font-weight: 500; }
+.screen-starters { display: flex; gap: 8px; align-items: center; overflow-x: auto; margin: 0 0 16px; padding-bottom: 4px; scrollbar-width: none; }
+.screen-starters::-webkit-scrollbar { display: none; }
+.screen-starters .chip { flex: none; cursor: pointer; font: inherit; font-size: 13px; }
+.screen-starters .sub { flex: none; }
+.ratio-panel summary { cursor: pointer; font-weight: 600; font-size: 14px; margin-bottom: 8px; }
+.ratio-panel[open] summary { margin-bottom: 10px; }
+.screen-filters { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.screen-cats { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.screen-cats::-webkit-scrollbar { display: none; }
+.screen-cat-btn { flex: none; -webkit-tap-highlight-color: transparent; padding: 5px 14px; border-radius: 20px; border: 1px solid var(--line); background: var(--bg); color: var(--ink-2); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+.screen-cat-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.screen-card-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 12px; }
+.screen-cat { color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; font-weight: 600; font-size: 11px; }
+.screen-count { background: var(--green-bg); color: var(--green); border-radius: 20px; padding: 2px 10px; font-weight: 600; }
+@media (max-width: 720px) {
+  /* above the box, so the phone keyboard does not cover the suggestions */
+  .ac-suggest { top: auto; bottom: calc(100% + 4px); max-height: 240px; }
+  .ai-screen .ac-suggest { bottom: auto; top: calc(100% + 4px); }
+  .ratio-panel { border-top: 1px solid var(--line-2); padding-top: 12px; }
+}

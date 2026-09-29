@@ -330,8 +330,20 @@
     attachSearch($('#home-search'), c => { location.hash = '#/company/' + c.symbol; });
   }
   function screenCard(s) {
-    return '<div class="card card-flat screen-card" style="margin:0"><h3><a href="#/screens/' + esc(s.slug) + '">' + esc(s.name) + '</a></h3><p class="muted" style="font-size:14px;margin:0">' +
+    const n = presetCount(s);
+    return '<div class="card card-flat screen-card" style="margin:0"><div class="screen-card-top">' + (s.cat ? '<span class="screen-cat">' + esc(s.cat) + '</span>' : '<span></span>') +
+      (n ? '<span class="screen-count">' + n.toLocaleString('en-IN') + ' stocks</span>' : '') + '</div>' +
+      '<h3><a href="#/screens/' + esc(s.slug) + '">' + esc(s.name) + '</a></h3><p class="muted" style="font-size:14px;margin:0">' +
       esc(s.desc) + '</p><code>' + esc(s.query) + '</code></div>';
+  }
+  // how many companies a ready-made screen finds today (worked out once per visit)
+  const presetCounts = {};
+  function presetCount(s) {
+    if (s.slug in presetCounts) return presetCounts[s.slug];
+    let n = null;
+    try { const all = Data.listCompanies(); if (all.length) n = Screener.run(s.query, all).results.length; } catch (e) { /* leave it blank */ }
+    if (n != null) presetCounts[s.slug] = n;
+    return n;
   }
 
   /* ---------- Company ---------- */
@@ -1810,8 +1822,26 @@
       (saved.length ? '<div class="card"><h2>My screens</h2><div class="grid grid-3">' + saved.map((s, i) =>
         '<div class="card card-flat screen-card" style="margin:0"><div class="flex space-between"><h3 style="margin:0"><a href="#/screen/saved/' + i + '">' + esc(s.name) + '</a></h3><button class="btn btn-small btn-plain" data-del="' + i + '">Delete</button></div>' +
         '<code>' + esc(s.query) + '</code></div>').join('') + '</div></div>' : '') +
-      '<div class="card"><h2>Popular screens</h2><div class="grid grid-3">' + Screener.PRESETS.map(screenCard).join('') + '</div></div>' +
+      '<div class="card"><div class="section-head"><div><h2>Popular screens</h2><p>Ready-made queries. Open one to see the stocks, then change it to suit you.</p></div></div>' +
+      '<div class="screen-filters"><input type="search" id="screen-find" placeholder="Search screens, e.g. dividend, debt, FII" autocomplete="off">' +
+      '<div class="screen-cats">' + ['All'].concat(Screener.CATS).map((c, i) => '<button type="button" class="screen-cat-btn' + (i ? '' : ' active') + '" data-cat="' + esc(c) + '">' + esc(c) + '</button>').join('') + '</div></div>' +
+      '<div class="grid grid-3" id="preset-grid"></div></div>' +
       '</div>';
+    let cat = 'All';
+    function drawPresets() {
+      const f = ($('#screen-find').value || '').toLowerCase().trim();
+      const words = f.split(/\s+/).filter(Boolean);
+      const list = Screener.PRESETS.filter(p => (cat === 'All' || p.cat === cat) &&
+        words.every(w => (p.name + ' ' + p.desc + ' ' + p.query + ' ' + (p.cat || '')).toLowerCase().indexOf(w) >= 0));
+      $('#preset-grid').innerHTML = list.length ? list.map(screenCard).join('') : '<p class="muted">No screen matches that. <a href="#/screen/new">Build your own</a>.</p>';
+    }
+    drawPresets();
+    $('#screen-find').addEventListener('input', drawPresets);
+    $$('.screen-cat-btn').forEach(b => b.onclick = () => {
+      cat = b.dataset.cat;
+      $$('.screen-cat-btn').forEach(x => x.classList.toggle('active', x === b));
+      drawPresets();
+    });
     $$('[data-del]').forEach(b => b.onclick = () => {
       const s = store.get('screens', []);
       s.splice(+b.dataset.del, 1);
@@ -1832,23 +1862,26 @@
     }
     const isNew = !meta;
     setTitle(meta ? meta.name : 'Create a stock screen');
-    const example = 'Market Capitalization > 500 AND\nPrice to earning < 15 AND\nReturn on capital employed > 22';
+    const example = 'Market Capitalization > 500 AND\nPrice to Earning < 15 AND\nReturn on capital employed > 22';
     app.innerHTML = '<div class="container page">' +
       '<div class="card"><div class="section-head"><div><h1>' + esc(meta ? meta.name : 'Create a Search Query') + '</h1><p>' +
       esc(meta ? meta.desc : 'Custom queries use simple arithmetic and comparison operators on financial ratios.') + '</p></div>' +
       (meta ? '' : '<a class="btn btn-small" href="#/screens">View popular screens</a>') + '</div>' +
+      (isNew ? '<div class="screen-starters"><span class="sub">Start from:</span>' + Screener.PRESETS.slice(0, 10).map(p => '<button type="button" class="chip" data-start="' + esc(p.slug) + '">' + esc(p.name) + '</button>').join('') + '</div>' : '') +
       '<div class="screen-layout"><div>' +
       '<div class="ai-screen"><label for="nl-query"><span class="ai-spark">✦</span> Describe your screen in plain English</label>' +
-      '<div class="flex"><input type="text" id="nl-query" placeholder="e.g. debt free companies with ROE above 20% and sales growing faster than 12%">' +
+      '<div class="flex"><div class="ac-wrap"><input type="text" id="nl-query" autocomplete="off" placeholder="e.g. debt free companies with ROE above 20% and sales growing faster than 12%"></div>' +
       '<button class="btn btn-primary" id="nl-run" type="button">Generate query</button></div><div id="nl-status" class="sub" style="margin-top:6px"></div></div>' +
-      '<label for="query">Query</label><textarea id="query" rows="6" placeholder="' + esc(example) + '">' + esc(query.replace(/ AND /g, ' AND\n')) + '</textarea>' +
+      '<label for="query">Query <span class="sub" style="font-weight:400">Type a letter or two and pick from the suggestions</span></label>' +
+      '<div class="ac-wrap"><textarea id="query" rows="6" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="' + esc(example) + '">' + esc(query.replace(/ AND /g, ' AND\n')) + '</textarea></div>' +
+      '<div id="query-status" class="query-status"></div>' +
       '<div id="query-error"></div>' +
       '<div class="flex flex-wrap" style="margin-top:10px"><button class="btn btn-primary" id="run-query">▶ Run this query</button>' +
       '<button class="btn" id="save-screen">Save this screen</button>' +
       '<button class="btn btn-plain" id="show-example">Show example</button></div>' +
       '<div class="info-box" style="margin-top:14px"><b>Tips:</b> Combine conditions with <code>AND</code> / <code>OR</code>, use brackets, and operators <code>&gt; &lt; &gt;= &lt;= = + - * /</code>. Example: <code>Current price &lt; High price * 0.8</code></div>' +
-      '</div><div><label>Search ratios</label><input type="search" id="ratio-search" placeholder="e.g. growth, ROE, holding">' +
-      '<div class="ratio-list" id="ratio-list"></div></div></div></div>' +
+      '</div><details class="ratio-panel"' + (window.innerWidth > 720 ? ' open' : '') + '><summary>Browse all ' + RATIOS.length + ' ratios</summary><input type="search" id="ratio-search" placeholder="e.g. growth, ROE, holding">' +
+      '<div class="ratio-list" id="ratio-list"></div></details></div></div>' +
       '<div class="card" id="results-card"' + (query ? '' : ' style="display:none"') + '><div class="section-head"><div><h2 id="results-title">Query results</h2><p id="results-sub"></p></div>' +
       '<div class="flex"><button class="btn btn-small" id="edit-cols">Edit columns</button><button class="btn btn-small" id="export-results">⤓ Export</button></div></div>' +
       '<div id="results"></div></div></div>';
@@ -1865,11 +1898,41 @@
         ta.value = ta.value.slice(0, pos) + ins + ta.value.slice(pos);
         ta.focus();
         ta.selectionStart = ta.selectionEnd = pos + ins.length;
+        liveCount();
       });
     }
     drawRatios();
     $('#ratio-search').addEventListener('input', e => drawRatios(e.target.value));
-    $('#show-example').onclick = () => { $('#query').value = example; };
+    $('#show-example').onclick = () => { $('#query').value = example; liveCount(); };
+    $$('[data-start]').forEach(b => b.onclick = () => {
+      const p = Screener.PRESETS.find(x => x.slug === b.dataset.start);
+      $('#query').value = p.query.replace(/ AND /g, ' AND\n');
+      $('#nl-status').textContent = '';
+      run(true);
+      liveCount();
+    });
+
+    // live "N companies match" under the query while typing
+    let countTimer = 0;
+    function liveCount() {
+      clearTimeout(countTimer);
+      countTimer = setTimeout(() => {
+        const q = $('#query').value.trim(), st = $('#query-status');
+        if (!q) { st.textContent = ''; st.className = 'query-status'; return; }
+        try {
+          const n = Screener.run(q, Data.listCompanies()).results.length;
+          st.textContent = '✓ ' + n.toLocaleString('en-IN') + (n === 1 ? ' company matches' : ' companies match') + ' so far';
+          st.className = 'query-status ok';
+        } catch (e) {
+          st.textContent = /[<>=]\s*$/.test(q) ? 'Add a number to finish this condition.' : /\b(AND|OR)\s*$/i.test(q) ? 'Add the next condition.' :
+            /^Unknown ratio/.test(e.message) && /[A-Za-z]$/.test(q) ? 'Keep typing, or pick a ratio from the suggestions.' : e.message;
+          st.className = 'query-status';
+        }
+      }, 250);
+    }
+    $('#query').addEventListener('input', liveCount);
+    queryAssist($('#query'), liveCount);
+    nlAssist($('#nl-query'), () => nlRun());
 
     let lastResults = [], lastCols = [];
     function run(pushHistory) {
@@ -1935,7 +1998,203 @@
     };
     $('#nl-run').onclick = nlRun;
     $('#nl-query').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); nlRun(); } });
-    if (query) run(false);
+    if (query) { run(false); liveCount(); }
+  }
+
+  /* ---------- type-ahead for screens ---------- */
+  /* A suggestion list under a text box (above it on phones, so the keyboard does not hide it).
+     compute() returns {head, items: [{html, ...}]} for the current text; pick(item) applies one and returns
+     false when it is finished with the box. Arrow keys move, Enter or Tab picks, Escape closes. With auto
+     the first item is preselected, so Enter takes it; otherwise Enter keeps its normal meaning until an arrow is used. */
+  function suggestBox(el, compute, pick, auto) {
+    const list = document.createElement('div');
+    list.className = 'ac-list ac-suggest';
+    list.hidden = true;
+    el.parentNode.appendChild(list);
+    let items = [], active = 0;
+    function draw() {
+      const r = document.activeElement === el ? compute() : null;
+      items = (r && r.items) || [];
+      if (!items.length) { list.hidden = true; return; }
+      active = auto ? 0 : -1;
+      list.innerHTML = (r.head ? '<div class="ac-head">' + r.head + '</div>' : '') +
+        items.map((it, i) => '<div class="ac-item" data-i="' + i + '">' + it.html + '</div>').join('');
+      list.hidden = false;
+      list.scrollTop = 0;
+      highlight();
+      $$('.ac-item', list).forEach(n => n.addEventListener('mousedown', e => { e.preventDefault(); choose(+n.dataset.i); }));
+    }
+    function highlight() { $$('.ac-item', list).forEach((n, i) => n.classList.toggle('active', i === active)); const a = $('.ac-item.active', list); if (a) a.scrollIntoView({ block: 'nearest' }); }
+    function choose(i) { const it = items[i]; if (!it) return; if (pick(it) === false) { list.hidden = true; return; } el.focus(); draw(); }
+    el.addEventListener('input', draw);
+    el.addEventListener('focus', draw);
+    el.addEventListener('click', draw);
+    el.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== el) list.hidden = true; }, 120));
+    el.addEventListener('keydown', e => {
+      if (list.hidden) return;
+      if (e.key === 'ArrowDown') { e.preventDefault(); active = (active + 1) % items.length; highlight(); }
+      else if (e.key === 'ArrowUp' && active < 0) { e.preventDefault(); active = items.length - 1; highlight(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); active = (active - 1 + items.length) % items.length; highlight(); }
+      else if (((e.key === 'Enter' && !e.ctrlKey && !e.metaKey) || e.key === 'Tab') && active >= 0) { e.preventDefault(); e.stopImmediatePropagation(); choose(active); }
+      else if (e.key === 'Escape') { list.hidden = true; }
+    });
+    return { refresh: draw };
+  }
+
+  // short names people type for ratios
+  const RATIO_ALIASES = {
+    roe: 'roe', roce: 'roce', pe: 'pe', 'p/e': 'pe', pb: 'pb', 'p/b': 'pb', mcap: 'marketCap', 'market cap': 'marketCap', de: 'de', 'd/e': 'de',
+    'debt equity': 'de', cmp: 'price', dividend: 'divYield', 'div yield': 'divYield', margin: 'opm', 'operating margin': 'opm', ebitda: 'op',
+    'ev/ebitda': 'evEbitda', 'ev ebitda': 'evEbitda', fcf: 'fcf', 'free cash': 'fcf', cfo: 'cfo', '52 week high': 'high52', '52 week low': 'low52',
+    promoter: 'promoter', pledge: 'pledged', fii: 'fii', dii: 'dii', peg: 'peg', revenue: 'sales', turnover: 'sales', pat: 'np', profit: 'np',
+    score: 'sankhyasScore', 'red flag': 'riskScore', 'red flags': 'riskScore', rating: 'ratingScore', orders: 'orders12m', returns: 'ret1y', '200 dma': 'dma200', '50 dma': 'dma50'
+  };
+  const POPULAR_RATIOS = ['marketCap', 'pe', 'roce', 'roe', 'de', 'salesGrowth5', 'profitGrowth5', 'divYield', 'promoter', 'sankhyasScore'];
+  const wordsOf = t => t.toLowerCase().replace(/(\d)([a-z])/g, '$1 $2').split(/[^a-z0-9%]+/).filter(Boolean);
+  function matchRatios(frag, max) {
+    const f = frag.toLowerCase().replace(/\s+/g, ' ').trim(), q = wordsOf(f);
+    if (!q.length) return [];
+    const best = {};
+    const add = (key, sc) => { if (RBY[key] && !(best[key] >= sc)) best[key] = sc; };
+    RATIOS.forEach(r => {
+      const n = r.name.toLowerCase(), w = wordsOf(n);
+      if (n.indexOf(f) === 0) add(r.key, 100 - n.length / 10);
+      else if (q.every(x => w.some(y => y.indexOf(x) === 0))) add(r.key, 70 - w.findIndex(y => y.indexOf(q[0]) === 0) * 4 - n.length / 10);
+      else if (f.length >= 3 && r.desc.toLowerCase().indexOf(f) >= 0) add(r.key, 20);
+    });
+    Object.keys(RATIO_ALIASES).forEach(a => { if (a.indexOf(f) === 0) add(RATIO_ALIASES[a], a === f ? 110 : 90 - a.length / 10); });
+    return Object.keys(best).sort((a, b) => best[b] - best[a]).slice(0, max).map(k => RBY[k]);
+  }
+  // the ratio a piece of text ends with ("... Return on equity"), longest name first
+  const RATIO_ENDINGS = RATIOS.map(r => [r.name.toLowerCase(), r.key]).concat(Object.keys(RATIO_ALIASES).map(a => [a, RATIO_ALIASES[a]]))
+    .sort((a, b) => b[0].length - a[0].length);
+  function endsWithRatio(t) {
+    t = t.toLowerCase().replace(/\s+/g, ' ').trimEnd();
+    for (const [n, k] of RATIO_ENDINGS) if (t.slice(-n.length) === n && !/[a-z0-9]/.test(t.charAt(t.length - n.length - 1))) return k;
+    return null;
+  }
+  // spread of a ratio across all companies, for suggesting sensible numbers
+  const spreadCache = {};
+  function ratioSpread(key) {
+    if (key in spreadCache) return spreadCache[key];
+    const v = Data.listCompanies().map(c => c.metrics[key]).filter(x => x != null && isFinite(x)).sort((a, b) => a - b);
+    const at = p => v[Math.min(v.length - 1, Math.floor(p * (v.length - 1)))];
+    return (spreadCache[key] = v.length ? { n: v.length, p10: at(0.1), p25: at(0.25), p50: at(0.5), p75: at(0.75), p90: at(0.9) } : null);
+  }
+  function niceNum(x) {
+    const a = Math.abs(x);
+    if (a >= 100) { const p = Math.pow(10, Math.floor(Math.log10(a)) - 1); return Math.round(x / p) * p; }
+    return a >= 10 ? Math.round(x) : a >= 1 ? Math.round(x * 2) / 2 : Math.round(x * 100) / 100;
+  }
+  const OPS = [['>', 'greater than'], ['<', 'less than'], ['>=', 'at least'], ['<=', 'at most'], ['=', 'equal to']];
+
+  /* Query box: suggests ratio names as you type, then a comparison, then typical values, then AND / OR. */
+  function queryAssist(ta, changed) {
+    function fragment(before) {
+      let start = 0, m;
+      const re = /[\n<>=!+*(),-]|\s\/|\/(?=\s)|\b(?:AND|OR|NOT)\b|[\d.](?=\s)/gi;
+      while ((m = re.exec(before))) start = m.index + m[0].length;
+      const lead = before.slice(start).match(/^\s*/)[0].length;
+      return { start: start + lead, text: before.slice(start + lead) };
+    }
+    const unitOf = r => (r.unit ? '<span class="ac-sym">' + esc(r.unit) + '</span>' : '');
+    const ratioItem = r => ({ kind: 'ratio', name: r.name, html: '<span>' + esc(r.name) + (r.desc ? '<small>' + esc(r.desc) + '</small>' : '') + '</span>' + unitOf(r) });
+    function compute() {
+      const caret = ta.selectionStart, before = ta.value.slice(0, caret);
+      if (ta.selectionEnd !== caret) return null;
+      const fr = fragment(before), frag = fr.text;
+      // after "Ratio >" : typical values
+      const opM = before.match(/(>=|<=|>|<|=)\s*$/);
+      if (opM) {
+        const key = endsWithRatio(before.slice(0, opM.index));
+        const sp = key && ratioSpread(key);
+        if (!sp) return null;
+        const r = RBY[key], u = r.unit === '%' ? '%' : r.unit ? ' ' + r.unit : '';
+        const hi = opM[1] !== '<' && opM[1] !== '<=';
+        const picks = hi ? [[sp.p50, 'median company'], [sp.p75, 'top 25%'], [sp.p90, 'top 10%']] : [[sp.p50, 'median company'], [sp.p25, 'lowest 25%'], [sp.p10, 'lowest 10%']];
+        const seen = {};
+        const items = picks.map(([v, lab]) => [niceNum(v), lab]).filter(([v]) => !seen[v] && (seen[v] = 1))
+          .map(([v, lab]) => ({ kind: 'value', value: String(v), html: '<span><b>' + v.toLocaleString('en-IN') + '</b>' + esc(u) + '</span><span class="ac-sym">' + lab + '</span>' }));
+        return { head: 'Typical values of ' + esc(r.name) + ' across ' + sp.n.toLocaleString('en-IN') + ' companies', items };
+      }
+      const cond = before.slice(0, fr.start).split(/\bAND\b|\bOR\b|\n/i).pop();
+      const hasOp = /[<>=]/.test(cond);
+      // after a complete ratio: comparison
+      if (!hasOp && (!frag.trim() || /\s$/.test(frag))) {
+        const key = endsWithRatio(before);
+        if (key) return { head: 'Compare ' + esc(RBY[key].name), items: OPS.map(([o, lab]) => ({ kind: 'op', value: o, html: '<span><b class="ac-op">' + esc(o) + '</b> ' + lab + '</span>' })) };
+      }
+      // after a number: join with the next condition
+      const afterNum = hasOp && /[\w)%]\s+$/.test(before.slice(0, fr.start) || before);
+      const conj = ['AND', 'OR'].filter(w => afterNum && w.indexOf(frag.trim().toUpperCase()) === 0)
+        .map(w => ({ kind: 'conj', value: w, html: '<span><b class="ac-op">' + w + '</b> ' + (w === 'AND' ? 'also match another condition' : 'match either condition') + '</span>' }));
+      if (frag.trim()) {
+        const rs = matchRatios(frag, 8).map(ratioItem);
+        const items = conj.concat(rs);
+        return items.length ? { head: rs.length ? 'Ratios' : '', items } : null;
+      }
+      if (conj.length) return { head: 'Add another condition', items: conj };
+      if (!before.trim() || /(\bAND|\bOR|\()\s*$/i.test(before)) return { head: 'Popular ratios · or type to search all ' + RATIOS.length, items: POPULAR_RATIOS.map(k => ratioItem(RBY[k])) };
+      return null;
+    }
+    function pick(it) {
+      const caret = ta.selectionStart, v = ta.value;
+      let before = v.slice(0, caret), after = v.slice(caret);
+      if (it.kind === 'ratio' || it.kind === 'conj') {
+        const fr = fragment(before);
+        before = before.slice(0, fr.start);
+        after = after.replace(/^[A-Za-z0-9]*/, '');
+        if (it.kind === 'conj' && before && !/\s$/.test(before)) before += ' ';
+      } else before = before.replace(/\s*$/, ' ');
+      const ins = it.kind === 'ratio' ? it.name + ' ' : it.kind === 'conj' ? it.value + '\n' : it.value + ' ';
+      ta.value = before + ins + after.replace(/^[ \t]+/, '');
+      ta.selectionStart = ta.selectionEnd = (before + ins).length;
+      if (changed) changed();
+    }
+    return suggestBox(ta, compute, pick, true);
+  }
+
+  /* Plain-English box: example descriptions that match what you typed, and ratio names to finish a word. */
+  const NL_EXAMPLES = [
+    'debt free companies with ROE above 20%',
+    'large caps with dividend yield above 2%',
+    'mid caps with sales growth above 15% in 5 years',
+    'small caps with ROCE above 20% and low debt',
+    'undervalued stocks with ROE above 15%',
+    'near 52 week low with ROCE above 18%',
+    'golden crossover with market cap above 5000 crores',
+    'promoter holding above 60% with no pledging',
+    'profit growth above 20% in 3 years and PE below 30',
+    'PE below 15 and dividend yield above 3%',
+    'large caps with FII holding above 25%',
+    'quarterly profit growth above 25% and sales growth above 15%',
+    'free cash flow above 1000 crores and debt free',
+    'PEG below 1 and profit growth above 15%',
+    'above 200 DMA with ROE above 18%',
+    'OPM above 25% and interest coverage above 5',
+    'debt to equity below 0.5 and ROCE above 15%',
+    'Sankhyas score above 75 and red flag score below 20'
+  ];
+  function nlAssist(inp, go) {
+    function compute() {
+      const t = inp.value.toLowerCase(), q = wordsOf(t);
+      if (!q.length) return { head: 'Try one of these', items: NL_EXAMPLES.slice(0, 6).map(x => ({ kind: 'ex', value: x, html: '<span>' + esc(x) + '</span>' })) };
+      const ex = NL_EXAMPLES.filter(x => { const w = wordsOf(x); return q.every(a => w.some(b => b.indexOf(a) === 0)); }).slice(0, 5)
+        .map(x => ({ kind: 'ex', value: x, html: '<span>' + esc(x) + '</span>' }));
+      const last = (t.match(/([a-z][a-z/ ]*)$/) || [])[1] || '';
+      const lastWord = last.split(' ').pop();
+      const done = /\s$/.test(inp.value) || lastWord.length < 2;
+      const rs = done ? [] : matchRatios(lastWord, 4).filter(r => r.name.toLowerCase() !== lastWord)
+        .map(r => ({ kind: 'word', value: r.name, html: '<span>… ' + esc(r.name) + '</span>' + (r.unit ? '<span class="ac-sym">' + esc(r.unit) + '</span>' : '') }));
+      const items = ex.concat(rs);
+      return items.length ? { head: ex.length && !rs.length ? 'Suggestions' : '', items } : null;
+    }
+    function pick(it) {
+      if (it.kind === 'ex') { inp.value = it.value; go(); return false; }
+      inp.value = inp.value.replace(/[a-z/]+$/i, '') + it.value + ' ';
+      inp.selectionStart = inp.selectionEnd = inp.value.length;
+    }
+    return suggestBox(inp, compute, pick);
   }
 
   /* ---------- Feed ---------- */
