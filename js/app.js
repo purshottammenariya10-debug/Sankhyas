@@ -1162,7 +1162,8 @@
       '<div class="head-actions">' + (extra || '') +
       (c.live ? '' : '<a class="btn btn-small btn-plain" href="#/company/' + c.symbol + (c.standalone ? '' : '/standalone') + '" data-view>View ' + alt + '</a>') + '</div></div>';
   }
-  const figs = c => (c.standalone ? 'Standalone' : 'Consolidated') + ' Figures in Rs. Crores' + (c.live ? ' &middot; Source: Yahoo Finance' : '');
+  const figs = c => (c.standalone ? 'Standalone' : 'Consolidated') + ' Figures in Rs. Crores' +
+    (c.live ? ' &middot; Source: ' + (c.histN ? 'NSE annual results (' + c.years[0] + '–' + c.years[c.histN - 1] + ') and Yahoo Finance' : 'Yahoo Finance') : '');
 
   function quartersSection(c) {
     const q = c.q;

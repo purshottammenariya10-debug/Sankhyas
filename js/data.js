@@ -497,7 +497,7 @@
       bseCode: j.bse || known.bseCode || '', exchange: /\.BO$/i.test(j.yahoo || '') ? 'BSE' : 'NSE', yahoo: j.yahoo || '', isin: j.isin || '', faceValue: known.faceValue != null ? known.faceValue : faceValueOf(bs.equity, sharesOut),
       psu: !!known.psu, promoter: ins || 0, shares, about: j.about || '',
       standalone: false, live: true, updated: j.updated,
-      years: a.periods, quarters: qq.periods, shQuarters: ['Latest'],
+      years: a.periods, histN: a.histN || 0, quarters: qq.periods, shQuarters: ['Latest'],
       pl, bs, cf, ratios, q, sh, sharesOut,
       docs: { announcements: [], reports: [], ratings: [], concalls: [] },
       prices: px.close, volume: px.volume.map(v => v || 0), dates: px.dates.map(d => new Date(d + 'T00:00:00')),
