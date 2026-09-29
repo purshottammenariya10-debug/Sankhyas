@@ -35,6 +35,7 @@ RES_DIR = ROOT / "data" / "results"
 FILINGS = ROOT / "data" / "filings"
 KEEP_SHP = 12       # quarters of shareholding history
 KEEP_RES = 6        # quarters of results (enough for YoY and QoQ)
+KEEP_RES_BANK = 12  # banks: three years, for the NPA trend
 HEADERS = {"User-Agent": UA, "Referer": "https://www.nseindia.com/"}
 FACT = re.compile(r"<([A-Za-z\-]+):([A-Za-z0-9]+)\b[^>]*?contextRef=\"([^\"]+)\"[^>]*>([^<]*)<")
 
@@ -123,7 +124,9 @@ RES_TAGS = {
     "pbt": ["ProfitBeforeTax", "ProfitLossFromOrdinaryActivitiesBeforeTax"],
     "tax": ["TaxExpense"],
     "np": ["ProfitLossForPeriod", "ProfitLossForThePeriod"],
-    "np_owners": ["ProfitOrLossAttributableToOwnersOfParent"],
+    "np_owners": ["ProfitOrLossAttributableToOwnersOfParent", "ProfitLossAfterTaxesMinorityInterestAndShareOfProfitLossOfAssociates"],
+    "opex": ["OperatingExpenses"],                                  # banks
+    "prov": ["ProvisionsOtherThanTaxAndContingencies"],             # banks
     "eps": ["BasicEarningsLossPerShareFromContinuingAndDiscontinuedOperations", "BasicEarningsLossPerShareFromContinuingOperations", "BasicEarningsPerShareAfterExtraordinaryItems"],
 }
 
@@ -145,10 +148,30 @@ def parse_results(text):
     if out.get("np_owners") == 0 and out.get("np"):
         out["np_owners"] = None  # left blank as 0 by some filers without minority interest
     out["bank"] = ("InterestEarned", "OneD") in f
+    if out["bank"]:
+        out.update(bank_ratios(f))
+    else:
+        out.pop("opex", None)
+        out.pop("prov", None)
     seg = parse_segments(f)
     if seg:
         out["seg"] = seg
     out["sv"] = SEG_VERSION
+    return out
+
+
+BANK_VERSION = 1
+BANK_RATIOS = {"gnpa": "PercentageOfGrossNpa", "nnpa": "PercentageOfNpa", "cet1": "CET1Ratio", "roa": "ReturnOnAssets"}
+
+
+def bank_ratios(f):
+    """Gross and net NPA %, CET1 and return on assets. Integrated filings state them as fractions
+    (0.0117 = 1.17%); banks file them in the standalone results only (the consolidated file has 0)."""
+    out = {}
+    for k, tag in BANK_RATIOS.items():
+        v = num(f.get((tag, "OneD")))
+        if v:
+            out[k] = round(v * 100 if abs(v) < 1 else v, 2)
     return out
 
 
@@ -225,20 +248,23 @@ def update_results(nse, sym, stats):
                    params={"index": "equities", "symbol": sym, "type": "Integrated Filing- Financials", "period_ended": "all"})
     rows = (data or {}).get("data") if isinstance(data, dict) else data
     have = {q["qe"]: q for q in doc["quarters"]}
-    by_q = {}
+    by_q, alone = {}, {}
     for r in rows or []:
         qe = iso_date(r.get("qe_Date") or "")
         if not qe or not r.get("xbrl") or not r["xbrl"].endswith(".xml"):
             continue
         cons = (r.get("consolidated") or "").lower().startswith("consolidated")
+        if not cons and (r.get("broadcast_Date") or "") >= (alone.get(qe, {}).get("broadcast_Date") or ""):
+            alone[qe] = r
         cur = by_q.get(qe)
         # prefer consolidated, then the latest revision
         if not cur or (cons and not cur[0]) or (cons == cur[0] and (r.get("broadcast_Date") or "") > (cur[1].get("broadcast_Date") or "")):
             by_q[qe] = (cons, r)
-    for qe in sorted(by_q, reverse=True)[:KEEP_RES]:
+    keep = KEEP_RES_BANK if any("BANKING" in (r.get("xbrl") or "") for _, r in by_q.values()) else KEEP_RES
+    for qe in sorted(by_q, reverse=True)[:keep]:
         cons, r = by_q[qe]
         old = have.get(qe)
-        if old and old.get("cons") == cons and old.get("src") == r["xbrl"] and old.get("sv") == SEG_VERSION:
+        if old and old.get("cons") == cons and old.get("src") == r["xbrl"] and old.get("sv") == SEG_VERSION and (not old.get("bank") or old.get("bv") == BANK_VERSION):
             continue
         try:
             text = requests.get(r["xbrl"], headers=HEADERS, timeout=60).text
@@ -248,10 +274,18 @@ def update_results(nse, sym, stats):
             continue
         if not res:
             continue
+        if res.get("bank"):
+            # NPA ratios are in the standalone filing only
+            if "gnpa" not in res and qe in alone and alone[qe].get("xbrl") != r["xbrl"]:
+                try:
+                    res.update({k: v for k, v in bank_ratios(facts(requests.get(alone[qe]["xbrl"], headers=HEADERS, timeout=60).text)).items() if k not in res})
+                except Exception as e:  # noqa: BLE001
+                    print(f"  {sym} {qe}: standalone results for NPA failed ({str(e)[:60]})", file=sys.stderr)
+            res["bv"] = BANK_VERSION
         res.update({"qe": qe, "cons": cons, "filed": r.get("broadcast_Date"), "src": r["xbrl"]})
         have[qe] = res
         stats["res_q"] += 1
-    doc["quarters"] = sorted(have.values(), key=lambda q: q["qe"], reverse=True)[:KEEP_RES]
+    doc["quarters"] = sorted(have.values(), key=lambda q: q["qe"], reverse=True)[:keep]
     doc["checked"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     path.write_text(json.dumps(doc, separators=(",", ":")))
 
@@ -343,7 +377,8 @@ def main(argv=None):
     never = sorted([s for s in nse_syms if not docs[s]], key=lambda s: -mcap.get(s, 0))
     stale = sorted([s for s in nse_syms if docs[s] and age_days(docs[s]) > 20], key=lambda s: -age_days(docs[s]))
     # quarters read before business segments were parsed are read again, largest companies first
-    no_seg = sorted([s for s in nse_syms if docs[s] and docs[s].get("quarters") and docs[s]["quarters"][0].get("sv") != SEG_VERSION], key=lambda s: -mcap.get(s, 0))
+    no_seg = sorted([s for s in nse_syms if docs[s] and docs[s].get("quarters") and (docs[s]["quarters"][0].get("sv") != SEG_VERSION
+                     or (docs[s]["quarters"][0].get("bank") and docs[s]["quarters"][0].get("bv") != BANK_VERSION))], key=lambda s: -mcap.get(s, 0))
     queue = list(dict.fromkeys([s for s in fresh if not docs[s] or age_days(docs[s]) > 0.25] + no_seg[:120] + never + stale))[:args.max_results]
     for sym in queue:
         try:

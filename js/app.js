@@ -461,6 +461,8 @@
         if (token !== navToken || !r || !(r.quarters || []).length) return;
         c._res = r;
         refreshInsights(c);
+        const bq = r.quarters[0].bank && bankQuartersSection(c), old = $('#quarters');
+        if (bq && old) { old.outerHTML = bq; bindStatements($('#quarters')); }
       });
       Data.loadShareholding(sym).then(sh => {
         if (token !== navToken || !sh || !(sh.quarters || []).some(q => q.fii != null)) return;
@@ -1149,8 +1151,8 @@
     });
     return h + '</tbody></table></div>';
   }
-  function bindStatements() {
-    $$('.expand').forEach(b => b.addEventListener('click', () => {
+  function bindStatements(root) {
+    $$('.expand', root).forEach(b => b.addEventListener('click', () => {
       b.classList.toggle('open');
       const table = b.closest('table');
       $$('tr[data-sub="' + b.dataset.expand + '"]', table).forEach(tr => tr.classList.toggle('hidden'));
@@ -1180,6 +1182,40 @@
       { label: 'Net Profit', values: q.np, strong: true },
       { label: 'EPS in Rs', values: q.eps, dec: 2 }
     ], { highlightLast: true }) + '<p class="table-note">Raw PDF and detailed result filings are available under Documents.</p></section>';
+  }
+
+  // banks report differently: interest earned and paid, operating expenses and provisions, financing
+  // profit, and asset quality (gross / net NPA) from the standalone results
+  function bankQuartersSection(c) {
+    const qs = ((c._res && c._res.quarters) || []).filter(q => q.bank).slice().sort((a, b) => (a.qe < b.qe ? -1 : 1));
+    if (qs.length < 2) return null;
+    const lbl = q => new Date(q.qe + 'T00:00:00').toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+    const col = f => qs.map(f);
+    const exp = q => (q.opex != null || q.prov != null ? (q.opex || 0) + (q.prov || 0) : null);
+    const fin = q => (q.sales != null && q.interest != null && exp(q) != null ? q.sales - q.interest - exp(q) : null);
+    const rows = [
+      { label: 'Revenue', values: col(q => q.sales), strong: true },
+      { label: 'Interest', values: col(q => q.interest) },
+      { label: 'Expenses', values: col(exp), expand: 'bexp' },
+      { label: 'Operating expenses', values: col(q => q.opex), sub: 'bexp' },
+      { label: 'Provisions', values: col(q => q.prov), sub: 'bexp' },
+      { label: 'Financing Profit', values: col(fin), strong: true },
+      { label: 'Financing Margin %', values: col(q => (fin(q) != null && q.sales ? fin(q) / q.sales * 100 : null)), type: 'pct' },
+      { label: 'Other Income', values: col(q => q.other_income) },
+      { label: 'Depreciation', values: col(q => q.dep || 0) },
+      { label: 'Profit before tax', values: col(q => q.pbt), strong: true },
+      { label: 'Tax %', values: col(q => (q.tax != null && q.pbt ? q.tax / q.pbt * 100 : null)), type: 'pct' },
+      { label: 'Net Profit', values: col(q => (q.np_owners != null ? q.np_owners : q.np)), strong: true },
+      { label: 'EPS in Rs', values: col(q => q.eps), dec: 2 },
+      { label: 'Gross NPA %', values: col(q => q.gnpa), type: 'pct', dec: 2 },
+      { label: 'Net NPA %', values: col(q => q.nnpa), type: 'pct', dec: 2 }
+    ];
+    if (qs.some(q => q.cet1 != null)) rows.push({ label: 'CET1 ratio %', values: col(q => q.cet1), type: 'pct', dec: 2 });
+    const cons = qs[qs.length - 1].cons;
+    return sectionHead('quarters', 'Quarterly Results', (cons ? 'Consolidated' : 'Standalone') + ' Figures in Rs. Crores &middot; Source: results filed with NSE', c) +
+      statementTable(qs.map(lbl), rows, { highlightLast: true }) +
+      '<p class="table-note">Expenses are operating expenses plus provisions. Financing profit is interest earned less interest paid and expenses. ' +
+      'Gross and Net NPA % (and CET1) are from the bank\'s standalone results; net profit is the shareholders\' share.</p></section>';
   }
 
   function plSection(c) {
