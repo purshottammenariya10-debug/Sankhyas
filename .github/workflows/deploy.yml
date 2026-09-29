@@ -104,6 +104,11 @@ jobs:
         continue-on-error: true
         run: python scripts/summarize_concalls.py --max "${{ github.event.schedule == '17 */2 * * *' && '100' || '250' }}" --max-ar "${{ github.event.schedule == '17 */2 * * *' && '25' || '80' }}"  --max-ratings "${{ github.event.schedule == '17 */2 * * *' && '200' || '500' }}"
 
+      - name: Ten-year financial history (NSE annual results, merged before Yahoo's four years)
+        continue-on-error: true
+        timeout-minutes: 25
+        run: python scripts/fetch_history.py --max "${{ github.event.schedule == '17 */2 * * *' && '25' || '60' }}" || python scripts/fetch_history.py --merge-only || echo "history not merged"
+
       - name: Build company index
         run: |
           if ls data/yahoo/*.json >/dev/null 2>&1; then node scripts/build_index.mjs; else echo "No Yahoo data yet; the site will use sample data"; fi

@@ -6,7 +6,7 @@
 // -> [{ "path", "status", "data" }]   (up to 10 paths per call)
 // Only the read-only NSE paths in ALLOWED are relayed. If the PROXY_SECRET secret is set, callers
 // must also send it in the x-proxy-secret header.
-const ALLOWED = /^\/api\/(?:(?:corporate-announcements|annual-reports|corporates-pit|corporate-sast-reg29|corporates-corporateActions|corporate-board-meetings|event-calendar|corporate-share-holdings-master|integrated-filing-results|all-upcoming-issues|ipo-detail|ipo-active-category)\?[\w\-.=&%,]*|ipo-current-issue|public-past-issues)$/;
+const ALLOWED = /^\/api\/(?:(?:corporate-announcements|annual-reports|corporates-pit|corporate-sast-reg29|corporates-corporateActions|corporate-board-meetings|event-calendar|corporate-share-holdings-master|integrated-filing-results|all-upcoming-issues|ipo-detail|ipo-active-category|corporates-financial-results|corporates-financial-results-data)\?[\w\-.=&%,]*|ipo-current-issue|public-past-issues)$/;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 const HEADERS = { 'User-Agent': UA, Accept: 'application/json, text/plain, */*', 'Accept-Language': 'en-US,en;q=0.9', Referer: 'https://www.nseindia.com/' };
 let cookie = '';
