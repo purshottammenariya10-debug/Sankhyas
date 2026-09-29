@@ -937,6 +937,9 @@
     async function send(q) {
       q = String(q || '').trim();
       if (!q || ctl) return;
+      // opts.gate() returns HTML to show instead of answering (e.g. the free-question limit), or nothing
+      const stop = opts.gate && opts.gate(q);
+      if (stop) { bubble('user', esc(q)); bubble('assistant', stop); ta.value = ''; autosize(); return; }
       const intro = log.querySelector('.ai-intro');
       if (intro) intro.remove();
       const mine = bubble('user', esc(q));

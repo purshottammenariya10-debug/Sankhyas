@@ -714,11 +714,31 @@
   /* AI analyst */
   /* ---------- Sankhyas Insights: red flags, guidance tracker, what changed ---------- */
   const PRO_TAG = '<span class="pro-tag" title="Sankhyas Pro feature, free during beta">PRO</span>';
+  /* Who sees what: 'guest' (not signed in), 'member' (free account) or 'pro'. Depth features (the insight
+     cards, IPO notes, longer lists, all screen results) need a free account; guests see a preview and a
+     one-tap sign-in. Without cloud accounts everything is open. */
+  function tier() { if (!Account.cloud) return 'pro'; if (!user()) return 'guest'; return Account.isPro() ? 'pro' : 'member'; }
+  const isGuest = () => tier() === 'guest';
+  // sign-in prompt for a locked preview; clicks are handled once for the whole site (data-signin)
+  function signinCta(title, detail, what) {
+    return '<div class="lock-cta lock-login"><span aria-hidden="true">🔓</span> <b>' + title + '</b><div class="sub">' + (detail || 'Free account, no card needed. One tap with Google.') + '</div>' +
+      '<button class="btn btn-primary btn-small" type="button" data-signin="' + esc(what || 'see this') + '">Sign in free</button></div>';
+  }
+  // guests get GUEST_AI_PER_DAY questions a day to Sankhyas AI, then a sign-in prompt
+  const GUEST_AI_PER_DAY = 3;
+  function aiGate() {
+    if (!isGuest()) return '';
+    const day = new Date().toISOString().slice(0, 10), u = store.get('ai_guest', null);
+    const n = u && u.d === day ? u.n : 0;
+    if (n >= GUEST_AI_PER_DAY) return '<p>You have used your ' + GUEST_AI_PER_DAY + ' free questions for today.</p>' + signinCta('Sign in free to keep asking', 'A free account gets many more questions every day. One tap with Google.', 'keep asking Sankhyas AI');
+    rawSet('ai_guest', { d: day, n: n + 1 });
+    return '';
+  }
   const signed = (v, unit) => (v == null || !isFinite(v) ? '<span class="muted">-</span>' : '<span class="' + (v >= 0 ? 'up' : 'down') + '">' + (v >= 0 ? '+' : '') + num(v, 1) + unit + '</span>');
   function riskCard(c) {
     const r = Insights.redFlags(c);
     const cls = r.band === 'High' ? 'risk-high' : r.band === 'Moderate' ? 'risk-mid' : 'risk-low';
-    return '<div class="ins-card ins-risk"><div class="ins-head"><h3>Red-flag scan</h3>' + PRO_TAG + '</div>' +
+    return '<div class="ins-card ins-risk"><div class="ins-head"><h3>Red-flag scan</h3></div>' +
       '<div class="risk-meter ' + cls + '"><div class="risk-score"><b>' + r.score + '</b><span>/100</span></div><div><div class="risk-band">' + r.band + ' risk</div>' +
       '<div class="risk-bar"><span style="width:' + Math.max(3, r.score) + '%"></span></div></div></div>' +
       (r.flags.length ? '<ul class="flag-list">' + r.flags.map(f => '<li><span class="sev sev-' + f.sev + '" title="' + f.sev + ' severity"></span><div><b>' + esc(f.title) + '</b>' +
@@ -737,7 +757,7 @@
           (r.actual != null ? num(r.actual, 1) + '%' : r.runRate != null ? '<span class="sub">run-rate</span> ' + num(r.runRate, 1) + '%' : '<span class="muted">-</span>') + '</td><td>' + badge(r.status) + '</td></tr>').join('') +
         '</tbody></table></div><p class="table-note">Targets are read from concall transcripts (hover a row for the exact words). Actuals come from the annual results; "run-rate" is the latest quarter vs a year ago.</p>'
       : '<p class="muted">No numeric guidance extracted yet. It appears automatically once ' + esc(c.name) + '\'s concall transcripts are fetched and summarised.</p>';
-    return '<div class="ins-card ins-guide"><div class="ins-head"><h3>Guidance tracker</h3>' + PRO_TAG + '</div>' +
+    return '<div class="ins-card ins-guide"><div class="ins-head"><h3>Guidance tracker</h3></div>' +
       (g.score != null ? '<div class="gd-score"><b>' + g.score + '%</b> of checkable guidance delivered <span class="sub">(' + g.judged + ' target' + (g.judged === 1 ? '' : 's') + ' checked, ' + g.calls + ' call' + (g.calls === 1 ? '' : 's') + ')</span></div>' : '') +
       body + '</div>';
   }
@@ -761,7 +781,7 @@
       html += '<h4>Important filings since</h4><ul class="chg-list">' + w.filings.map(a => '<li><span class="sub">' + docWhen(a.d) + '</span> <a target="_blank" rel="noopener noreferrer" href="' + esc(a.u) + '">' + esc(cleanTitle(a.t)) + '</a></li>').join('') + '</ul>';
     }
     if (empty && !html) { empty.push('no new concall or important filing'); return ''; }
-    return '<div class="ins-card ins-changed"><div class="ins-head"><h3>What changed</h3>' + PRO_TAG + '</div>' + (html || '<p class="muted">Not enough history yet to compare the latest quarter and concall with the previous ones.</p>') + '</div>';
+    return '<div class="ins-card ins-changed"><div class="ins-head"><h3>What changed</h3></div>' + (html || '<p class="muted">Not enough history yet to compare the latest quarter and concall with the previous ones.</p>') + '</div>';
   }
   /* ---------- Sankhyas Score, order wins, deals & insider activity ---------- */
   const PILLAR_HELP = { quality: 'ROCE, ROE, margins', growth: 'Sales & profit growth', value: 'P/E, P/B, yields', momentum: '6M & 1Y returns, vs 200 DMA', safety: 'Debt, interest cover, pledges, red flags' };
@@ -782,7 +802,7 @@
     return '<div class="score-card"><div class="score-main">' + scoreRing(sc.score) + '<div><h3>Sankhyas Score</h3><div class="score-band">' + Insights.scoreBand(sc.score) + '</div>' +
       (sc.sectorRank ? '<div class="sub">#' + sc.sectorRank + ' of ' + sc.sectorSize + ' in ' + esc(c.sector) + '</div>' : '') + '<div class="sub">Out of 100, vs all ' + Data.listCompanies().length.toLocaleString('en-IN') + ' companies</div></div></div>' +
       '<div class="score-pillars' + (open ? '' : ' blurred') + '">' + bars + '</div>' +
-      (open ? '' : '<div class="score-lock"><span aria-hidden="true">🔒</span> See the 5 pillars with <a href="#/premium">Sankhyas Pro</a></div>') + '</div>';
+      (open ? '' : '<div class="score-lock"><span aria-hidden="true">🔒</span> <button class="btn-link" type="button" data-signin="see the Sankhyas Score pillars">Sign in free</button> to see the 5 pillars</div>') + '</div>';
   }
   const crFmt = v => (v == null ? '-' : '₹ ' + num(v, v < 10 ? 2 : 0) + ' Cr');
   function ordersCard(c, empty) {
@@ -791,7 +811,7 @@
     const list = act.orders.filter(o => o.s === c.symbol);
     if (empty && !list.length) { empty.push('no order wins announced in 12 months'); return ''; }
     const total = list.reduce((a, o) => a + (o.amt || 0), 0), sales = c.metrics.sales;
-    return '<div class="ins-card ins-orders"><div class="ins-head"><h3>Order wins</h3>' + PRO_TAG + '</div>' +
+    return '<div class="ins-card ins-orders"><div class="ins-head"><h3>Order wins</h3></div>' +
       (list.length ? '<div class="stats-row mini"><div class="stat"><div class="sub">Last 12 months</div><b>' + list.length + '</b></div><div class="stat"><div class="sub">Value stated</div><b>' + (total ? crFmt(total) : '-') + '</b></div>' +
         (total && sales ? '<div class="stat"><div class="sub">vs annual sales</div><b>' + num(total / sales * 100, 0) + '%</b></div>' : '') + '</div>' +
         '<ul class="act-list">' + list.slice(0, 8).map(o => '<li><span class="sub">' + docWhen(o.d) + '</span> ' + (o.amt ? '<b>' + crFmt(o.amt) + '</b>' : '<span class="muted">value not stated</span>') + (o.cust ? ' from ' + esc(o.cust) : '') +
@@ -807,7 +827,7 @@
     if (empty && !dl.length && !ds.length) { empty.push('no bulk/block deals or insider trades'); return ''; }
     const since = new Date(Date.now() - 92 * 864e5).toISOString().slice(0, 10);
     const net = dl.filter(x => x.d >= since).reduce((a, x) => a + (x.side === 'B' ? x.v : -x.v), 0);
-    return '<div class="ins-card ins-deals"><div class="ins-head"><h3>Deals &amp; insider activity</h3>' + PRO_TAG + '</div>' +
+    return '<div class="ins-card ins-deals"><div class="ins-head"><h3>Deals &amp; insider activity</h3></div>' +
       (dl.length ? '<div class="sub" style="margin-bottom:6px">Bulk/block net in 3 months: <b class="' + signCls(net) + '">' + (net >= 0 ? '+' : '−') + crFmt(Math.abs(net)) + '</b></div>' +
         '<div class="table-wrap"><table class="data"><thead><tr><th class="l">Date</th><th class="l">Client</th><th class="l">Side</th><th>Qty</th><th>Price</th><th>Value</th></tr></thead><tbody>' +
         dl.slice(0, 8).map(x => '<tr><td class="l">' + docWhen(x.d) + '</td><td class="l">' + esc(x.c) + ' <span class="sub">' + x.t + '</span></td><td class="l ' + (x.side === 'B' ? 'up' : 'down') + '">' + (x.side === 'B' ? 'Buy' : 'Sell') + '</td><td>' + num(x.q, 0) + '</td><td>' + num(x.p, 2) + '</td><td>' + crFmt(x.v) + '</td></tr>').join('') + '</tbody></table></div>' : '') +
@@ -818,20 +838,22 @@
 
   // free users see the score and what is inside, with the details behind Pro
   function lockedCard(cls, title, teaser) {
-    return '<div class="ins-card ' + cls + ' locked"><div class="ins-head"><h3>' + title + '</h3>' + PRO_TAG + '</div>' + teaser +
-      '<div class="lock-cta"><span aria-hidden="true">🔒</span> <b>Unlock with Sankhyas Pro</b><div class="sub">From ₹ 208 a month on the yearly plan.</div>' +
-      '<a class="btn btn-primary btn-small" href="#/premium">See Pro plans</a></div></div>';
+    return '<div class="ins-card ' + cls + ' locked"><div class="ins-head"><h3>' + title + '</h3></div>' + teaser +
+      (isGuest() ? signinCta('Sign in free to see the full ' + title.replace(/&amp;/g, '&').toLowerCase(), '', 'see the full ' + title.replace(/&amp;/g, '&').toLowerCase())
+        : '<div class="lock-cta"><span aria-hidden="true">🔒</span> <b>Unlock with Sankhyas Pro</b><div class="sub">From ₹ 208 a month on the yearly plan.</div>' +
+          '<a class="btn btn-primary btn-small" href="#/premium">See Pro plans</a></div>') + '</div>';
   }
   function insightsSection(c) {
-    const open = Account.isPro();
-    const note = !Account.cloud || Account.config.proFreeDuringBeta ? 'Free during beta.' : open ? 'Included in your Pro plan.' : 'The quick read, results and ownership are free; the detailed cards are part of Sankhyas Pro.';
+    // the detailed cards are free with an account
+    const open = !isGuest();
+    const note = isGuest() ? 'The quick read, results and ownership are open to everyone; sign in free for the detailed cards.' : 'Free with your account.';
     let cards, empty = [];
     if (open) cards = riskCard(c) + arCheckCard(c) + ratingsCard(c) + changedCard(c, empty) + guidanceCard(c, empty) + ordersCard(c, empty) + dealsCard(c, empty);
     else {
       const r = Insights.redFlags(c), g = Insights.guidance(c), w = Insights.whatChanged(c);
       const cls = r.band === 'High' ? 'risk-high' : r.band === 'Moderate' ? 'risk-mid' : 'risk-low';
       cards = lockedCard('ins-risk', 'Red-flag scan', '<div class="risk-meter ' + cls + '"><div class="risk-score"><b>' + r.score + '</b><span>/100</span></div><div><div class="risk-band">' + r.band + ' risk</div>' +
-          '<div class="risk-bar"><span style="width:' + Math.max(3, r.score) + '%"></span></div></div></div><p class="muted">' + (r.flags.length ? r.flags.length + ' warning sign' + (r.flags.length > 1 ? 's' : '') + ' found' : 'No warning signs found') + '. See each one and the filing behind it with Pro.</p>') +
+          '<div class="risk-bar"><span style="width:' + Math.max(3, r.score) + '%"></span></div></div></div><p class="muted">' + (r.flags.length ? r.flags.length + ' warning sign' + (r.flags.length > 1 ? 's' : '') + ' found. See each one and the filing behind it.' : 'No warning signs found. See every check that was run.') + '</p>') +
         ratingsCard(c) + (Insights.annualReportCheck(c._filings) ? lockedCard('ins-ar', 'Annual report check', '<p class="muted">' + ((Insights.annualReportCheck(c._filings).flags || []).length ? (Insights.annualReportCheck(c._filings).flags || []).length + ' finding(s) from the auditor\'s report, CARO and the notes, each with its page number.' : 'Auditor\'s opinion, CARO remarks, contingent liabilities and pay, each with its page number.') + '</p>') : '') +
         lockedCard('ins-changed', 'What changed', '<p class="muted">' + (w.results ? 'Results for ' + esc(w.results.quarter) + ' vs the previous quarter and a year ago' : 'Latest results vs the previous quarter') + (w.concall ? ', concall tone and guidance changes' : '') + (w.filings.length ? ', and ' + w.filings.length + ' important filing' + (w.filings.length > 1 ? 's' : '') : '') + '.</p>') +
         lockedCard('ins-guide', 'Guidance tracker', '<p class="muted">' + (g.rows.length ? g.rows.length + ' management target' + (g.rows.length > 1 ? 's' : '') + ' tracked from ' + g.calls + ' concall' + (g.calls > 1 ? 's' : '') + '. See what was promised and what was delivered.' : 'Management\'s concall promises, scored against what was actually delivered.') + '</p>');
@@ -915,9 +937,9 @@
     const table = '<div class="table-wrap"><table class="data"><thead><tr><th class="l">Segment</th><th>Revenue</th><th>Share</th><th>YoY</th><th>Segment profit</th><th>Margin</th><th>Margin vs last year</th></tr></thead><tbody>' +
       rows.map(r => '<tr><td class="l">' + esc(r.n) + '</td><td>' + cr(r.rev) + '</td><td>' + num(r.share, 1) + '%</td><td>' + pc(r.yoy) + '</td><td>' + cr(r.ebit) + (r.eyoy != null ? ' <small>' + pc(r.eyoy) + '</small>' : '') +
         '</td><td>' + (r.m == null ? '<span class="muted">-</span>' : num(r.m, 1) + '%') + '</td><td>' + pc(r.mchg, ' pts') + '</td></tr>').join('') + '</tbody></table></div>';
-    return '<div class="ins-card ins-seg"><div class="ins-head"><h3>Business segments <span class="sub">' + qlabel + ' · ' + (cur.cons ? 'consolidated' : 'standalone') + '</span></h3>' + PRO_TAG + '</div>' + bar +
+    return '<div class="ins-card ins-seg"><div class="ins-head"><h3>Business segments <span class="sub">' + qlabel + ' · ' + (cur.cons ? 'consolidated' : 'standalone') + '</span></h3></div>' + bar +
       (pro ? said + table + '<p class="table-note">Segment profit is before interest, unallocated costs and tax, as reported in the results filing' + (ya ? '; growth is against the same quarter last year' : '') + '.</p>'
-        : '<div class="lock-cta"><span aria-hidden="true">🔒</span> <b>Growth and margins by segment with Sankhyas Pro</b><div class="sub">Which business is driving results: revenue, profit and margin for each segment, against last year.</div><a class="btn btn-primary btn-small" href="#/premium">See Pro plans</a></div>') + '</div>';
+        : signinCta('Sign in free for growth and margins by segment', 'Which business is driving results: revenue, profit and margin for each segment, against last year.', 'see segment growth and margins')) + '</div>';
   }
   const RATING_CLS = { upgrade: 'up', outlook_up: 'up', downgrade: 'down', outlook_down: 'down', watch: 'down', withdraw: 'muted' };
   const ratingWhen = d => new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -953,7 +975,7 @@
     const flags = (ar.flags || []).length
       ? '<ul class="flag-list">' + ar.flags.map(f => '<li><span class="sev sev-' + f.sev + '" title="' + f.sev + ' severity"></span><div><b>' + esc(f.t) + '</b>' + link(f.p) + '<div class="sub">"' + esc(f.x) + '"</div></div></li>').join('') + '</ul>'
       : '<p class="ar-clean">✓ No qualification, going-concern doubt, emphasis of matter or adverse CARO remark found.</p>';
-    return '<div class="ins-card ins-ar"><div class="ins-head"><h3>Annual report check' + (ar.year ? ' <span class="sub">' + esc(ar.year) + '</span>' : '') + '</h3>' + PRO_TAG + '</div>' +
+    return '<div class="ins-card ins-ar"><div class="ins-head"><h3>Annual report check' + (ar.year ? ' <span class="sub">' + esc(ar.year) + '</span>' : '') + '</h3></div>' +
       '<div class="ar-facts">' + facts + '</div>' + flags +
       '<p class="table-note">Read from the full annual report' + (ar.pages ? ' (' + ar.pages + ' pages)' : '') + ': the independent auditor\'s reports, the CARO annexure, the directors\' report and the notes. Quotes are the report\'s own words; click a page to check.</p></div>';
   }
@@ -1007,6 +1029,7 @@
   }
   function bindAI(c) {
     const w = AI.mount($('#ai-widget'), {
+      gate: aiGate,
       title: 'AI Analyst',
       intro: 'Ask about ' + c.name + ': growth, margins, debt, cash flow, valuation, the latest quarter, ownership, peers, or the bull and bear case.',
       placeholder: 'Ask about ' + c.name + '…',
@@ -2178,6 +2201,7 @@
     });
   }
 
+  const GUEST_SCREEN_ROWS = 25;
   const DEFAULT_SCREEN_COLS = ['price', 'pe', 'marketCap', 'divYield', 'qtrProfit', 'qtrProfitVar', 'qtrSales', 'qtrSalesVar', 'roce'];
   function pageScreen(parts, params, preset) {
     let meta = preset;
@@ -2278,8 +2302,11 @@
       res.used.forEach(k => { if (cols.indexOf(k) < 0) cols.push(k); });
       lastResults = res.results; lastCols = cols;
       $('#results-card').style.display = '';
-      $('#results-sub').textContent = res.results.length + ' results found: Showing page 1 of ' + Math.max(1, Math.ceil(res.results.length / 25));
-      sortableList($('#results'), res.results, cols, { median: true, sortKey: 'marketCap' });
+      const guestCut = isGuest() && res.results.length > GUEST_SCREEN_ROWS;
+      const shown = guestCut ? res.results.slice().sort((a, b) => (b.metrics.marketCap || 0) - (a.metrics.marketCap || 0)).slice(0, GUEST_SCREEN_ROWS) : res.results;
+      $('#results-sub').textContent = res.results.length + ' results found' + (guestCut ? ': showing the largest ' + GUEST_SCREEN_ROWS + ' by market cap' : ': Showing page 1 of ' + Math.max(1, Math.ceil(res.results.length / 25)));
+      sortableList($('#results'), shown, cols, { median: true, sortKey: 'marketCap' });
+      if (guestCut) $('#results').insertAdjacentHTML('beforeend', signinCta('Sign in free to see all ' + res.results.length.toLocaleString('en-IN') + ' results', 'Plus Excel export, saved screens and screen alerts. One tap with Google.', 'see all screen results'));
     }
     $('#run-query').onclick = () => run(true);
     $('#query').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) run(true); });
@@ -2309,6 +2336,7 @@
       return bd;
     };
     $('#export-results').onclick = () => {
+      if (!requireLogin('export screen results')) return;
       downloadCSV('screen-results.csv', [['Name', 'NSE Code'].concat(lastCols.map(k => RBY[k].label))].concat(
         lastResults.map(c => [c.name, c.symbol].concat(lastCols.map(k => { const v = c.metrics[k]; return v == null || !isFinite(v) ? '' : Math.round(v * 100) / 100; })))));
     };
@@ -2829,7 +2857,7 @@
           '</p>' + (it && it.rhp ? '<p><a target="_blank" rel="noopener noreferrer" href="' + esc(it.rhp) + '">Red herring prospectus (NSE) ↗</a></p>' : '') + '</div></div>';
         return;
       }
-      const pro = Account.isPro();
+      const pro = !isGuest();
       const today = new Date().toISOString().slice(0, 10);
       const d = s => (s ? new Date(s + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '-');
       const pg = p => (p ? ' <span class="note-pg" title="Page of the red herring prospectus">p.' + p + '</span>' : '');
@@ -2931,9 +2959,9 @@
 
       const locked = [sellersCard, objs, peers, brlm, risks, checksCard].filter(Boolean);
       const lockedHtml = pro ? '<div class="note-grid">' + locked.join('') + '</div>'
-        : '<div class="ins-card locked note-lock"><div class="ins-head"><h3>Full research note</h3>' + PRO_TAG + '</div><p class="muted">' +
+        : '<div class="ins-card locked note-lock"><div class="ins-head"><h3>Full research note</h3></div><p class="muted">' +
           ['what the selling shareholders paid for their shares', 'where the new money goes', 'listed peers at today\'s P/E', 'the lead managers\' listing record', 'the risks the company lists first', 'contingent liabilities and auditor remarks'].filter((t, i) => [sellersCard, objs, peers, brlm, risks, checksCard][i]).join(', ').replace(/, ([^,]*)$/, ' and $1') +
-          ', each with its page in the prospectus.</p><div class="lock-cta"><span aria-hidden="true">🔒</span> <b>Unlock with Sankhyas Pro</b><div class="sub">From ₹ 208 a month on the yearly plan.</div><a class="btn btn-primary btn-small" href="#/premium">See Pro plans</a></div></div>';
+          ', each with its page in the prospectus.</p>' + signinCta('Sign in free to read the full note', '', 'read the full IPO note') + '</div>';
 
       app.innerHTML = '<div class="container page"><div class="card ipo-note">' + head + tiles +
         '<div class="note-grid">' + about + split + '</div>' + fin + lockedHtml +
@@ -3039,8 +3067,12 @@
   }
 
   /* ---------- Smart money: bulk/block deals and insider disclosures ---------- */
-  const proLock = (shown, total, what) => (total > shown ? '<div class="lock-cta" style="margin-top:12px"><span aria-hidden="true">🔒</span> <b>' + (total - shown) + ' more ' + what + ' with Sankhyas Pro</b>' +
-    '<div class="sub">From ₹ 208 a month on the yearly plan.</div><a class="btn btn-primary btn-small" href="#/premium">See Pro plans</a></div>' : '');
+  const proLock = (shown, total, what) => (total <= shown ? '' : isGuest()
+    ? '<div style="margin-top:12px">' + signinCta('Sign in free to see ' + (Math.min(total, 50) - shown) + ' more ' + what, '', 'see more ' + what) + '</div>'
+    : '<div class="lock-cta" style="margin-top:12px"><span aria-hidden="true">🔒</span> <b>' + (total - shown) + ' more ' + what + ' with Sankhyas Pro</b>' +
+      '<div class="sub">From ₹ 208 a month on the yearly plan.</div><a class="btn btn-primary btn-small" href="#/premium">See Pro plans</a></div>');
+  // rows shown on the smart-money, order and rating lists
+  const listLimit = guestRows => (tier() === 'pro' ? 500 : tier() === 'member' ? 50 : guestRows);
   function pageDeals(parts, params) {
     setTitle('Smart money');
     const tab = params.tab === 'insider' ? 'insider' : 'deals', days = +(params.days || 30), side = params.side || 'all';
@@ -3048,7 +3080,7 @@
     const token = navToken;
     Data.loadActivity().then(act => {
       if (token !== navToken) return;
-      const pro = Account.isPro(), limit = pro ? 500 : 5;
+      const pro = !isGuest(), limit = listLimit(5);
       const since = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
       const link = (o) => '#/deals?' + Object.entries(Object.assign({ tab, days, side }, o)).map(([k, v]) => k + '=' + v).join('&');
       const seg = (items, cur, key) => '<div class="seg">' + items.map(([k, l]) => '<a class="' + (String(k) === String(cur) ? 'active' : '') + '" href="' + link({ [key]: k }) + '">' + l + '</a>').join('') + '</div>';
@@ -3089,7 +3121,7 @@
     const token = navToken;
     Data.loadActivity().then(act => {
       if (token !== navToken) return;
-      const pro = Account.isPro(), limit = pro ? 500 : 5;
+      const pro = !isGuest(), limit = listLimit(5);
       const since = new Date(Date.now() - days * 864e5).toISOString();
       const members = theme && Themes.get(theme) ? new Set(Themes.members(Themes.get(theme), Data.listCompanies()).map(c => c.symbol)) : null;
       const list = act ? act.orders.filter(o => o.d >= since && (!members || members.has(o.s))) : [];
@@ -3126,7 +3158,7 @@
     const token = navToken;
     Data.loadRatings().then(data => {
       if (token !== navToken) return;
-      const pro = Account.isPro(), limit = pro ? 500 : 10;
+      const pro = !isGuest(), limit = listLimit(10);
       const since = new Date(Date.now() - days * 864e5).toISOString();
       const all = data ? data.ratings.filter(r => r.d >= since && !r.sub) : [];
       const isUp = r => r.act === 'upgrade' || r.act === 'outlook_up', isDown = r => r.act === 'downgrade' || r.act === 'outlook_down' || r.act === 'watch';
@@ -3292,6 +3324,7 @@
     $$('[data-rm]').forEach(b => b.onclick = () => setSyms(syms.filter(s => s !== b.dataset.rm)));
     if (comps.length) {
       const w = AI.mount($('#cmp-ai'), {
+      gate: aiGate,
         title: 'AI comparison',
         intro: 'Ask AI to compare ' + comps.map(c => c.symbol).join(', ') + '.',
         placeholder: 'Ask about these companies…',
@@ -3332,6 +3365,7 @@
       '<p>Ask about any of the ' + all.length + ' companies Sankhyas covers: comparisons, sector trends and ideas for screens.</p></div></div>' +
       '<div class="card" id="market-ai"></div></div>';
     const w = AI.mount($('#market-ai'), {
+      gate: aiGate,
       title: 'Sankhyas AI',
       intro: 'Ask for rankings, filters and sector overviews, e.g. "top 5 cheapest IT stocks by P/E". For a deep dive into one company, open its page and use the AI Analyst tab.',
       placeholder: 'Ask about Indian stocks…',
@@ -3894,10 +3928,10 @@
     app.innerHTML = '<div class="container page"><div style="text-align:center;margin-bottom:28px"><h1>Sankhyas Pro</h1><p class="muted">The AI that reads every concall, annual report and filing for you.</p>' + status + '</div>' +
       '<div class="grid grid-3 plans" style="max-width:1040px;margin:0 auto">' +
       '<div class="card"><h2>Free</h2><p class="price">₹ 0</p><p class="muted">forever</p>' +
-      feat(['Financials, ratios, charts and peers for every NSE, BSE and SME company', 'Plain-English stock screens', 'Sankhyas AI (built-in, on-device and Claude)', 'Red-flag score for every company', 'Watchlist, feed, compare and Excel export']) +
-      (user() ? '<span class="btn" aria-disabled="true">Your plan' + (pro && paid ? ' before Pro' : '') + '</span>' : '<a class="btn" href="#/register">Get started</a>') + '</div>' +
+      feat(['Financials, ratios, charts and peers for every NSE, BSE and SME company', 'Plain-English stock screens: all results and Excel export', '<b>With a free account:</b> full red-flag scan, guidance tracker, what changed, business segments and annual report check', 'IPO research notes from the prospectus', 'Up to 10 watchlists, saved screens and notes on every device', 'Sankhyas AI (built-in, on-device and Claude)']) +
+      (user() ? '<span class="btn" aria-disabled="true">Your plan' + (pro && paid ? ' before Pro' : '') + '</span>' : '<a class="btn" href="#/register">Create free account</a>') + '</div>' +
       '<div class="card"><h2>Pro monthly ' + PRO_TAG + '</h2><p class="price">₹ 299</p><p class="muted">per month &middot; one-time payment, no auto-renewal</p>' +
-      feat(['Everything in Free', '<b>Full red-flag scan</b> with every warning and the filing behind it', '<b>Guidance tracker</b>: management\'s promises vs delivery', '<b>What changed</b> every quarter: results, tone, guidance, new risks', 'Sankhyas AI answers on red flags, guidance and changes']) +
+      feat(['Everything in Free', '<b>Alerts</b> by email, Telegram or WhatsApp: results, red flags, insider buying, order wins and screen matches', '<b>Portfolio X-ray</b>: your holdings as one company', '<b>Research PDF</b> for any company, ready to print or share', '<b>Full lists</b> of bulk/block deals, insider trades, order wins and rating actions']) +
       buy('pro_monthly', 'Buy 1 month', false) + '</div>' +
       '<div class="card plan-best"><div class="plan-ribbon">Save 30%</div><h2>Pro yearly ' + PRO_TAG + '</h2><p class="price">₹ 2,499</p><p class="muted">per year (₹ 208/month) &middot; one-time payment</p>' +
       feat(['Everything in Pro monthly', '12 months for the price of about 8', 'New Pro features as they launch']) +
@@ -4079,16 +4113,30 @@
       if (['watchlist', 'screens', 'portfolio', 'account', 'company'].indexOf(p0) >= 0) { routeKeepScroll = p0 === 'company'; route(); }
     });
   }
+  // pages whose content depends on being signed in (the free-account previews)
+  const GATED_PAGES = ['screen', 'screens', 'ipo', 'deals', 'orders', 'ratings'];
+  let wasSignedIn = null;
   Account.onChange(() => {
     if (!booted) return;
     syncOnLogin();
     renderAuth();
     const p0 = parseHash().parts[0] || '';
+    const signedIn = !!user(), flipped = wasSignedIn !== null && wasSignedIn !== signedIn;
+    wasSignedIn = signedIn;
     if (['account', 'premium', 'login', 'register'].indexOf(p0) >= 0) route();
     else if (p0 === 'company' && currentCompany) refreshInsights(currentCompany);
+    else if (flipped && GATED_PAGES.indexOf(p0) >= 0) route();
+  });
+  // "Sign in free" buttons on locked previews, anywhere on the site
+  document.addEventListener('click', e => {
+    const b = e.target.closest && e.target.closest('[data-signin]');
+    if (!b) return;
+    e.preventDefault();
+    requireLogin(b.dataset.signin || 'see this');
   });
   Promise.all([Data.init(), Account.ready]).then(() => {
     booted = true;
+    wasSignedIn = !!user();
     renderAuth();
     if (Account.inRecovery()) location.hash = '#/reset';
     else {
