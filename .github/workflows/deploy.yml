@@ -232,3 +232,8 @@ jobs:
           curl -sS -m 140 -X POST "${URL%/}/functions/v1/dispatch-alerts" -H "Content-Type: application/json" \
             ${DISPATCH_SECRET:+-H "x-dispatch-secret: $DISPATCH_SECRET"} -d '{}' || true
           echo
+          # welcome emails for new users who confirmed their email but have not signed in since
+          if [ -n "$DISPATCH_SECRET" ]; then
+            curl -sS -m 60 -X POST "${URL%/}/functions/v1/welcome-email" -H "Content-Type: application/json" -H "x-dispatch-secret: $DISPATCH_SECRET" -d '{}' || true
+            echo
+          fi

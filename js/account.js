@@ -83,6 +83,7 @@
       if ((state.user && state.user.id) !== before || event === 'USER_UPDATED') {
         // outside the callback: Supabase warns against awaiting its own calls inside it
         setTimeout(() => loadProfile().then(emit, emit));
+        if (state.user) setTimeout(() => welcomeOnce(state.user.id), 1500);
       } else emit();
     });
     const { data } = await client.auth.getSession();
@@ -91,6 +92,16 @@
     // drop ?code=... left by the email-link / Google sign-in redirect
     if (/[?&](code|error)=/.test(location.search)) history.replaceState(null, '', location.pathname + location.hash);
   }
+  // the welcome email (three first steps) goes out on a new user's first sign-in; the server sends
+  // it at most once, this only saves asking again from the same browser
+  function welcomeOnce(uid) {
+    try {
+      const k = 'sankhyas_welcomed_' + uid;
+      if (localStorage.getItem(k)) return;
+      callFunction('welcome-email', {}).then(r => { if (r && (r.sent != null || r.pending === 0)) localStorage.setItem(k, '1'); }, () => {});
+    } catch (e) { /* storage blocked: the data update's sweep still sends it */ }
+  }
+
   async function callFunction(name, body) {
     const { data } = await client.auth.getSession();
     if (!data.session) throw Object.assign(new Error('Please log in first.'), { code: 'login' });
