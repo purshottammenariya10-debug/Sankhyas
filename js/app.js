@@ -955,22 +955,44 @@
       ranges.map(r => '<button class="btn btn-small' + (r === '1Yr' ? ' active' : '') + '" data-range="' + r + '">' + r + '</button>').join('') +
       '</div><div class="tabs" id="chart-type">' +
       [['price', 'Price'], ['pe', 'PE Ratio'], ['sales', 'Sales & Margin']].map((t, i) => '<button class="btn btn-small' + (i === 0 ? ' active' : '') + '" data-type="' + t[0] + '">' + t[1] + '</button>').join('') +
-      '</div></div><div class="chart-box"><canvas id="price-chart"></canvas></div><div class="chart-legend" id="chart-legend"></div></section>';
+      '</div></div><div class="chart-tools" id="chart-tools"></div><div class="chart-info" id="chart-info"></div>' +
+      '<div class="chart-box"><canvas id="price-chart"></canvas></div><div class="rsi-box" id="rsi-box" hidden><canvas id="rsi-chart"></canvas></div>' +
+      '<div class="chart-legend" id="chart-legend"></div></section>';
   }
   function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+  // volume in Indian units: 12.4 L, 1.2 Cr
+  const fmtVol = v => (v == null ? '' : v >= 1e7 ? num(v / 1e7, 2) + ' Cr' : v >= 1e5 ? num(v / 1e5, 1) + ' L' : v >= 1e3 ? num(v / 1e3, 1) + ' K' : num(v, 0));
+  const alpha = (hex, a) => (/^#[0-9a-f]{6}$/i.test(hex) ? hex + Math.round(a * 255).toString(16).padStart(2, '0') : hex);
+  // overlays on the price chart: key, label, colour, on by default
+  const PRICE_IND = [
+    ['dma20', '20 DMA', '#2f9bd6', false], ['dma50', '50 DMA', '#e8a33d', true], ['dma200', '200 DMA', '#8a8fa0', true],
+    ['bb', 'Bollinger Bands (20, 2)', '#9b6ad6', false], ['hl52', '52-week high / low', '#6b7280', true],
+    ['volume', 'Volume', '#6056ff', true], ['rsi', 'RSI (14)', '#6056ff', false]
+  ];
+
   function bindChart(c) {
-    let range = '1Yr', type = 'price', chart = null, style = store.get('chart_style', 'candle');
-    const toggles = { dma50: true, dma200: true, volume: true };
+    let range = '1Yr', type = 'price', chart = null, rsiChart = null;
+    let style = store.get('chart_style', 'candle'), interval = 'auto', logScale = false, measuring = false, measure = null;
+    if (['candle', 'ha', 'line'].indexOf(style) < 0) style = 'candle';
+    const saved = store.get('chart_ind', null) || {};
+    const toggles = {};
+    PRICE_IND.forEach(([k, , , on]) => { toggles[k] = k in saved ? !!saved[k] : on; });
     const RANGE_DAYS = { '1m': 22, '6m': 126, '1Yr': 252, '3Yr': 756, '5Yr': 1260, '10Yr': 2520, 'Max': 1e9 };
-    onLeave(() => { if (chart) chart.destroy(); });
+    const section = $('#chart');
+    const kill = () => { if (chart) chart.destroy(); if (rsiChart) rsiChart.destroy(); chart = rsiChart = null; };
+    onLeave(() => { kill(); document.removeEventListener('keydown', escFull); document.body.classList.remove('chart-full-open'); });
 
     function sma(arr, n) {
       const out = new Array(arr.length).fill(null);
       let s = 0;
-      for (let i = 0; i < arr.length; i++) { s += arr[i]; if (i >= n) s -= arr[i - n]; if (i >= n - 1) out[i] = s / n; }
+      for (let i = 0; i < arr.length; i++) {
+        s += arr[i];
+        if (i >= n) s -= arr[i - n];
+        if (i >= n - 1) out[i] = s / n;
+      }
       return out;
     }
-    const dma50 = sma(c.prices, 50), dma200 = sma(c.prices, 200);
+    const dma = { dma20: sma(c.prices, 20), dma50: sma(c.prices, 50), dma200: sma(c.prices, 200) };
     const lastFY = c.years.length ? +c.years[c.years.length - 1].slice(-4) : 0;
     const epsAt = d => {
       const fy = d.getMonth() >= 3 ? d.getFullYear() + 1 : d.getFullYear();
@@ -980,19 +1002,157 @@
     };
     const peSeries = c.prices.map((p, i) => { const e = epsAt(c.dates[i]); return e > 0 ? p / e : null; });
 
-    function draw() {
-      if (typeof Chart === 'undefined') { $('.chart-box').innerHTML = '<div class="info-box">Charts need an internet connection to load the chart library.</div>'; return; }
-      if (chart) chart.destroy();
+    /* Real open/high/low for recent sessions (from Yahoo); older sessions, or data without them,
+       use the previous close as the open. */
+    const ohlcFrom = c.ohlc ? c.prices.length - c.ohlc.open.length : Infinity;
+    function dayOHLC(i) {
+      const cl = c.prices[i];
+      if (i >= ohlcFrom) {
+        const j = i - ohlcFrom, o = c.ohlc.open[j], h = c.ohlc.high[j], l = c.ohlc.low[j];
+        if (o != null && h != null && l != null) return [o, Math.max(h, o, cl), Math.min(l, o, cl), cl];
+      }
+      const o = i > 0 ? c.prices[i - 1] : cl;
+      return [o, Math.max(o, cl), Math.min(o, cl), cl];
+    }
+    // group sessions into daily, weekly or monthly bars
+    function buildBars(start, n, unit) {
+      const keyOf = d => unit === 'day' ? +d : unit === 'week' ? Math.floor((+d / 864e5 + 3) / 7) : d.getFullYear() * 12 + d.getMonth();
+      const bars = [];
+      for (let i = start; i < n; i++) {
+        const k = keyOf(c.dates[i]), b = bars[bars.length - 1], x = dayOHLC(i);
+        if (b && b.k === k) { b.h = Math.max(b.h, x[1]); b.l = Math.min(b.l, x[2]); b.c = x[3]; b.v += c.volume[i] || 0; b.last = i; }
+        else bars.push({ k, o: x[0], h: x[1], l: x[2], c: x[3], v: c.volume[i] || 0, first: i, last: i });
+      }
+      return bars;
+    }
+    function heikinAshi(bars) {
+      let po = null, pc = null;
+      return bars.map(b => {
+        const hc = (b.o + b.h + b.l + b.c) / 4, ho = po == null ? (b.o + b.c) / 2 : (po + pc) / 2;
+        po = ho; pc = hc;
+        return { o: ho, h: Math.max(b.h, ho, hc), l: Math.min(b.l, ho, hc), c: hc };
+      });
+    }
+    function rsi(closes, n) {
+      const out = new Array(closes.length).fill(null);
+      let g = 0, l = 0;
+      for (let i = 1; i < closes.length; i++) {
+        const d = closes[i] - closes[i - 1], up = Math.max(d, 0), dn = Math.max(-d, 0);
+        if (i <= n) { g += up; l += dn; if (i === n) { g /= n; l /= n; out[i] = l === 0 ? 100 : 100 - 100 / (1 + g / l); } }
+        else { g = (g * (n - 1) + up) / n; l = (l * (n - 1) + dn) / n; out[i] = l === 0 ? 100 : 100 - 100 / (1 + g / l); }
+      }
+      return out;
+    }
+    function stdBands(closes, n, k) {
+      const mid = sma(closes, n), up = [], lo = [];
+      for (let i = 0; i < closes.length; i++) {
+        if (mid[i] == null) { up.push(null); lo.push(null); continue; }
+        let s = 0;
+        for (let j = i - n + 1; j <= i; j++) s += (closes[j] - mid[i]) * (closes[j] - mid[i]);
+        const sd = Math.sqrt(s / n);
+        up.push(mid[i] + k * sd); lo.push(mid[i] - k * sd);
+      }
+      return { mid, up, lo };
+    }
+
+    /* Crosshair with a price tag on the right axis, a dashed line at the last price, 52-week lines
+       and the measure band. Drawn on the canvas after the data. */
+    const overlay = {
+      id: 'sankhyasOverlay',
+      afterEvent(ch, args) {
+        const e = args.event;
+        if (e.type === 'mouseout') ch.$cross = null;
+        else if (/move|start|click/.test(e.type)) ch.$cross = args.inChartArea ? { x: e.x, y: e.y } : null;
+        args.changed = true;
+      },
+      afterDatasetsDraw(ch) {
+        const o = ch.options.plugins.sankhyasOverlay || {}, a = ch.chartArea, y = ch.scales.y, x = ch.scales.x, g = ch.ctx;
+        if (!y || !a) return;
+        const tag = (py, text, bg, fg) => {
+          g.font = '600 11px Inter, system-ui, sans-serif';
+          const w = g.measureText(text).width + 10;
+          g.fillStyle = bg; g.fillRect(a.right + 1, py - 9, w, 18);
+          g.fillStyle = fg; g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillText(text, a.right + 6, py);
+        };
+        const hline = (v, color, dash, label) => {
+          const py = y.getPixelForValue(v);
+          if (!(py >= a.top && py <= a.bottom)) return;
+          g.save(); g.strokeStyle = color; g.setLineDash(dash); g.lineWidth = 1;
+          g.beginPath(); g.moveTo(a.left, py); g.lineTo(a.right, py); g.stroke(); g.restore();
+          if (label) { g.save(); g.font = '500 10.5px Inter, system-ui, sans-serif'; g.fillStyle = color; g.textAlign = 'left'; g.textBaseline = 'bottom'; g.fillText(label, a.left + 4, py - 2); g.restore(); }
+        };
+        g.save();
+        (o.lines || []).forEach(l => hline(l.v, l.color, l.dash || [4, 4], l.label));
+        if (o.m && o.m.i1 != null) {
+          const x0 = x.getPixelForValue(Math.min(o.m.i0, o.m.i1)), x1 = x.getPixelForValue(Math.max(o.m.i0, o.m.i1));
+          g.fillStyle = o.m.up ? 'rgba(17,129,61,.10)' : 'rgba(211,58,58,.10)';
+          g.fillRect(x0, a.top, Math.max(1, x1 - x0), a.bottom - a.top);
+          g.strokeStyle = o.m.up ? '#11813d' : '#d33a3a'; g.lineWidth = 1.5; g.setLineDash([]);
+          g.beginPath(); g.moveTo(x.getPixelForValue(o.m.i0), y.getPixelForValue(o.m.p0)); g.lineTo(x.getPixelForValue(o.m.i1), y.getPixelForValue(o.m.p1)); g.stroke();
+        }
+        if (o.last != null) {
+          const py = y.getPixelForValue(o.last);
+          if (py >= a.top && py <= a.bottom) { hline(o.last, o.lastColor, [2, 3]); tag(py, num(o.last, 2), o.lastColor, '#fff'); }
+        }
+        const cr = ch.$cross;
+        if (cr && cr.x >= a.left && cr.x <= a.right && cr.y >= a.top && cr.y <= a.bottom) {
+          g.strokeStyle = o.crossColor || '#888'; g.lineWidth = 1; g.setLineDash([3, 3]);
+          g.beginPath(); g.moveTo(cr.x, a.top); g.lineTo(cr.x, a.bottom); g.moveTo(a.left, cr.y); g.lineTo(a.right, cr.y); g.stroke();
+          g.setLineDash([]);
+          tag(cr.y, num(y.getValueForPixel(cr.y), 2), o.crossTag || '#333', '#fff');
+        }
+        g.restore();
+      }
+    };
+
+    function toolsHtml() {
+      if (type !== 'price') return '';
+      const seg = (name, opts, cur) => '<span class="seg" role="group" aria-label="' + name + '">' + opts.map(([v, l]) =>
+        '<button type="button" class="' + (cur === v ? 'active' : '') + '" data-' + name.toLowerCase().replace(/ /g, '-') + '="' + v + '">' + l + '</button>').join('') + '</span>';
+      const on = PRICE_IND.filter(([k]) => toggles[k]).length;
+      return seg('Chart style', [['candle', 'Candles'], ['ha', 'Heikin Ashi'], ['line', 'Line']], style) +
+        (style === 'line' ? '' : seg('Interval', [['auto', 'Auto'], ['day', 'D'], ['week', 'W'], ['month', 'M']], interval)) +
+        '<details class="ind-menu"><summary class="btn btn-small">Indicators' + (on ? ' <span class="ind-count">' + on + '</span>' : '') + '</summary><div class="ind-pop">' +
+        PRICE_IND.map(([k, l, col]) => '<label><input type="checkbox" data-ind="' + k + '"' + (toggles[k] ? ' checked' : '') + '><span class="swatch" style="background:' + col + '"></span>' + esc(l) + '</label>').join('') +
+        '</div></details>' +
+        '<button type="button" class="btn btn-small' + (logScale ? ' active' : '') + '" id="chart-log" title="Logarithmic price scale">Log</button>' +
+        '<button type="button" class="btn btn-small' + (measuring ? ' active' : '') + '" id="chart-measure" title="Drag across the chart to measure the change">📏 Measure</button>' +
+        '<button type="button" class="btn btn-small chart-full-btn" id="chart-full" title="Full screen">' + (section.classList.contains('chart-full') ? '✕ Close' : '⛶ Full screen') + '</button>';
+    }
+    function bindTools() {
+      $$('#chart-tools [data-chart-style]').forEach(b => b.onclick = () => { style = b.dataset.chartStyle; store.set('chart_style', style); measure = null; draw(); });
+      $$('#chart-tools [data-interval]').forEach(b => b.onclick = () => { interval = b.dataset.interval; measure = null; draw(); });
+      $$('#chart-tools [data-ind]').forEach(cb => cb.onchange = () => {
+        toggles[cb.dataset.ind] = cb.checked;
+        store.set('chart_ind', Object.assign({}, toggles));
+        draw(true);
+      });
+      const lg = $('#chart-log'); if (lg) lg.onclick = () => { logScale = !logScale; draw(); };
+      const ms = $('#chart-measure'); if (ms) ms.onclick = () => { measuring = !measuring; measure = null; draw(); };
+      const fs = $('#chart-full'); if (fs) fs.onclick = () => toggleFull();
+    }
+    function toggleFull(force) {
+      const open = force != null ? force : !section.classList.contains('chart-full');
+      section.classList.toggle('chart-full', open);
+      document.body.classList.toggle('chart-full-open', open);
+      if (open) document.addEventListener('keydown', escFull); else document.removeEventListener('keydown', escFull);
+      draw();
+    }
+    function escFull(e) { if (e.key === 'Escape') toggleFull(false); }
+
+    function draw(keepMenu) {
+      if (typeof Chart === 'undefined') { $('.chart-box', section).innerHTML = '<div class="info-box">Charts need an internet connection to load the chart library.</div>'; return; }
+      kill();
+      const menuOpen = keepMenu && $('#chart-tools .ind-menu[open]');
+      $('#chart-tools').innerHTML = toolsHtml();
+      if (menuOpen) $('#chart-tools .ind-menu').open = true;
+      bindTools();
+      $('#chart-info').innerHTML = '';
+      $('#rsi-box').hidden = true;
+      $('#price-chart').classList.toggle('measuring', measuring && type === 'price');
       const ink3 = cssVar('--ink-3'), line = cssVar('--line-2'), primary = cssVar('--primary');
       const n = c.prices.length;
       const start = Math.max(0, n - RANGE_DAYS[range]);
-      const span = n - start;
-      const step = Math.max(1, Math.floor(span / 500));
-      const idx = [];
-      for (let i = start; i < n; i += step) idx.push(i);
-      if (idx[idx.length - 1] !== n - 1) idx.push(n - 1);
-      const dateFmt = span > 300 ? { month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' };
-      const labels = idx.map(i => c.dates[i].toLocaleDateString('en-IN', dateFmt));
       const common = {
         responsive: true, maintainAspectRatio: false, animation: false,
         interaction: { mode: 'index', intersect: false },
@@ -1002,23 +1162,17 @@
           y: { position: 'right', ticks: { color: ink3 }, grid: { color: line } }
         }
       };
-      let data, legend = '';
-      if (type === 'price' && style === 'candle') {
-        drawCandles(start, n, common, ink3);
-        legend = '';
-      } else if (type === 'price') {
-        const ds = [{ label: 'Price on NSE', data: idx.map(i => c.prices[i]), borderColor: primary, backgroundColor: primary, borderWidth: 1.6, pointRadius: 0, tension: 0.1, yAxisID: 'y' }];
-        if (toggles.dma50) ds.push({ label: '50 DMA', data: idx.map(i => dma50[i]), borderColor: '#e8a33d', borderWidth: 1.2, pointRadius: 0, yAxisID: 'y' });
-        if (toggles.dma200) ds.push({ label: '200 DMA', data: idx.map(i => dma200[i]), borderColor: '#8a8fa0', borderWidth: 1.2, pointRadius: 0, yAxisID: 'y' });
-        if (toggles.volume) ds.push({ type: 'bar', label: 'Volume', data: idx.map(i => c.volume[i]), backgroundColor: 'rgba(96,86,255,.18)', yAxisID: 'v', barPercentage: 1, categoryPercentage: 1 });
-        common.scales.v = { display: false, position: 'left', max: Math.max.apply(null, idx.map(i => c.volume[i])) * 4, grid: { display: false } };
-        data = { labels, datasets: ds };
-        legend = priceLegend([['Price on NSE', primary, null], ['50 DMA', '#e8a33d', 'dma50'], ['200 DMA', '#8a8fa0', 'dma200'], ['Volume', 'rgba(96,86,255,.35)', 'volume']]);
-        chart = new Chart($('#price-chart'), { type: 'line', data, options: common });
-      } else if (type === 'pe') {
+      let legend = '';
+      if (type === 'price') { drawPrice(start, n, common, ink3, line, primary); return; }
+      const span = n - start, step = Math.max(1, Math.floor(span / 500)), idx = [];
+      for (let i = start; i < n; i += step) idx.push(i);
+      if (idx[idx.length - 1] !== n - 1) idx.push(n - 1);
+      const dateFmt = span > 300 ? { month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' };
+      const labels = idx.map(i => c.dates[i].toLocaleDateString('en-IN', dateFmt));
+      if (type === 'pe') {
         const pes = idx.map(i => peSeries[i]);
         const med = Data.median(pes);
-        data = { labels, datasets: [
+        const data = { labels, datasets: [
           { label: 'PE', data: pes, borderColor: primary, borderWidth: 1.6, pointRadius: 0 },
           { label: 'Median PE = ' + num(med, 1), data: pes.map(() => med), borderColor: '#e8a33d', borderDash: [5, 4], borderWidth: 1.2, pointRadius: 0 },
           { label: 'EPS', data: idx.map(i => epsAt(c.dates[i])), borderColor: '#11813d', borderWidth: 1.2, pointRadius: 0, yAxisID: 'e', stepped: true }
@@ -1030,7 +1184,7 @@
       } else {
         const qn = { '1m': 4, '6m': 4, '1Yr': 4, '3Yr': 12, '5Yr': 13, '10Yr': 13, 'Max': 13 }[range];
         const qs = c.quarters.slice(-qn);
-        data = { labels: qs, datasets: [
+        const data = { labels: qs, datasets: [
           { type: 'bar', label: 'Quarter Sales', data: c.q.sales.slice(-qn), backgroundColor: 'rgba(96,86,255,.55)', yAxisID: 'y' },
           { type: 'line', label: 'OPM %', data: c.q.opm.slice(-qn), borderColor: '#e8a33d', backgroundColor: '#e8a33d', yAxisID: 'p', pointRadius: 3 }
         ] };
@@ -1038,71 +1192,166 @@
         legend = '<label><span class="swatch" style="background:rgba(96,86,255,.55)"></span>Quarterly Sales (₹ Cr.)</label><label><span class="swatch" style="background:#e8a33d"></span>OPM % (left axis)</label>';
         chart = new Chart($('#price-chart'), { type: 'bar', data, options: common });
       }
-      if (legend) $('#chart-legend').innerHTML = legend;
-      $$('#chart-legend [data-toggle]').forEach(cb => cb.addEventListener('change', () => { toggles[cb.dataset.toggle] = cb.checked; draw(); }));
-      $$('#chart-legend [data-style]').forEach(b => b.onclick = () => { style = b.dataset.style; store.set('chart_style', style); draw(); });
-    }
-    function priceLegend(items) {
-      return '<span class="seg" role="group" aria-label="Chart style">' + [['candle', 'Candles'], ['line', 'Line']].map(x =>
-        '<button class="btn btn-small' + (style === x[0] ? ' active' : '') + '" data-style="' + x[0] + '">' + x[1] + '</button>').join('') + '</span>' +
-        items.map(l => '<label>' + (l[2] ? '<input type="checkbox" data-toggle="' + l[2] + '"' + (toggles[l[2]] ? ' checked' : '') + '>' : '') + '<span class="swatch" style="background:' + l[1] + '"></span>' + l[0] + '</label>').join('');
+      $('#chart-legend').innerHTML = legend;
     }
 
-    /* Candles: real open/high/low for recent sessions (from Yahoo); older sessions, or data without
-       them, use the previous close as the open. Long ranges are grouped into weekly/monthly candles. */
-    const ohlcFrom = c.ohlc ? c.prices.length - c.ohlc.open.length : Infinity;
-    function dayOHLC(i) {
-      const cl = c.prices[i];
-      if (i >= ohlcFrom) {
-        const j = i - ohlcFrom, o = c.ohlc.open[j], h = c.ohlc.high[j], l = c.ohlc.low[j];
-        if (o != null && h != null && l != null) return [o, Math.max(h, o, cl), Math.min(l, o, cl), cl];
-      }
-      const o = i > 0 ? c.prices[i - 1] : cl;
-      return [o, Math.max(o, cl), Math.min(o, cl), cl];
-    }
-    function drawCandles(start, n, common, ink3) {
+    function drawPrice(start, n, common, ink3, gridLine, primary) {
       const span = n - start;
-      const unit = span <= 300 ? 'day' : span <= 1300 ? 'week' : 'month';
-      const keyOf = d => unit === 'day' ? +d : unit === 'week' ? Math.floor((+d / 864e5 + 3) / 7) : d.getFullYear() * 12 + d.getMonth();
-      const buckets = [];
-      for (let i = start; i < n; i++) {
-        const k = keyOf(c.dates[i]), b = buckets[buckets.length - 1], x = dayOHLC(i);
-        if (b && b.k === k) { b.h = Math.max(b.h, x[1]); b.l = Math.min(b.l, x[2]); b.c = x[3]; b.v += c.volume[i] || 0; b.last = i; }
-        else buckets.push({ k, o: x[0], h: x[1], l: x[2], c: x[3], v: c.volume[i] || 0, first: i, last: i });
-      }
+      const auto = style === 'line' ? (span <= 2600 ? 'day' : 'week') : span <= 300 ? 'day' : span <= 1300 ? 'week' : 'month';
+      const unit = style === 'line' || interval === 'auto' ? auto : interval;
+      // fetch a little extra history so indicators start filled in
+      const warm = Math.min(start, unit === 'day' ? 60 : unit === 'week' ? 300 : 1300);
+      const allBars = buildBars(start - warm, n, unit);
+      const skip = allBars.findIndex(b => b.first >= start);
+      const bars = allBars.slice(Math.max(0, skip));
+      const closes = allBars.map(b => b.c);
+      const off = Math.max(0, skip);
       const up = cssVar('--green') || '#11813d', down = cssVar('--red') || '#d33a3a';
-      const col = buckets.map(b => (b.c >= b.o ? up : down));
-      const dateFmt = unit === 'month' ? { month: 'short', year: 'numeric' } : unit === 'week' ? { day: 'numeric', month: 'short', year: '2-digit' } : { day: 'numeric', month: 'short' };
-      const labels = buckets.map(b => c.dates[b.first].toLocaleDateString('en-IN', dateFmt));
-      const ds = [
-        { type: 'bar', label: 'wick', data: buckets.map(b => [b.l, b.h]), backgroundColor: col, barPercentage: 0.14, categoryPercentage: 1, grouped: false, yAxisID: 'y', order: 2 },
-        { type: 'bar', label: 'candle', data: buckets.map(b => { const lo = Math.min(b.o, b.c), hi = Math.max(b.o, b.c); return [lo, hi - lo < (b.h - b.l) * 0.004 + 1e-6 ? lo + Math.max((b.h - b.l) * 0.004, hi * 0.0004) : hi]; }),
-          backgroundColor: col, borderColor: col, barPercentage: 0.72, categoryPercentage: 1, grouped: false, yAxisID: 'y', order: 1 }
-      ];
-      if (toggles.dma50) ds.push({ type: 'line', label: '50 DMA', data: buckets.map(b => dma50[b.last]), borderColor: '#e8a33d', borderWidth: 1.2, pointRadius: 0, yAxisID: 'y', order: 0 });
-      if (toggles.dma200) ds.push({ type: 'line', label: '200 DMA', data: buckets.map(b => dma200[b.last]), borderColor: '#8a8fa0', borderWidth: 1.2, pointRadius: 0, yAxisID: 'y', order: 0 });
-      if (toggles.volume) ds.push({ type: 'bar', label: 'Volume', data: buckets.map(b => b.v), backgroundColor: 'rgba(96,86,255,.16)', yAxisID: 'v', barPercentage: 0.9, categoryPercentage: 1, grouped: false, order: 3 });
+      const shown = style === 'ha' ? heikinAshi(allBars).slice(off) : bars;
+      const col = shown.map(b => (b.c >= b.o ? up : down));
+      const dateFmt = unit === 'month' ? { month: 'short', year: 'numeric' } : unit === 'week' || span > 300 ? { day: 'numeric', month: 'short', year: '2-digit' } : { day: 'numeric', month: 'short' };
+      const labels = bars.map(b => c.dates[b.first].toLocaleDateString('en-IN', dateFmt));
+      const ds = [];
+      if (style === 'line') {
+        ds.push({ type: 'line', label: 'Price', data: bars.map(b => b.c), borderColor: primary, backgroundColor: alpha(primary.startsWith('#') ? primary : '#6056ff', 0.08), fill: 'start', borderWidth: 1.6, pointRadius: 0, tension: 0.1, yAxisID: 'y', order: 1 });
+      } else {
+        ds.push({ type: 'bar', label: 'wick', data: shown.map(b => [b.l, b.h]), backgroundColor: col, barPercentage: 0.14, categoryPercentage: 1, grouped: false, yAxisID: 'y', order: 2 });
+        ds.push({ type: 'bar', label: 'candle', data: shown.map(b => { const lo = Math.min(b.o, b.c), hi = Math.max(b.o, b.c); return [lo, hi - lo < (b.h - b.l) * 0.004 + 1e-6 ? lo + Math.max((b.h - b.l) * 0.004, hi * 0.0004) : hi]; }),
+          backgroundColor: col, borderColor: col, barPercentage: 0.72, categoryPercentage: 1, grouped: false, yAxisID: 'y', order: 1 });
+      }
+      const ind = {};
+      ['dma20', 'dma50', 'dma200'].forEach(k => { ind[k] = bars.map(b => dma[k][b.last]); });
+      PRICE_IND.slice(0, 3).forEach(([k, l, color]) => {
+        if (toggles[k]) ds.push({ type: 'line', label: l, data: ind[k], borderColor: color, borderWidth: 1.2, pointRadius: 0, yAxisID: 'y', order: 0 });
+      });
+      let bb = null;
+      if (toggles.bb) {
+        const s = stdBands(closes, 20, 2);
+        bb = { up: s.up.slice(off), lo: s.lo.slice(off), mid: s.mid.slice(off) };
+        ds.push({ type: 'line', label: 'BB upper', data: bb.up, borderColor: '#9b6ad6', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 0 });
+        ds.push({ type: 'line', label: 'BB lower', data: bb.lo, borderColor: '#9b6ad6', backgroundColor: 'rgba(155,106,214,.08)', fill: '-1', borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 0 });
+        ds.push({ type: 'line', label: 'BB mid', data: bb.mid, borderColor: 'rgba(155,106,214,.6)', borderDash: [4, 3], borderWidth: 1, pointRadius: 0, yAxisID: 'y', order: 0 });
+      }
+      if (toggles.volume) {
+        ds.push({ type: 'bar', label: 'Volume', data: bars.map(b => b.v), backgroundColor: bars.map(b => alpha(b.c >= b.o ? up : down, 0.28)), yAxisID: 'v', barPercentage: 0.9, categoryPercentage: 1, grouped: false, order: 3 });
+      }
       common.scales.y.beginAtZero = false;
       common.scales.y.grace = '3%';
-      common.scales.v = { display: false, position: 'left', beginAtZero: true, max: Math.max.apply(null, buckets.map(b => b.v).concat([1])) * 4, grid: { display: false } };
-      common.plugins.tooltip = {
-        filter: it => it.dataset.label !== 'wick',
-        callbacks: {
-          label: it => {
-            const b = buckets[it.dataIndex];
-            if (it.dataset.label === 'candle') return ['Open ' + num(b.o, 2) + '   High ' + num(b.h, 2), 'Low ' + num(b.l, 2) + '   Close ' + num(b.c, 2) + '  (' + (b.c >= b.o ? '+' : '') + num((b.c / b.o - 1) * 100, 2) + '%)'];
-            if (it.dataset.label === 'Volume') return 'Volume ' + num(b.v, 0);
-            return it.dataset.label + ' ' + num(it.parsed.y, 2);
-          }
-        }
+      common.scales.y.afterFit = s => { s.width = 64; };
+      if (logScale) {
+        // Chart.js puts few ticks on a short log range: space about six evenly on the log scale instead
+        common.scales.y.type = 'logarithmic';
+        common.scales.y.afterBuildTicks = s => {
+          const t = [];
+          for (let i = 0; i <= 6; i++) { const v = Number((s.min * Math.pow(s.max / s.min, i / 6)).toPrecision(2)); if (v > s.min && v < s.max && t.indexOf(v) < 0) t.push(v); }
+          s.ticks = t.map(value => ({ value }));
+        };
+        common.scales.y.ticks.callback = v => num(v, v < 10 ? 1 : 0);
+      }
+      common.scales.v = { display: false, position: 'left', beginAtZero: true, max: Math.max.apply(null, bars.map(b => b.v).concat([1])) * 4, grid: { display: false } };
+      common.plugins.tooltip = { enabled: false };
+
+      // 52-week high and low from daily data
+      const lines = [];
+      if (toggles.hl52) {
+        let hi = -Infinity, lo = Infinity;
+        for (let i = Math.max(0, n - 252); i < n; i++) { const x = dayOHLC(i); hi = Math.max(hi, x[1]); lo = Math.min(lo, x[2]); }
+        if (isFinite(hi)) { lines.push({ v: hi, color: up, label: '52W high ' + num(hi, 2) }); lines.push({ v: lo, color: down, label: '52W low ' + num(lo, 2) }); }
+      }
+      const lastBar = bars[bars.length - 1];
+      common.plugins.sankhyasOverlay = { lines, last: lastBar ? lastBar.c : null, lastColor: lastBar && lastBar.c >= lastBar.o ? up : down, crossColor: ink3, crossTag: cssVar('--ink-2') || '#333', m: measure };
+
+      // readout above the chart: the bar under the pointer, or the latest
+      const rsiAll = toggles.rsi ? rsi(closes, 14) : null;
+      const rsiVals = rsiAll ? rsiAll.slice(off) : null;
+      const unitName = unit === 'day' ? 'Daily' : unit === 'week' ? 'Weekly' : 'Monthly';
+      function info(i) {
+        const b = bars[i];
+        if (!b) return;
+        const prev = i > 0 ? bars[i - 1].c : allBars[off - 1] ? allBars[off - 1].c : b.o;
+        const ch = b.c - prev, chp = prev ? ch / prev * 100 : 0;
+        const d0 = c.dates[b.first], d1 = c.dates[b.last];
+        const when = unit === 'day' ? d0.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) :
+          unit === 'week' ? 'Week of ' + d0.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : d1.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+        const cls = ch >= 0 ? 'up' : 'down';
+        const extra = [];
+        PRICE_IND.slice(0, 3).forEach(([k, l, color]) => { if (toggles[k] && ind[k][i] != null) extra.push('<span style="color:' + color + '">' + l + ' ' + num(ind[k][i], 2) + '</span>'); });
+        if (bb && bb.up[i] != null) extra.push('<span style="color:#9b6ad6">BB ' + num(bb.lo[i], 1) + ' – ' + num(bb.up[i], 1) + '</span>');
+        if (rsiVals && rsiVals[i] != null) extra.push('<span>RSI ' + num(rsiVals[i], 1) + '</span>');
+        let m = '';
+        if (measure && measure.i1 != null) {
+          const a = Math.min(measure.i0, measure.i1), z = Math.max(measure.i0, measure.i1);
+          const p0 = bars[a].c, p1 = bars[z].c, dd = Math.round((c.dates[bars[z].last] - c.dates[bars[a].last]) / 864e5);
+          const r = (p1 / p0 - 1) * 100;
+          m = '<div class="ci-measure ' + (r >= 0 ? 'up' : 'down') + '">📏 ' + c.dates[bars[a].last].toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) + ' ₹' + num(p0, 2) + ' → ' +
+            c.dates[bars[z].last].toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) + ' ₹' + num(p1, 2) + ': <b>' + (r >= 0 ? '+' : '') + num(r, 2) + '%</b> (' + (p1 - p0 >= 0 ? '+' : '') + num(p1 - p0, 2) + ') in ' + num(dd, 0) + ' days</div>';
+        } else if (measuring) m = '<div class="ci-measure">📏 Drag across the chart to measure the change between two dates.</div>';
+        $('#chart-info').innerHTML = '<div class="ci-row"><span class="ci-date">' + when + '</span>' +
+          '<span>O <b>' + num(b.o, 2) + '</b></span><span>H <b>' + num(b.h, 2) + '</b></span><span>L <b>' + num(b.l, 2) + '</b></span><span>C <b>' + num(b.c, 2) + '</b></span>' +
+          '<span class="' + cls + '">' + (ch >= 0 ? '+' : '') + num(ch, 2) + ' (' + (ch >= 0 ? '+' : '') + num(chp, 2) + '%)</span>' +
+          (b.v ? '<span>Vol <b>' + fmtVol(b.v) + '</b></span>' : '') + '</div>' +
+          (extra.length ? '<div class="ci-row ci-ind">' + extra.join('') + '</div>' : '') + m;
+      }
+      let hoverI = null;
+      common.onHover = (e, els, ch) => {
+        if (!ch.chartArea) return;
+        const i = e.x >= ch.chartArea.left && e.x <= ch.chartArea.right ? Math.round(ch.scales.x.getValueForPixel(e.x)) : null;
+        if (i !== hoverI) { hoverI = i; info(i == null || i < 0 || i >= bars.length ? bars.length - 1 : i); }
       };
-      chart = new Chart($('#price-chart'), { type: 'bar', data: { labels, datasets: ds }, options: common });
-      const note = unit === 'day' ? 'Daily candles' : unit === 'week' ? 'Weekly candles' : 'Monthly candles';
-      $('#chart-legend').innerHTML = priceLegend([['50 DMA', '#e8a33d', 'dma50'], ['200 DMA', '#8a8fa0', 'dma200'], ['Volume', 'rgba(96,86,255,.35)', 'volume']]) +
-        '<span class="sub">' + note + (c.ohlc ? '' : ' from closing prices') + '</span>';
+      chart = new Chart($('#price-chart'), { type: 'bar', data: { labels, datasets: ds }, options: common, plugins: [overlay] });
+      $('#price-chart').onmouseleave = () => { hoverI = null; info(bars.length - 1); };
+      info(bars.length - 1);
+
+      // measure: drag (or with Measure on, touch-drag) from one date to another
+      const cv = $('#price-chart');
+      let dragging = false;
+      const idxAt = ev => { const r = cv.getBoundingClientRect(); const i = Math.round(chart.scales.x.getValueForPixel(ev.clientX - r.left)); return Math.max(0, Math.min(bars.length - 1, i)); };
+      cv.onpointerdown = ev => {
+        if (!measuring && !ev.shiftKey) return;
+        dragging = true; cv.setPointerCapture(ev.pointerId);
+        const i = idxAt(ev);
+        measure = { i0: i, p0: bars[i].c, i1: null };
+        chart.options.plugins.sankhyasOverlay.m = measure;
+      };
+      cv.onpointermove = ev => {
+        if (!dragging) return;
+        const i = idxAt(ev);
+        measure.i1 = i; measure.p1 = bars[i].c; measure.up = (i >= measure.i0 ? bars[i].c >= measure.p0 : measure.p0 >= bars[i].c);
+        chart.options.plugins.sankhyasOverlay.m = measure;
+        chart.draw();
+        info(i);
+      };
+      cv.onpointerup = cv.onpointercancel = () => { dragging = false; };
+
+      // RSI panel under the price chart, lined up with it
+      if (rsiVals) {
+        $('#rsi-box').hidden = false;
+        rsiChart = new Chart($('#rsi-chart'), {
+          type: 'line',
+          data: { labels, datasets: [
+            { label: 'RSI', data: rsiVals, borderColor: '#6056ff', borderWidth: 1.3, pointRadius: 0 },
+            { label: '70', data: bars.map(() => 70), borderColor: alpha(down, 0.6), borderDash: [4, 3], borderWidth: 1, pointRadius: 0 },
+            { label: '30', data: bars.map(() => 30), borderColor: alpha(up, 0.6), borderDash: [4, 3], borderWidth: 1, pointRadius: 0 }
+          ] },
+          options: {
+            responsive: true, maintainAspectRatio: false, animation: false, events: [],
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            scales: {
+              x: { display: false },
+              y: { position: 'right', min: 0, max: 100, ticks: { color: ink3 }, grid: { color: gridLine }, afterBuildTicks: s => { s.ticks = [{ value: 30 }, { value: 70 }]; }, afterFit: s => { s.width = 64; } }
+            }
+          }
+        });
+      }
+
+      const note = style === 'line' ? '' : unitName + (style === 'ha' ? ' Heikin Ashi candles' : ' candles') + (c.ohlc ? '' : ' from closing prices');
+      $('#chart-legend').innerHTML = PRICE_IND.filter(([k]) => toggles[k] && k !== 'rsi' && k !== 'hl52').map(([k, l, color]) =>
+        '<label><span class="swatch" style="background:' + (k === 'volume' ? alpha(up, 0.5) : color) + '"></span>' + esc(l) + '</label>').join('') +
+        (toggles.rsi ? '<label><span class="swatch" style="background:#6056ff"></span>RSI (14) below: over 70 often read as overbought, under 30 as oversold</label>' : '') +
+        (note ? '<span class="sub">' + note + '. Hover or drag across the chart to read values' + (measuring ? '' : '; Shift-drag or 📏 Measure to measure a move') + '.</span>' : '');
     }
-    $$('#chart-range button').forEach(b => b.onclick = () => { range = b.dataset.range; $$('#chart-range button').forEach(x => x.classList.toggle('active', x === b)); draw(); });
-    $$('#chart-type button').forEach(b => b.onclick = () => { type = b.dataset.type; $$('#chart-type button').forEach(x => x.classList.toggle('active', x === b)); draw(); });
+    $$('#chart-range button').forEach(b => b.onclick = () => { range = b.dataset.range; measure = null; $$('#chart-range button').forEach(x => x.classList.toggle('active', x === b)); draw(); });
+    $$('#chart-type button').forEach(b => b.onclick = () => { type = b.dataset.type; measure = null; $$('#chart-type button').forEach(x => x.classList.toggle('active', x === b)); draw(); });
     draw();
   }
 
