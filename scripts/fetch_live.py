@@ -1,4 +1,4 @@
-"""Latest prices for every company, for the site's 30-minute updates during market hours.
+"""Latest prices for every company (Yahoo's spark feed), for the site's 30-minute updates during market hours.
 
 Reads the company list (Sankhyas symbol -> Yahoo ticker) and writes one small file,
 data/yahoo/live.json:
@@ -19,6 +19,9 @@ import datetime as dt
 import json
 import sys
 import time
+
+
+SPARK = "https://query1.finance.yahoo.com/v7/finance/spark"
 
 
 def tickers_from(args):
@@ -53,10 +56,9 @@ def main(argv=None):
     ap.add_argument("--tickers", help="JSON {symbol: yahoo ticker} (data/yahoo/tickers.json)")
     ap.add_argument("--metrics", help="compact index (metrics.v2.json), used when tickers.json is missing")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--chunk", type=int, default=200)
+    ap.add_argument("--chunk", type=int, default=20, help="companies a request (Yahoo allows 20)")
+    ap.add_argument("--delay", type=float, default=0.3, help="seconds between requests")
     args = ap.parse_args(argv)
-
-    import yfinance as yf
 
     tickers = tickers_from(args)
     if not tickers:
@@ -66,41 +68,54 @@ def main(argv=None):
     for sym, y in tickers.items():
         by_yahoo.setdefault(y, sym)
     names = list(by_yahoo)
-    rows = {}
+    # Yahoo's spark feed: 20 companies a request (about 290 requests for every listed company),
+    # through the browser-like session yfinance uses, so Yahoo does not rate-limit us
+    from curl_cffi import requests as creq
+    session = creq.Session(impersonate="chrome")
+    ist = dt.timezone(dt.timedelta(hours=5, minutes=30))
+    day_of = lambda ts: dt.datetime.fromtimestamp(ts, ist).strftime("%Y-%m-%d")
+    rows, failed = {}, 0
     started = time.time()
     for i in range(0, len(names), args.chunk):
         batch = names[i:i + args.chunk]
-        for attempt in range(2):
+        res = None
+        for attempt in range(3):
             try:
-                df = yf.download(batch, period="5d", interval="1d", auto_adjust=False, group_by="ticker",
-                                 progress=False, threads=True)
-                break
+                r = session.get(SPARK, params={"symbols": ",".join(batch), "range": "5d", "interval": "1d"}, timeout=20)
+                if r.status_code == 200:
+                    res = r.json().get("spark", {}).get("result") or []
+                    break
+                print("spark", r.status_code, "for batch", i // args.chunk, file=sys.stderr)
             except Exception as e:  # noqa: BLE001
-                print("batch", i // args.chunk, "failed:", e, file=sys.stderr)
-                df = None
-                time.sleep(5)
-        if df is None or df.empty:
+                print("spark failed:", e, file=sys.stderr)
+            time.sleep(5 * (attempt + 1))
+        if res is None:
+            failed += 1
             continue
-        for tk in batch:
+        for item in res:
             try:
-                sub = (df[tk] if len(batch) > 1 else df).dropna(subset=["Close"])
+                resp = (item.get("response") or [{}])[0]
+                meta = resp.get("meta") or {}
+                price = num(meta.get("regularMarketPrice"))
+                when = meta.get("regularMarketTime")
+                if not price or price <= 0 or not when:
+                    continue
+                day = day_of(when)
+                ts = resp.get("timestamp") or []
+                closes = ((resp.get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
+                prev = None
+                for t, c in zip(ts, closes):
+                    if c is not None and day_of(t) < day:
+                        prev = num(c)
+                if prev is None:
+                    prev = num(meta.get("previousClose") or meta.get("chartPreviousClose"))
+                vol = meta.get("regularMarketVolume")
+                rows[by_yahoo[item["symbol"]]] = (day, [price, prev, None, num(meta.get("regularMarketDayHigh")),
+                                                        num(meta.get("regularMarketDayLow")), int(vol) if vol else 0])
             except Exception:  # noqa: BLE001
                 continue
-            if sub.empty:
-                continue
-            # one row per day (during market hours Yahoo can send today's row twice)
-            days = collections.OrderedDict()
-            for d, row in sub.iterrows():
-                days[d.strftime("%Y-%m-%d")] = row
-            ds = list(days)
-            row = days[ds[-1]]
-            price = num(row["Close"])
-            if not price or price <= 0:
-                continue
-            prev = num(days[ds[-2]]["Close"]) if len(ds) > 1 else None
-            vol = row["Volume"]
-            rows[by_yahoo[tk]] = (ds[-1], [price, prev, num(row["Open"]), num(row["High"]), num(row["Low"]),
-                                           int(vol) if vol == vol else 0])
+        time.sleep(args.delay)
+    print(f"{len(rows)} prices from {len(names)} tickers, {failed} requests failed")
 
     if len(rows) < 0.3 * len(tickers):
         print(f"Only {len(rows)} of {len(tickers)} companies came back; keeping the last prices.", file=sys.stderr)
