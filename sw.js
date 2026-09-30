@@ -5,11 +5,11 @@
  * code keep their last copy; data files (prices, results, filings) keep the most recent 250.
  * Other sites (fonts, sign-in, payments) are never touched.
  */
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL = 'sankhyas-shell-' + VERSION;
 const DATA = 'sankhyas-data-' + VERSION;
 const DATA_MAX = 250;
-const PRECACHE = ['./', 'index.html', 'css/style.css', 'js/vendor/chart.umd.js', 'js/config.js', 'js/account.js', 'js/data.js', 'js/screener.js',
+const PRECACHE = ['./', 'index.html', 'css/style.css', 'js/vendor/chart.umd.js', 'js/vendor/lightweight-charts.js', 'js/config.js', 'js/account.js', 'js/data.js', 'js/screener.js',
   'js/insights.js', 'js/themes.js', 'js/cards.js', 'js/ai.js', 'js/app.js', 'assets/logo.svg', 'assets/logo-192.png', 'manifest.webmanifest'];
 
 self.addEventListener('install', e => {

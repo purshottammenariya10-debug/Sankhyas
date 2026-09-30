@@ -353,7 +353,7 @@ table.data.list tr.median td { font-weight: 600; background: var(--bg-3); }
   .card { padding: 16px; }
   .home-hero { padding-top: 44px; }
   .home-hero .logo { font-size: 32px; }
-  .chart-box { height: 300px; }
+  .chart-box { height: 360px; }
   .check-grid { grid-template-columns: 1fr; }
   table.data th:first-child, table.data td:first-child { min-width: 140px; }
 }
@@ -969,3 +969,7 @@ body.chart-full-open .tabbar { display: none; }
 .al-st.ok { color: var(--green); }
 .al-st.bad { color: var(--red); }
 .check-line.is-off { opacity: .55; cursor: not-allowed; }
+
+/* TradingView Lightweight Charts price chart (fills the chart box; zoom and scroll inside it) */
+.tv-chart { position: absolute; inset: 0; touch-action: none; }
+.chart-box:has(.tv-chart:not([style*="none"])) { overflow: hidden; }

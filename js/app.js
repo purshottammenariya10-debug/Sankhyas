@@ -1158,8 +1158,23 @@
     return out.sort((a, b) => (a.d < b.d ? -1 : 1));
   }
 
+  // TradingView Lightweight Charts (Apache-2.0, js/vendor/lightweight-charts.js), loaded on the first price chart;
+  // if it cannot load, the price chart is drawn with Chart.js as before
+  let lwcP = null;
+  function ensureLWC() {
+    if (window.LightweightCharts) return Promise.resolve();
+    if (!lwcP) lwcP = new Promise(res => {
+      const s = document.createElement('script');
+      s.src = 'js/vendor/lightweight-charts.js';
+      s.onload = res; s.onerror = () => { lwcP = null; res(); };
+      document.head.appendChild(s);
+      setTimeout(res, 4000);
+    });
+    return lwcP;
+  }
+
   function bindChart(c) {
-    let range = '1Yr', type = 'price', chart = null, rsiChart = null;
+    let range = '1Yr', type = 'price', chart = null, rsiChart = null, tvChart = null;
     let style = store.get('chart_style', 'candle'), interval = 'auto', logScale = false, measuring = false, measure = null;
     if (['candle', 'ha', 'line'].indexOf(style) < 0) style = 'candle';
     const saved = store.get('chart_ind', null) || {};
@@ -1167,7 +1182,13 @@
     PRICE_IND.forEach(([k, , , on]) => { toggles[k] = k in saved ? !!saved[k] : on; });
     const RANGE_DAYS = { '1m': 22, '6m': 126, '1Yr': 252, '3Yr': 756, '5Yr': 1260, '10Yr': 2520, 'Max': 1e9 };
     const section = $('#chart');
-    const kill = () => { if (chart) chart.destroy(); if (rsiChart) rsiChart.destroy(); chart = rsiChart = null; };
+    const kill = () => {
+      if (chart) chart.destroy(); if (rsiChart) rsiChart.destroy(); chart = rsiChart = null;
+      if (tvChart) { tvChart.remove(); tvChart = null; }
+      const host = $('#tv-chart'), cv = $('#price-chart');
+      if (host) host.style.display = 'none';
+      if (cv) cv.style.display = '';
+    };
     onLeave(() => { kill(); document.removeEventListener('keydown', escFull); document.body.classList.remove('chart-full-open'); });
 
     function sma(arr, n) {
@@ -1405,7 +1426,10 @@
     }
 
     function drawPrice(start, n, common, ink3, gridLine, primary) {
-      const span = n - start;
+      // with TradingView's chart all history is loaded and the range only sets the first view (scroll back freely)
+      const tv = !!window.LightweightCharts, viewStart = start;
+      if (tv) start = 0;
+      const span = n - viewStart;
       const auto = style === 'line' ? (span <= 2600 ? 'day' : 'week') : span <= 300 ? 'day' : span <= 1300 ? 'week' : 'month';
       const unit = style === 'line' || interval === 'auto' ? auto : interval;
       // fetch a little extra history so indicators start filled in
@@ -1484,6 +1508,7 @@
       const rsiAll = toggles.rsi ? rsi(closes, 14) : null;
       const rsiVals = rsiAll ? rsiAll.slice(off) : null;
       const unitName = unit === 'day' ? 'Daily' : unit === 'week' ? 'Weekly' : 'Monthly';
+      let hoverI = null, lastPointer = 'mouse';
       function info(i) {
         const b = bars[i];
         if (!b) return;
@@ -1504,7 +1529,7 @@
           const r = (p1 / p0 - 1) * 100;
           m = '<div class="ci-measure ' + (r >= 0 ? 'up' : 'down') + '">📏 ' + c.dates[bars[a].last].toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) + ' ₹' + num(p0, 2) + ' → ' +
             c.dates[bars[z].last].toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) + ' ₹' + num(p1, 2) + ': <b>' + (r >= 0 ? '+' : '') + num(r, 2) + '%</b> (' + (p1 - p0 >= 0 ? '+' : '') + num(p1 - p0, 2) + ') in ' + num(dd, 0) + ' days</div>';
-        } else if (measuring) m = '<div class="ci-measure">📏 Drag across the chart to measure the change between two dates.</div>';
+        } else if (measuring) m = '<div class="ci-measure">📏 ' + (tv ? (measure && measure.i1 == null ? 'Now tap or click the second date.' : 'Tap or click two dates on the chart to measure the change between them.') : 'Drag across the chart to measure the change between two dates.') + '</div>';
         // events on this bar, or (for a near miss with a finger) the next bar either side
         const evs = evAt[i] || (hoverI != null && (evAt[i - 1] || evAt[i + 1])) || [];
         const evHtml = evs.length ? '<div class="ci-events">' + evs.map(e => {
@@ -1519,7 +1544,7 @@
           (b.v ? '<span>Vol <b>' + fmtVol(b.v) + '</b></span>' : '') + '</div>' +
           (extra.length ? '<div class="ci-row ci-ind">' + extra.join('') + '</div>' : '') + m + evHtml;
       }
-      let hoverI = null, lastPointer = 'mouse';
+      if (tv) { renderTV(); legend(); return; }
       common.onHover = (e, els, ch) => {
         if (!ch.chartArea) return;
         // a tap on a phone is followed by a "left the chart" event: keep what was tapped on screen
@@ -1574,17 +1599,108 @@
         });
       }
 
+      legend();
+      function legend() {
       const note = style === 'line' ? '' : unitName + (style === 'ha' ? ' Heikin Ashi candles' : ' candles') + (c.ohlc ? '' : ' from closing prices');
       $('#chart-legend').innerHTML = PRICE_IND.filter(([k]) => toggles[k] && k !== 'rsi' && k !== 'hl52' && k !== 'events').map(([k, l, color]) =>
         '<label><span class="swatch" style="background:' + (k === 'volume' ? alpha(up, 0.5) : color) + '"></span>' + esc(l) + '</label>').join('') +
         (toggles.rsi ? '<label><span class="swatch" style="background:#6056ff"></span>RSI (14) below: over 70 often read as overbought, under 30 as oversold</label>' : '') +
         (toggles.events ? '<span class="ev-key">' + Object.keys(EV_KIND).map(k => '<span><span class="ev-dot ev-' + k + '">' + EV_KIND[k][0] + '</span>' + EV_KIND[k][1] + '</span>').join('') +
           (evGroups.length ? '' : '<span class="sub">No events in this period yet.</span>') + '</span>' : '') +
-        (note ? '<span class="sub">' + note + '. Hover or drag across the chart to read values' + (measuring ? '' : '; Shift-drag or 📏 Measure to measure a move') + '.</span>' : '');
+        (tv ? '<span class="sub">' + (note ? note + '. ' : '') + 'Scroll or pinch to zoom, drag to move back in time; hover or tap to read values' + (measuring ? '' : '; 📏 Measure to measure a move') + '.</span>'
+          : note ? '<span class="sub">' + note + '. Hover or drag across the chart to read values' + (measuring ? '' : '; Shift-drag or 📏 Measure to measure a move') + '.</span>' : '');
+      }
+
+      /* TradingView chart: candles (or area line), volume, moving averages, Bollinger Bands, 52-week lines,
+         event flags as markers and RSI in its own pane, with the same readout above the chart */
+      function renderTV() {
+        const LW = window.LightweightCharts;
+        const box = $('.chart-box', section);
+        let host = $('#tv-chart', box);
+        if (!host) { host = document.createElement('div'); host.id = 'tv-chart'; host.className = 'tv-chart'; box.appendChild(host); }
+        host.style.display = '';
+        $('#price-chart').style.display = 'none';
+        $('#rsi-box').hidden = true;
+        const bg = cssVar('--bg') || '#fff';
+        const fmt = p => num(p, Math.abs(p) >= 1000 ? 1 : 2);
+        const tvc = tvChart = LW.createChart(host, {
+          autoSize: true,
+          layout: { background: { type: 'solid', color: bg }, textColor: ink3, fontFamily: 'Inter, system-ui, sans-serif', fontSize: 11, attributionLogo: true, panes: { separatorColor: gridLine, separatorHoverColor: alpha(primary.startsWith('#') ? primary : '#6056ff', 0.15) } },
+          grid: { vertLines: { color: gridLine }, horzLines: { color: gridLine } },
+          crosshair: { mode: LW.CrosshairMode.Normal },
+          rightPriceScale: { borderColor: gridLine, mode: logScale ? LW.PriceScaleMode.Logarithmic : LW.PriceScaleMode.Normal, scaleMargins: { top: 0.08, bottom: toggles.volume ? 0.22 : 0.08 } },
+          timeScale: { borderColor: gridLine, rightOffset: 5, minBarSpacing: 0.3, fixLeftEdge: true },
+          localization: { priceFormatter: fmt, locale: 'en-IN' }
+        });
+        const t = b => dayStr[b.first];
+        const main = style === 'line'
+          ? tvc.addSeries(LW.AreaSeries, { lineColor: primary, topColor: alpha(primary.startsWith('#') ? primary : '#6056ff', 0.28), bottomColor: alpha(primary.startsWith('#') ? primary : '#6056ff', 0.02), lineWidth: 2 })
+          : tvc.addSeries(LW.CandlestickSeries, { upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down });
+        main.setData(style === 'line' ? bars.map(b => ({ time: t(b), value: b.c })) : shown.map((x, i) => ({ time: t(bars[i]), open: x.o, high: x.h, low: x.l, close: x.c })));
+        if (toggles.volume) {
+          const vol = tvc.addSeries(LW.HistogramSeries, { priceScaleId: 'vol', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false });
+          tvc.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+          vol.setData(bars.map(b => ({ time: t(b), value: b.v || 0, color: alpha(b.c >= b.o ? up : down, 0.4) })));
+        }
+        const line = (vals, color, extra) => {
+          const sr = tvc.addSeries(LW.LineSeries, Object.assign({ color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, extra || {}));
+          sr.setData(bars.map((b, i) => (vals[i] == null ? { time: t(b) } : { time: t(b), value: vals[i] })));
+          return sr;
+        };
+        PRICE_IND.slice(0, 3).forEach(([k, , color]) => { if (toggles[k]) line(ind[k], color); });
+        if (bb) { line(bb.up, '#9b6ad6'); line(bb.lo, '#9b6ad6'); line(bb.mid, 'rgba(155,106,214,.7)', { lineStyle: LW.LineStyle.Dashed }); }
+        lines.forEach(l => main.createPriceLine({ price: l.v, color: l.color, lineWidth: 1, lineStyle: LW.LineStyle.Dashed, axisLabelVisible: true, title: /high/.test(l.label) ? '52W H' : '52W L' }));
+        // event flags under the candles (up to three a candle)
+        const marks = [];
+        evGroups.slice().sort((a, b) => a.i - b.i).forEach(g => g.list.slice(0, 3).forEach(e => {
+          const K = EV_KIND[e.k];
+          const col = e.k === 'rating' || e.k === 'deal' ? (e.tone === 'pos' ? '#11813d' : e.tone === 'neg' ? '#d33a3a' : K[2]) : e.k === 'res' && e.tone ? (e.tone === 'pos' ? '#11813d' : '#d33a3a') : K[2];
+          marks.push({ time: t(bars[g.i]), position: 'belowBar', shape: 'circle', color: col, text: K[0], size: 1 });
+        }));
+        if (marks.length) LW.createSeriesMarkers(main, marks);
+        if (rsiVals) {
+          const rs = tvc.addSeries(LW.LineSeries, { color: '#6056ff', lineWidth: 1.5, priceLineVisible: false, crosshairMarkerVisible: false, priceFormat: { type: 'price', precision: 1, minMove: 0.1 } }, 1);
+          rs.setData(bars.map((b, i) => (rsiVals[i] == null ? { time: t(b) } : { time: t(b), value: rsiVals[i] })));
+          rs.createPriceLine({ price: 70, color: alpha(down, 0.7), lineWidth: 1, lineStyle: LW.LineStyle.Dashed, axisLabelVisible: false, title: '70' });
+          rs.createPriceLine({ price: 30, color: alpha(up, 0.7), lineWidth: 1, lineStyle: LW.LineStyle.Dashed, axisLabelVisible: false, title: '30' });
+          const panes = tvc.panes();
+          if (panes[1]) panes[1].setHeight(110);
+        }
+        // measure: a line from the first to the second date picked
+        let measureLine = null;
+        const drawMeasure = () => {
+          if (measureLine) { tvc.removeSeries(measureLine); measureLine = null; }
+          if (!measure || measure.i1 == null) return;
+          const a = Math.min(measure.i0, measure.i1), z = Math.max(measure.i0, measure.i1);
+          if (a === z) return;
+          measureLine = tvc.addSeries(LW.LineSeries, { color: bars[z].c >= bars[a].c ? '#11813d' : '#d33a3a', lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+          measureLine.setData([{ time: t(bars[a]), value: bars[a].c }, { time: t(bars[z]), value: bars[z].c }]);
+        };
+        drawMeasure();
+        const clampI = l => Math.max(0, Math.min(bars.length - 1, Math.round(l)));
+        tvc.subscribeCrosshairMove(p => {
+          if (p.logical == null || !p.point) { if (lastPointer === 'mouse') { hoverI = null; info(bars.length - 1); } return; }
+          const i = clampI(p.logical);
+          if (i !== hoverI) { hoverI = i; info(i); }
+        });
+        host.onpointerdown = ev => { lastPointer = ev.pointerType || 'mouse'; };
+        tvc.subscribeClick(p => {
+          if (!measuring || p.logical == null) return;
+          const i = clampI(p.logical);
+          if (!measure || measure.i1 != null) measure = { i0: i, p0: bars[i].c, i1: null };
+          else { measure.i1 = i; measure.p1 = bars[i].c; }
+          drawMeasure();
+          info(i);
+        });
+        // first view: the chosen range, most recent bars on the right
+        const from = Math.max(0, bars.findIndex(b => b.last >= viewStart));
+        tvc.timeScale().setVisibleLogicalRange({ from: from - 0.5, to: bars.length - 1 + 5 });
+        info(bars.length - 1);
+      }
     }
     $$('#chart-range button').forEach(b => b.onclick = () => { range = b.dataset.range; measure = null; $$('#chart-range button').forEach(x => x.classList.toggle('active', x === b)); draw(); });
     $$('#chart-type button').forEach(b => b.onclick = () => { type = b.dataset.type; measure = null; $$('#chart-type button').forEach(x => x.classList.toggle('active', x === b)); draw(); });
-    draw();
+    ensureLWC().then(() => { if (section.isConnected) draw(); });
   }
 
   /* analysis */
