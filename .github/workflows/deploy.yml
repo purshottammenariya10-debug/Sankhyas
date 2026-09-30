@@ -203,6 +203,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # keep the latest 30-minute prices (live.yml writes them straight onto gh-pages); the site
+          # uses them only while they are newer than this run's daily prices
+          gh api -H "Accept: application/vnd.github.raw" "repos/${GITHUB_REPOSITORY}/contents/data/yahoo/live.json?ref=gh-pages" \
+            > _site/data/yahoo/live.json 2>/dev/null || rm -f _site/data/yahoo/live.json
           cd _site
           touch .nojekyll
           git init -q -b gh-pages

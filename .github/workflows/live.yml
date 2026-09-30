@@ -1,0 +1,76 @@
+name: Prices every 30 minutes
+
+# During NSE/BSE market hours, fetches the latest price of every company (scripts/fetch_live.py,
+# 2-3 minutes) and publishes one small file, data/yahoo/live.json, straight onto the live site
+# (gh-pages) without rebuilding it. The site shows these prices, marked with their time, until the
+# daily update after the close (deploy.yml) takes over. Then it runs the alerts, so price alerts
+# fire during the day.
+#
+# GitHub may start scheduled runs 5-20 minutes late when it is busy.
+
+on:
+  schedule:
+    # times in UTC, Monday to Friday: 9:22 am to 3:52 pm IST, every 30 minutes (the last one after the 3:30 close)
+    - cron: "52 3 * * 1-5"
+    - cron: "22,52 4-9 * * 1-5"
+    - cron: "22 10 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: live-prices
+  cancel-in-progress: true   # a newer run has newer prices
+
+jobs:
+  prices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Python packages
+        run: pip install yfinance
+
+      - name: Latest prices
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          raw() { gh api -H "Accept: application/vnd.github.raw" "repos/${GITHUB_REPOSITORY}/contents/$1?ref=gh-pages" > "$2" 2>/dev/null || rm -f "$2"; }
+          raw data/yahoo/tickers.json tickers.json
+          [ -s tickers.json ] || raw data/yahoo/metrics.v2.json metrics.v2.json
+          python scripts/fetch_live.py --tickers tickers.json --metrics metrics.v2.json --out live.json
+
+      - name: Publish to the live site
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          F=data/yahoo/live.json
+          for try in 1 2 3 4; do
+            SHA=$(gh api "repos/${GITHUB_REPOSITORY}/contents/$F?ref=gh-pages" --jq .sha 2>/dev/null || true)
+            jq -n --arg m "Prices $(jq -r .t live.json)" --arg c "$(base64 -w0 live.json)" --arg s "$SHA" \
+              '{message: $m, content: $c, branch: "gh-pages"} + (if $s == "" then {} else {sha: $s} end)' > body.json
+            if gh api -X PUT "repos/${GITHUB_REPOSITORY}/contents/$F" --input body.json --jq '.commit.sha' ; then
+              echo "Published $(jq '.p | length' live.json) prices"; exit 0
+            fi
+            echo "The site changed while publishing (a data update); trying again."
+            sleep $((try * 10))
+          done
+          exit 1
+
+      - name: Price alerts
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          DISPATCH_SECRET: ${{ secrets.DISPATCH_SECRET }}
+        run: |
+          if [ -z "$SUPABASE_URL" ]; then echo "Accounts are off; no alerts to send."; exit 0; fi
+          sleep 60   # let GitHub Pages serve the new prices
+          curl -sS -m 140 -X POST "${SUPABASE_URL%/}/functions/v1/dispatch-alerts" -H "Content-Type: application/json" \
+            ${DISPATCH_SECRET:+-H "x-dispatch-secret: $DISPATCH_SECRET"} -d '{}' || true
+          echo

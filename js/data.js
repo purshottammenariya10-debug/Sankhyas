@@ -551,12 +551,65 @@
     }
     return indexP;
   }
+  // latest prices, every 30 minutes in market hours (scripts/fetch_live.py via live.yml):
+  // { t: fetch time, d: trading day, p: { SYMBOL: [price, prev close, open, high, low, volume] } }
+  let liveP = null, livePx = null;
+  function loadLivePrices() {
+    if (!liveP) liveP = getJSON('data/yahoo/live.json').then(j => (j && j.p && j.t ? j : null)).catch(() => null);
+    return liveP;
+  }
   // in a browser only: scripts/build_index.mjs also runs this file, in Node, without a network
-  if (typeof document !== 'undefined' && typeof fetch === 'function') loadIndex();
+  if (typeof document !== 'undefined' && typeof fetch === 'function') { loadIndex(); loadLivePrices(); }
+  const newer = (a, b) => !b || Date.parse(a) > Date.parse(b);
+  // a company's summary metrics moved to the latest price (the rest waits for the daily update)
+  function applyLiveMetrics(m, e) {
+    const p = e[0], pc = e[1], h = e[3], l = e[4], v = e[5], old = m.price;
+    if (!(p > 0)) return false;
+    const r = old > 0 ? p / old : 1;
+    m.price = p;
+    if (pc > 0) { m.change = p - pc; m.changePct = (p / pc - 1) * 100; }
+    const mc = m.marketCap;
+    ['marketCap', 'pe', 'pb', 'priceToSales', 'peg'].forEach(k => { if (m[k] != null) m[k] *= r; });
+    ['divYield', 'earningsYield'].forEach(k => { if (m[k] != null) m[k] /= r; });
+    ['ret1m', 'ret3m', 'ret6m', 'ret1y'].forEach(k => { if (m[k] != null) m[k] = ((1 + m[k] / 100) * r - 1) * 100; });
+    if (m.evEbitda != null && mc != null && m.op > 0) m.evEbitda += (m.marketCap - mc) / m.op;
+    if (m.high52 != null && h > m.high52) m.high52 = h;
+    if (m.low52 != null && l > 0 && l < m.low52) m.low52 = l;
+    if (v != null) m.volume = v;
+    return true;
+  }
+  // a company file (prices, quote) brought up to the latest price before its metrics are worked out
+  function applyLiveCompany(j) {
+    const e = livePx && livePx.p[j.symbol], px = j.prices;
+    if (!e || !px || !px.dates || !px.dates.length || !newer(livePx.t, j.updated)) return false;
+    const n = px.dates.length, lastDay = px.dates[n - 1], day = livePx.d;
+    if (day < lastDay) return false;
+    const [p, pc, o, h, l, v] = e, q = j.quote = j.quote || {};
+    const old = q.price || px.close[n - 1];
+    const hasOhlc = px.open && px.open.length;
+    if (day > lastDay) {
+      px.dates.push(day); px.close.push(p); px.volume.push(v || 0);
+      if (hasOhlc) { px.open.push(o != null ? o : p); px.high.push(h != null ? h : p); px.low.push(l != null ? l : p); }
+    } else {
+      px.close[n - 1] = p; px.volume[n - 1] = v || 0;
+      if (hasOhlc) { const k = px.open.length - 1; if (o != null) px.open[k] = o; if (h != null) px.high[k] = h; if (l != null) px.low[k] = l; }
+    }
+    const r = old > 0 ? p / old : 1;
+    q.price = p;
+    if (pc > 0) q.prevClose = pc;
+    if (q.marketCap) q.marketCap *= r;
+    if (q.pe) q.pe *= r;
+    if (q.high52 && h > q.high52) q.high52 = h;
+    if (q.low52 && l > 0 && l < q.low52) q.low52 = l;
+    j.priceAt = livePx.t;
+    return true;
+  }
   async function init() {
     try {
-      const idx = await loadIndex();
+      const [idx, lp] = await Promise.all([loadIndex(), loadLivePrices()]);
       liveMeta = { updated: idx.updated, liveOnly: idx.liveOnly !== false, source: idx.source, scored: !!idx.scored };
+      // 30-minute prices newer than the daily data
+      livePx = lp && newer(lp.t, idx.updated) ? lp : null;
       if (liveMeta.liveOnly) { base.length = 0; Object.keys(bySymbol).forEach(k => delete bySymbol[k]); }
       (idx.companies || []).forEach(e => {
         const c = {
@@ -564,6 +617,7 @@
           live: true, summary: true, lastQuarter: e.q || '', updated: idx.updated, metrics: e.m || {},
           listed: e.lst || '', listPrice: e.lp != null ? e.lp : null, listPriceDate: e.lpd || ''
         };
+        if (livePx && livePx.p[c.symbol] && applyLiveMetrics(c.metrics, livePx.p[c.symbol])) c.priceAt = livePx.t;
         summaries[c.symbol] = c;
         if (!bySymbol[c.symbol]) base.push(c);
         bySymbol[c.symbol] = c;
@@ -602,7 +656,9 @@
     sym = String(sym || '').toUpperCase();
     if (summaries[sym] && !cache[sym + ':live']) {
       const j = await getJSON('data/yahoo/' + encodeURIComponent(sym) + '.json');
+      applyLiveCompany(j);
       const full = buildLive(j);
+      if (j.priceAt) full.priceAt = j.priceAt;
       full.metrics.industryPE = summaries[sym].metrics.industryPE;
       cache[sym + ':live'] = full;
     }
@@ -714,7 +770,9 @@
     mode: () => mode,
     liveInfo: () => ({
       count: mode === 'summary' ? Object.keys(summaries).length : Object.keys(live).length,
-      total: listCompanies().length, updated: liveMeta && liveMeta.updated
+      total: listCompanies().length, updated: liveMeta && liveMeta.updated,
+      // time of the 30-minute prices in use (null: the daily close)
+      pricesAt: livePx ? livePx.t : null
     }),
     sectors: () => {
       const m = {};

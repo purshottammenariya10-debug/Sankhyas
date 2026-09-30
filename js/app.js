@@ -369,6 +369,13 @@
   let pageTitle = '', routeKeepScroll = false;
   const setTitle = t => { pageTitle = t; };
 
+  // "as of 11:52 am, delayed" for the 30-minute prices (the day too when it is not today)
+  function priceTime(t) {
+    const d = new Date(t), tz = { timeZone: 'Asia/Kolkata' }, day = x => x.toLocaleDateString('en-IN', Object.assign({ day: 'numeric', month: 'short' }, tz));
+    return 'as of ' + (day(d) === day(new Date()) ? '' : day(d) + ', ') +
+      d.toLocaleTimeString('en-IN', Object.assign({ hour: 'numeric', minute: '2-digit' }, tz)) + ' IST, delayed';
+  }
+
   /* ---------- Home ---------- */
   function pageHome() {
     setTitle("India's AI-Powered Financial Research Terminal");
@@ -395,7 +402,7 @@
       '<div class="card feature"><h3><span class="feature-icon" data-icon="★" aria-hidden="true"></span>Watchlist &amp; feed</h3><p class="muted">Follow companies to get their latest results and announcements in your feed.</p><a class="btn" href="#/feed">Open feed</a></div>' +
       '</div>' +
       '<div class="grid grid-3">' +
-      '<div class="card"><h3>Top gainers</h3>' + mini(gainers) + '</div>' +
+      '<div class="card"><h3>Top gainers' + (Data.liveInfo().pricesAt ? ' <span class="sub">' + priceTime(Data.liveInfo().pricesAt) + '</span>' : '') + '</h3>' + mini(gainers) + '</div>' +
       '<div class="card"><h3>Top losers</h3>' + mini(losers) + '</div>' +
       '<div class="card"><h3>Largest companies</h3>' + big.map(c => '<div class="stat-mini"><a href="#/company/' + esc(c.symbol) + '">' + esc(c.name) +
         '</a><span>₹ ' + num(c.metrics.marketCap, 0) + ' Cr.</span></div>').join('') + '</div>' +
@@ -472,7 +479,7 @@
       '</div>' +
       '<div class="price-line"><span class="price">₹ ' + num(m.price, 0) + '</span><span class="chg ' + signCls(m.change) + '">' +
       (m.change >= 0 ? '▲ ' : '▼ ') + num(Math.abs(m.changePct), 2) + '%</span><span class="asof">' +
-      c.dates[c.dates.length - 1].toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + ' - close price' + (c.live ? ' &middot; Yahoo Finance' : '') + '</span></div>' +
+      (c.priceAt ? priceTime(c.priceAt) : c.dates[c.dates.length - 1].toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) + ' - close price') + (c.live ? ' &middot; Yahoo Finance' : '') + '</span></div>' +
       '</div><div class="company-actions">' +
       '<button class="btn" id="export-btn">⤓ Export to Excel</button>' +
       '<button class="btn" id="share-btn" title="Make an image for Instagram, X or WhatsApp">↗ Share card</button>' +

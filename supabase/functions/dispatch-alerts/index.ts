@@ -47,6 +47,9 @@ Deno.serve(async (req) => {
     getJSON('data/yahoo/results.json').catch(() => ({ results: [] })),
     getJSON('data/yahoo/ratings.json').catch(() => ({ ratings: [] })),
   ]);
+  // 30-minute prices in market hours (live.yml), when newer than the daily data
+  const livePx = await getJSON('data/yahoo/live.json').catch(() => null);
+  const liveP: Record<string, number[]> = livePx?.p && Date.parse(livePx.t) > Date.parse(metrics.updated || 0) ? livePx.p : {};
   // latest quarterly results with the Sankhyas verdict, by symbol
   const RES: Record<string, any> = {};
   for (const r of resultsList.results || []) RES[r.s] = r;
@@ -122,7 +125,7 @@ Deno.serve(async (req) => {
         break;
       case 'price_above':
       case 'price_below': {
-        const s = r.symbol || '', p = M[s]?.price, t = +r.params?.price;
+        const s = r.symbol || '', p = liveP[s]?.[0] ?? M[s]?.price, t = +r.params?.price;
         if (p != null && t > 0 && (r.kind === 'price_above' ? p >= t : p <= t))
           evs.push({ key: `price|${t}`, sym: s, text: `${nm(s)} is at ₹ ${p}, ${r.kind === 'price_above' ? 'above' : 'below'} your alert price of ₹ ${t}.` });
         break;

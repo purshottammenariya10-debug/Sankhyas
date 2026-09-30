@@ -27,7 +27,7 @@ const KEYS = Screener.RATIOS.map(r => r.key).concat(['change', 'changePct', 'qtr
 const round = v => (v == null || !Number.isFinite(v) ? null : Number(v.toPrecision(6)));
 
 const index = fs.existsSync(path.join(dir, 'index.json')) ? JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')) : {};
-const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !['index.json', 'metrics.json', 'metrics.v2.json', 'calendar.json', 'activity.json', 'results.json', 'ratings.json', 'ipo.json', 'ipo_leads.json', 'indices.json', 'corporate_actions.json'].includes(f));
+const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !['index.json', 'metrics.json', 'metrics.v2.json', 'calendar.json', 'activity.json', 'results.json', 'ratings.json', 'ipo.json', 'ipo_leads.json', 'indices.json', 'corporate_actions.json', 'live.json', 'tickers.json'].includes(f));
 const companies = [];
 let skipped = 0;
 const latestResults = [];
@@ -69,6 +69,7 @@ function listingInfo(sym, j) {
   if (i < 0 || Date.parse(dates[i]) - Date.parse(listed) > 10 * 864e5 || (i === 0 && Date.parse(dates[0]) < Date.parse(listed) - 864e5)) return { lst: listed };
   return { lst: listed, lp: round(close[i]), lpd: dates[i] };
 }
+const tickers = {};   // symbol -> Yahoo ticker, for the 30-minute price updates (scripts/fetch_live.py)
 for (const f of files) {
   try {
     const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
@@ -125,6 +126,7 @@ for (const f of files) {
         sy: rv.yoy.sales, py: rv.yoy.np, sq: rv.qoq.sales, pq: rv.qoq.np, mc: c.metrics.marketCap || 0 });
     }
     salesBy[c.symbol] = c.metrics.sales;
+    if (j.yahoo) tickers[c.symbol] = j.yahoo;
     const m = {};
     for (const k of KEYS) { const v = round(c.metrics[k]); if (v != null) m[k] = v; }
     companies.push(Object.assign({ s: c.symbol, n: c.name, sec: c.sector, ind: c.industry, bse: c.bseCode || undefined, ex: c.exchange === 'BSE' ? 'BSE' : undefined, isin: c.isin || undefined, q: c.lastQuarter || undefined, m },
@@ -149,6 +151,7 @@ Insights.computeScores(companies.map(e => ({ symbol: e.s, sector: e.sec, industr
 companies.forEach(e => SCORE_KEYS.forEach(k => { if (e.m[k] == null) delete e.m[k]; }));
 const out = { source: 'Yahoo Finance', updated: index.updated || new Date().toISOString(), liveOnly: index.liveOnly !== false, scored: 1, companies };
 fs.writeFileSync(path.join(dir, 'metrics.json'), JSON.stringify(out));
+fs.writeFileSync(path.join(dir, 'tickers.json'), JSON.stringify(tickers));
 console.log(`metrics.json: ${companies.length} companies (${skipped} skipped), ${(fs.statSync(path.join(dir, 'metrics.json')).size / 1e6).toFixed(2)} MB`);
 
 // The site loads a compact copy (metrics.v2.json, about half the size to download and to read on a

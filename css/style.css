@@ -989,3 +989,4 @@ body.chart-full-open .tabbar { display: none; }
 .dv-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
 .dv-bar input[type=search] { max-width: 260px; }
 .dv-table td .ev-dot { vertical-align: -3px; }
+h3 .sub { font-weight: 400; margin-left: 6px; }
