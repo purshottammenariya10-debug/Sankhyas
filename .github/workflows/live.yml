@@ -53,8 +53,12 @@ jobs:
           F=data/yahoo/live.json
           for try in 1 2 3 4; do
             SHA=$(gh api "repos/${GITHUB_REPOSITORY}/contents/$F?ref=gh-pages" --jq .sha 2>/dev/null || true)
-            jq -n --arg m "Prices $(jq -r .t live.json)" --arg c "$(base64 -w0 live.json)" --arg s "$SHA" \
-              '{message: $m, content: $c, branch: "gh-pages"} + (if $s == "" then {} else {sha: $s} end)' > body.json
+            SHA="$SHA" python3 -c 'import base64, json, os
+          d = open("live.json", "rb").read()
+          b = {"message": "Prices " + json.loads(d)["t"], "content": base64.b64encode(d).decode(), "branch": "gh-pages"}
+          sha = os.environ["SHA"].strip()
+          if len(sha) == 40 and all(c in "0123456789abcdef" for c in sha): b["sha"] = sha
+          json.dump(b, open("body.json", "w"))'
             if gh api -X PUT "repos/${GITHUB_REPOSITORY}/contents/$F" --input body.json --jq '.commit.sha' ; then
               echo "Published $(jq '.p | length' live.json) prices"; exit 0
             fi
