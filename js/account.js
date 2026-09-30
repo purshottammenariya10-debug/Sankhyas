@@ -88,7 +88,8 @@
     });
     const { data } = await client.auth.getSession();
     setSession(data.session);
-    await loadProfile().catch(() => null);
+    // the plan details (profiles row) load in the background: the auth listener above starts that for a
+    // signed-in user and the page updates when they arrive, so the first page does not wait for them
     // drop ?code=... left by the email-link / Google sign-in redirect
     if (/[?&](code|error)=/.test(location.search)) history.replaceState(null, '', location.pathname + location.hash);
   }

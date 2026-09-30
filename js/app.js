@@ -4114,7 +4114,7 @@
     });
   }
   // pages whose content depends on being signed in (the free-account previews)
-  const GATED_PAGES = ['screen', 'screens', 'ipo', 'deals', 'orders', 'ratings'];
+  const GATED_PAGES = ['screen', 'screens', 'ipo', 'deals', 'orders', 'ratings', 'watchlist', 'portfolio', 'alerts', 'admin'];
   let wasSignedIn = null;
   Account.onChange(() => {
     if (!booted) return;
@@ -4134,7 +4134,9 @@
     e.preventDefault();
     requireLogin(b.dataset.signin || 'see this');
   });
-  Promise.all([Data.init(), Account.ready]).then(() => {
+  // draw the first page once the company list is in; wait at most 3 s for the sign-in check (a slow
+  // network or a blocked sign-in script must not leave the page blank; it updates when sign-in arrives)
+  Promise.all([Data.init(), Promise.race([Account.ready, new Promise(r => setTimeout(r, 3000))])]).then(() => {
     booted = true;
     wasSignedIn = !!user();
     renderAuth();

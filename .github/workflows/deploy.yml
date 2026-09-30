@@ -31,6 +31,7 @@ on:
 
 permissions:
   contents: write
+  actions: write   # to start the fast code deploy (site.yml) when newer code arrived during a run
 
 concurrency:
   group: deploy
@@ -122,6 +123,13 @@ jobs:
 
       - name: Assemble site
         run: |
+          # publish the newest site code, even when it was pushed while this run was fetching data
+          # (site.yml publishes code at once; this keeps a data update from putting older code back)
+          if git fetch -q --depth=1 origin "$GITHUB_REF_NAME"; then
+            git checkout FETCH_HEAD -- index.html manifest.webmanifest sw.js css js assets scripts/build_seo.mjs scripts/site_config.mjs || true
+            git rev-parse FETCH_HEAD > .site_code_sha
+            echo "Site code from $(git rev-parse --short FETCH_HEAD)"
+          fi
           mkdir -p _site
           cp -r index.html manifest.webmanifest sw.js css js assets _site/
           mkdir -p _site/data
@@ -144,19 +152,7 @@ jobs:
           BUSINESS_INSTAGRAM: ${{ vars.BUSINESS_INSTAGRAM }}
           BUSINESS_PHONE: ${{ vars.BUSINESS_PHONE }}
           BUSINESS_ADDRESS: ${{ vars.BUSINESS_ADDRESS }}
-        run: |
-          if [ -n "$SUPABASE_URL" ]; then
-            node -e '
-              const e = process.env, s = v => JSON.stringify(v || "");
-              const cfg = { supabaseUrl: e.SUPABASE_URL, supabaseAnonKey: e.SUPABASE_ANON_KEY, razorpayKeyId: e.RAZORPAY_KEY_ID,
-                proFreeDuringBeta: /^(1|true|yes)$/i.test(e.PRO_FREE_DURING_BETA || ""),
-                business: { name: e.BUSINESS_NAME || "Sankhyas", email: e.BUSINESS_EMAIL || "connect@sankhyas.com", phone: e.BUSINESS_PHONE || "", address: e.BUSINESS_ADDRESS || "", instagram: e.BUSINESS_INSTAGRAM || "sankhyas.co" } };
-              require("fs").writeFileSync("_site/js/config.js", "window.SANKHYAS_CONFIG = " + JSON.stringify(cfg, null, 2) + ";\n");
-            '
-            echo "Accounts and payments: on ($SUPABASE_URL)"
-          else
-            echo "Accounts and payments: off (set the SUPABASE_URL repository variable to switch them on)"
-          fi
+        run: node scripts/site_config.mjs _site/js/config.js
 
       # Custom domain (default sankhyas.com; set the CUSTOM_DOMAIN repository variable to change it,
       # or to "none" to turn it off). The domain is switched on only once its DNS points at GitHub
@@ -209,6 +205,12 @@ jobs:
           git commit -q -m "Deploy site from ${GITHUB_SHA::7}"
           git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
           echo "Published to gh-pages: https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/"
+          # code pushed after this run took its copy: publish it again on top (site.yml, a few minutes)
+          cd ..
+          LATEST=$(git ls-remote origin "refs/heads/$GITHUB_REF_NAME" | cut -f1)
+          if [ -f .site_code_sha ] && [ -n "$LATEST" ] && [ "$LATEST" != "$(cat .site_code_sha)" ]; then
+            gh workflow run site.yml --ref "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" && echo "Newer code on $GITHUB_REF_NAME: started the fast code deploy" || true
+          fi
 
       # Tell Bing, Yandex and other IndexNow search engines about every page once a day (custom domain only)
       - name: Submit pages to IndexNow

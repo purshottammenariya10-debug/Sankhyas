@@ -322,7 +322,8 @@
     if (key === 'pledged') return ok(m.pledged) ? m.pledged : (m.promoter != null ? 0 : null);
     return ok(m[key]) ? m[key] : null;
   }
-  function computeScores(all) {
+  function computeScores(all, precomputed) {
+    if (precomputed) return scoresFromMetrics(all);
     const ranks = {};
     const need = new Set();
     PILLARS.forEach(p => p[3].forEach(([k]) => need.add(k)));
@@ -332,10 +333,11 @@
     });
     const pct = (k, v) => {
       const a = ranks[k];
+      // lower and upper bound by binary search (ties, e.g. thousands of 0% pledged, must not be walked one by one)
       let lo = 0, hi = a.length;
       while (lo < hi) { const mid = (lo + hi) >> 1; if (a[mid] < v) lo = mid + 1; else hi = mid; }
-      let eq = lo;
-      while (eq < a.length && a[eq] === v) eq++;
+      let eq = lo, top = a.length;
+      while (eq < top) { const mid = (eq + top) >> 1; if (a[mid] <= v) eq = mid + 1; else top = mid; }
       return (lo + (eq - lo) / 2) / a.length * 100;
     };
     scoreMap = {};
@@ -353,6 +355,19 @@
       c.metrics.sankhyasScore = out.score;
       scoreMap[c.symbol] = out;
     });
+    return rankInSectors(all);
+  }
+  // scores already in each company's metrics (scripts/build_index.mjs works them out once for everyone)
+  function scoresFromMetrics(all) {
+    scoreMap = {};
+    all.forEach(c => {
+      const m = c.metrics, out = { pillars: {}, score: m.sankhyasScore != null ? m.sankhyasScore : null };
+      PILLARS.forEach(([id]) => { out.pillars[id] = m[SCORE_KEY[id]] != null ? m[SCORE_KEY[id]] : null; });
+      scoreMap[c.symbol] = out;
+    });
+    return rankInSectors(all);
+  }
+  function rankInSectors(all) {
     // rank within sector for context
     const bySector = {};
     all.forEach(c => { if (scoreMap[c.symbol].score != null) (bySector[c.sector] = bySector[c.sector] || []).push(c); });

@@ -27,7 +27,7 @@ const KEYS = Screener.RATIOS.map(r => r.key).concat(['change', 'changePct', 'qtr
 const round = v => (v == null || !Number.isFinite(v) ? null : Number(v.toPrecision(6)));
 
 const index = fs.existsSync(path.join(dir, 'index.json')) ? JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')) : {};
-const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !['index.json', 'metrics.json', 'calendar.json', 'activity.json', 'results.json', 'ratings.json', 'ipo.json', 'ipo_leads.json'].includes(f));
+const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !['index.json', 'metrics.json', 'metrics.v2.json', 'calendar.json', 'activity.json', 'results.json', 'ratings.json', 'ipo.json', 'ipo_leads.json'].includes(f));
 const companies = [];
 let skipped = 0;
 const latestResults = [];
@@ -137,13 +137,44 @@ for (const f of files) {
 if (!companies.length) {
   // no usable data yet: leave no index so the site falls back to sample data
   fs.rmSync(path.join(dir, 'metrics.json'), { force: true });
+  fs.rmSync(path.join(dir, 'metrics.v2.json'), { force: true });
   console.log(`metrics.json: no companies (${skipped} skipped); index not written`);
   process.exit(0);
 }
 companies.sort((a, b) => (b.m.marketCap || 0) - (a.m.marketCap || 0));
-const out = { source: 'Yahoo Finance', updated: index.updated || new Date().toISOString(), liveOnly: index.liveOnly !== false, companies };
+// Sankhyas Score for every company, worked out once here (it ranks each company against all the others)
+// so phones read it from the index instead of computing it on every visit; `scored` tells the site so
+const SCORE_KEYS = ['sankhyasScore', 'scoreQuality', 'scoreGrowth', 'scoreValue', 'scoreMomentum', 'scoreSafety'];
+Insights.computeScores(companies.map(e => ({ symbol: e.s, sector: e.sec, industry: e.ind, metrics: e.m })));
+companies.forEach(e => SCORE_KEYS.forEach(k => { if (e.m[k] == null) delete e.m[k]; }));
+const out = { source: 'Yahoo Finance', updated: index.updated || new Date().toISOString(), liveOnly: index.liveOnly !== false, scored: 1, companies };
 fs.writeFileSync(path.join(dir, 'metrics.json'), JSON.stringify(out));
 console.log(`metrics.json: ${companies.length} companies (${skipped} skipped), ${(fs.statSync(path.join(dir, 'metrics.json')).size / 1e6).toFixed(2)} MB`);
+
+// The site loads a compact copy (metrics.v2.json, about half the size to download and to read on a
+// phone): one row per company, metric values in the order of `keys`, sector/industry names stored
+// once in `dict`, and numbers kept to 2 decimals (whole numbers from 10,000 up). metrics.json stays
+// as it is for the data scripts. Row: [symbol, name (0 when it is the symbol), sector #, industry #,
+// [values], {bse, ex, isin, q, lst, lp, lpd} when any are set].
+{
+  const cv = v => (typeof v !== 'number' || !Number.isFinite(v) ? null : Math.abs(v) >= 1e4 ? Math.round(v) : Math.abs(v) < 0.1 ? Number(v.toPrecision(2)) : Math.round(v * 100) / 100);
+  const keys = [...new Set(companies.flatMap(e => Object.keys(e.m)))];
+  const dict = [], at = {};
+  const ref = s => (!s ? -1 : s in at ? at[s] : (dict.push(s), (at[s] = dict.length - 1)));
+  const EXTRA = ['bse', 'ex', 'isin', 'q', 'lst', 'lp', 'lpd'];
+  const c = companies.map(e => {
+    const vals = keys.map(k => cv(e.m[k]));
+    while (vals.length && vals[vals.length - 1] === null) vals.pop();
+    const x = {};
+    EXTRA.forEach(f => { if (e[f] != null) x[f] = e[f]; });
+    const row = [e.s, e.n === e.s ? 0 : e.n, ref(e.sec), ref(e.ind), vals];
+    if (Object.keys(x).length) row.push(x);
+    return row;
+  });
+  const v2 = path.join(dir, 'metrics.v2.json');
+  fs.writeFileSync(v2, JSON.stringify({ v: 2, source: out.source, updated: out.updated, liveOnly: out.liveOnly, scored: 1, keys, dict, c }));
+  console.log(`metrics.v2.json: ${(fs.statSync(v2).size / 1e6).toFixed(2)} MB`);
+}
 
 // latest quarterly results with the Sankhyas verdict, newest filing first (results page, alerts, cards)
 {

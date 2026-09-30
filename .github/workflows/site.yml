@@ -1,0 +1,80 @@
+name: Deploy site code (fast)
+
+# Publishes code changes (pages, scripts, styles) in a few minutes instead of waiting for the data
+# update (deploy.yml, 30-90 minutes). It takes the site that is live now (gh-pages), swaps in the new
+# code, rebuilds the search-engine pages from the live data and publishes. The data update always
+# publishes the newest code too, so the two never undo each other.
+
+on:
+  push:
+    branches: [claude/sankyas-website-build-f3o5tw, main]
+    paths:
+      - index.html
+      - manifest.webmanifest
+      - sw.js
+      - "css/**"
+      - "js/**"
+      - "assets/**"
+      - scripts/build_seo.mjs
+      - scripts/site_config.mjs
+      - .github/workflows/site.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: site-code
+  cancel-in-progress: true   # a newer push carries all the code of the one it replaces
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Publish the new code over the live site
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          RAZORPAY_KEY_ID: ${{ vars.RAZORPAY_KEY_ID }}
+          PRO_FREE_DURING_BETA: ${{ vars.PRO_FREE_DURING_BETA }}
+          BUSINESS_NAME: ${{ vars.BUSINESS_NAME }}
+          BUSINESS_EMAIL: ${{ vars.BUSINESS_EMAIL }}
+          BUSINESS_INSTAGRAM: ${{ vars.BUSINESS_INSTAGRAM }}
+          BUSINESS_PHONE: ${{ vars.BUSINESS_PHONE }}
+          BUSINESS_ADDRESS: ${{ vars.BUSINESS_ADDRESS }}
+        run: |
+          REPO_URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for try in 1 2 3; do
+            rm -rf _site
+            if ! git clone -q --depth 1 --branch gh-pages "$REPO_URL" _site; then
+              echo "No published site yet: the data update (deploy.yml) publishes the first one."; exit 0
+            fi
+            # the new code, over the live data
+            rm -rf _site/css _site/js _site/assets
+            cp -r index.html manifest.webmanifest sw.js css js assets _site/
+            node scripts/site_config.mjs _site/js/config.js
+            # search-engine pages (company/<SYMBOL>/) carry the page shell, so rebuild them from the live data
+            ORIGIN="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/"
+            [ -s _site/CNAME ] && ORIGIN="https://$(tr -d '[:space:]' < _site/CNAME)/"
+            rm -rf data && ln -s _site/data data
+            node scripts/build_seo.mjs _site "$ORIGIN"
+            rm data
+            cd _site
+            git add -A
+            if git diff --cached --quiet; then echo "The live site already has this code."; exit 0; fi
+            git -c user.name="github-actions[bot]" -c user.email="41898299+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "Deploy site code from ${GITHUB_SHA::7}"
+            if git push -q origin gh-pages; then echo "Published code ${GITHUB_SHA::7} to $ORIGIN"; exit 0; fi
+            cd ..
+            echo "The live site changed while publishing (a data update finished); trying again."
+            sleep 15
+          done
+          echo "Could not publish; the next data update (deploy.yml) publishes this code."
+          exit 1

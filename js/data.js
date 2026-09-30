@@ -531,10 +531,32 @@
     return r.json();
   }
 
+  // compact index (scripts/build_index.mjs): rows of [symbol, name|0, sector #, industry #, [values by keys], extras]
+  function expandIndex(v2) {
+    const keys = v2.keys, dict = v2.dict;
+    return { updated: v2.updated, liveOnly: v2.liveOnly, source: v2.source, scored: v2.scored, companies: v2.c.map(r => {
+      const m = {}, vals = r[4] || [];
+      for (let i = 0; i < vals.length; i++) if (vals[i] != null) m[keys[i]] = vals[i];
+      return Object.assign({ s: r[0], n: r[1] || r[0], sec: dict[r[2]], ind: dict[r[3]], m }, r[5] || {});
+    }) };
+  }
+  // started as soon as this file loads, alongside the rest of the page (index.html also preloads it)
+  // (plain fetch, so the browser can hand over the preloaded copy; GitHub Pages lets it be reused for 10 minutes)
+  let indexP = null;
+  function loadIndex() {
+    if (!indexP) {
+      indexP = fetch('data/yahoo/metrics.v2.json').then(r => { if (!r.ok) throw new Error('metrics.v2 ' + r.status); return r.json(); })
+        .then(expandIndex).catch(() => getJSON('data/yahoo/metrics.json'));
+      indexP.catch(() => {});
+    }
+    return indexP;
+  }
+  // in a browser only: scripts/build_index.mjs also runs this file, in Node, without a network
+  if (typeof document !== 'undefined' && typeof fetch === 'function') loadIndex();
   async function init() {
     try {
-      const idx = await getJSON('data/yahoo/metrics.json');
-      liveMeta = { updated: idx.updated, liveOnly: idx.liveOnly !== false, source: idx.source };
+      const idx = await loadIndex();
+      liveMeta = { updated: idx.updated, liveOnly: idx.liveOnly !== false, source: idx.source, scored: !!idx.scored };
       if (liveMeta.liveOnly) { base.length = 0; Object.keys(bySymbol).forEach(k => delete bySymbol[k]); }
       (idx.companies || []).forEach(e => {
         const c = {
@@ -655,11 +677,14 @@
     const groups = {};
     const add = (k, v) => { (groups[k] = groups[k] || []).push(v); };
     _all.forEach(c => { add('i:' + c.industry, c.metrics.pe); add('s:' + c.sector, c.metrics.pe); });
+    const med = {};   // one median per group, not one sort per company
+    const medOf = k => (k in med ? med[k] : (med[k] = median(groups[k])));
     _all.forEach(c => {
       const ind = groups['i:' + c.industry];
-      c.metrics.industryPE = median(c.industry && ind && ind.length >= 5 ? ind : groups['s:' + c.sector]);
+      c.metrics.industryPE = medOf(c.industry && ind && ind.length >= 5 ? 'i:' + c.industry : 's:' + c.sector);
     });
-    if (window.Insights && window.Insights.computeScores) window.Insights.computeScores(_all);
+    // the index normally carries the scores already (scored); otherwise work them out here
+    if (window.Insights && window.Insights.computeScores) window.Insights.computeScores(_all, !!(liveMeta && liveMeta.scored));
     return _all;
   }
 

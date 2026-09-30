@@ -10,6 +10,10 @@
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
   <meta name="theme-color" content="#103d48">
   <link rel="manifest" href="manifest.webmanifest">
+  <!-- start the company list and the sign-in servers while the scripts load -->
+  <link rel="preload" href="data/yahoo/metrics.v2.json" as="fetch" crossorigin="anonymous">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="preconnect" href="https://kbtbhzjotoxayrkivwzx.supabase.co" crossorigin>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Sankhyas">
