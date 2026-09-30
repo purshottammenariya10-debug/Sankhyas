@@ -354,7 +354,7 @@
       market: pageMarket, results: pageResults, compare: pageCompare, watchlist: pageWatchlist,
       login: pageLogin, register: pageRegister, premium: pagePremium, about: pageAbout, ai: pageAI,
       deals: pageDeals, orders: pageOrders, ratings: pageRatings, report: pageReport,
-      ipo: pageIPO, admin: pageAdmin, calendar: pageCalendar, themes: pageThemes, theme: pageThemes, studio: pageStudio,
+      ipo: pageIPO, admin: pageAdmin, calendar: pageCalendar, dividends: pageDividends, themes: pageThemes, theme: pageThemes, studio: pageStudio,
       account: pageAccount, portfolio: pagePortfolio, alerts: pageAlerts, forgot: pageForgot, reset: pageReset, terms: pageLegal, privacy: pageLegal, refunds: pageLegal, contact: pageLegal
     };
     const fn = routes[p0] || pageNotFound;
@@ -1073,7 +1073,9 @@
   const PRICE_IND = [
     ['dma20', '20 DMA', '#2f9bd6', false], ['dma50', '50 DMA', '#e8a33d', true], ['dma200', '200 DMA', '#8a8fa0', true],
     ['bb', 'Bollinger Bands (20, 2)', '#9b6ad6', false], ['hl52', '52-week high / low', '#6b7280', true],
-    ['volume', 'Volume', '#6056ff', true], ['rsi', 'RSI (14)', '#6056ff', false],
+    ['ema9', 'EMA 9', '#65a30d', false], ['ema21', 'EMA 21', '#b45309', false], ['vwap', 'VWAP (20)', '#475569', false],
+    ['st', 'Supertrend (10, 3)', '#11813d', false],
+    ['volume', 'Volume', '#6056ff', true], ['rsi', 'RSI (14)', '#6056ff', false], ['macd', 'MACD (12, 26, 9)', '#2962ff', false],
     ['events', 'Events: results, dividends, ratings, orders, deals', '#0e9f8f', true]
   ];
 
@@ -1084,15 +1086,7 @@
     res: ['R', 'Results', '#6056ff'], div: ['D', 'Dividend', '#0e9f8f'], split: ['S', 'Bonus / split', '#d9861a'],
     rating: ['★', 'Credit rating', '#8a5cd6'], order: ['O', 'Order win', '#2f7ed8'], deal: ['B', 'Bulk / block deal', '#6b7280']
   };
-  const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
-  const isoDay = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-  function parseDay(t) {   // "14-Oct-2026", "Jun 30, 2026", "June 30, 2026", "March 31, 2026"
-    let m = String(t).match(/(\d{1,2})[-\s]([A-Za-z]{3})[A-Za-z]*[-\s,]+(\d{4})/);
-    if (m && MONTHS[m[2].toLowerCase()] != null) return isoDay(new Date(+m[3], MONTHS[m[2].toLowerCase()], +m[1]));
-    m = String(t).match(/([A-Za-z]{3})[A-Za-z]*\.?\s+(\d{1,2}),?\s+(\d{4})/);
-    if (m && MONTHS[m[1].toLowerCase()] != null) return isoDay(new Date(+m[3], MONTHS[m[1].toLowerCase()], +m[2]));
-    return null;
-  }
+  const isoDay = d => Insights.isoDay(d), parseDay = t => Insights.parseDay(t);
   function chartEvents(c) {
     const out = [], A = (c._filings && c._filings.announcements) || [];
     const day = a => String(a.d).slice(0, 10);
@@ -1112,24 +1106,9 @@
         sub: q ? 'Revenue ₹' + num(q.sales, 0) + ' Cr' + (sg != null ? ' (' + (sg >= 0 ? '+' : '') + num(sg, 0) + '% YoY)' : '') + ', profit ₹' + num(np, 0) + ' Cr' + (pg != null ? ' (' + (pg >= 0 ? '+' : '') + num(pg, 0) + '% YoY)' : '') : '',
         url: a.u, tone: pg == null ? '' : pg >= 5 ? 'pos' : pg <= -5 ? 'neg' : '' });
     });
-    // dividends: on the record date (the stock trades without the dividend from then), with the amount declared before it
-    const declared = A.filter(a => /dividend of (?:rs\.?|₹|inr)\s*[\d.]+/i.test(a.t)).map(a => ({ d: day(a), amt: +a.t.match(/dividend of (?:rs\.?|₹|inr)\s*([\d.]+)/i)[1], kind: (a.t.match(/(interim|final|special)\s+dividend/i) || [])[1] || '' }));
-    const seenR = {};
-    A.forEach(a => {
-      const m = String(a.t).match(/record date for the purpose of (.+?) is (\d{1,2}-[A-Za-z]{3}-\d{4})/i);
-      if (!m) return;
-      const rd = parseDay(m[2]), what = m[1];
-      if (!rd || seenR[rd + what]) return;
-      seenR[rd + what] = 1;
-      if (/bonus|split|sub-?division/i.test(what)) {
-        out.push({ d: rd, k: 'split', label: /bonus/i.test(what) && /split|sub/i.test(what) ? 'Bonus and split' : /bonus/i.test(what) ? 'Bonus issue' : 'Stock split', sub: 'Record date ' + m[2], url: a.u, tone: '' });
-      } else if (/dividend/i.test(what)) {
-        const dec = declared.filter(x => x.d <= rd && x.d >= isoDay(new Date(Date.parse(rd) - 75 * 864e5)));
-        const amt = dec.reduce((t, x) => t + x.amt, 0);
-        out.push({ d: rd, k: 'div', label: (dec.length ? dec.map(x => x.kind ? x.kind[0].toUpperCase() + x.kind.slice(1).toLowerCase() : '').filter(Boolean).join(' + ') + ' dividend' : 'Dividend').trim(),
-          sub: (amt ? '₹' + num(amt, amt % 1 ? 2 : 0) + ' per share · ' : '') + 'record date ' + m[2], url: a.u, tone: '' });
-      }
-    });
+    // dividends and bonus/split, on the record date (shared with the dividends calendar)
+    Insights.corporateActions(c._filings).forEach(x => out.push({ d: x.rd, k: x.k, label: x.label,
+      sub: x.k === 'div' ? (x.amt ? '₹' + num(x.amt, x.amt % 1 ? 2 : 0) + ' per share · ' : '') + 'record date ' + x.rdText : 'Record date ' + x.rdText, url: x.url, tone: '' }));
     // credit rating actions (not plain reaffirmations)
     const cr = c._filings && Insights.creditRatings(c._filings);
     (cr ? cr.list : []).filter(a => a.act && a.act !== 'reaffirm').forEach(a => {
@@ -1283,6 +1262,42 @@
       }
       return out;
     }
+    function ema(vals, n) {
+      const out = new Array(vals.length).fill(null), k = 2 / (n + 1);
+      let e = null, seed = 0;
+      for (let i = 0; i < vals.length; i++) {
+        if (e == null) { seed += vals[i]; if (i === n - 1) { e = seed / n; out[i] = e; } continue; }
+        e = vals[i] * k + e * (1 - k); out[i] = e;
+      }
+      return out;
+    }
+    // volume-weighted average of the typical price over the last n bars
+    function vwapN(bs, n) {
+      const out = [];
+      let pv = 0, v = 0;
+      bs.forEach((b, i) => {
+        pv += (b.h + b.l + b.c) / 3 * (b.v || 0); v += b.v || 0;
+        if (i >= n) { const o = bs[i - n]; pv -= (o.h + o.l + o.c) / 3 * (o.v || 0); v -= o.v || 0; }
+        out.push(i >= n - 1 && v > 0 ? pv / v : null);
+      });
+      return out;
+    }
+    // Supertrend (ATR n, multiplier m): line under price in an uptrend, over it in a downtrend
+    function supertrend(bs, n, m) {
+      const up = [], dn = [], dir = [];
+      let atr = null, fu = null, fl = null, trend = 1, trSum = 0;
+      bs.forEach((b, i) => {
+        const pc = i ? bs[i - 1].c : b.c, tr = Math.max(b.h - b.l, Math.abs(b.h - pc), Math.abs(b.l - pc));
+        if (i < n) { trSum += tr; if (i === n - 1) atr = trSum / n; } else atr = (atr * (n - 1) + tr) / n;
+        if (atr == null) { up.push(null); dn.push(null); dir.push(0); return; }
+        const hl2 = (b.h + b.l) / 2, bu = hl2 + m * atr, bl = hl2 - m * atr;
+        fu = fu == null || bu < fu || pc > fu ? bu : fu;
+        fl = fl == null || bl > fl || pc < fl ? bl : fl;
+        if (trend === 1 && b.c < fl) trend = -1; else if (trend === -1 && b.c > fu) trend = 1;
+        dir.push(trend); up.push(trend === 1 ? fl : null); dn.push(trend === -1 ? fu : null);
+      });
+      return { up, dn, dir };
+    }
     function stdBands(closes, n, k) {
       const mid = sma(closes, n), up = [], lo = [];
       for (let i = 0; i < closes.length; i++) {
@@ -1369,7 +1384,7 @@
         '<details class="ind-menu" data-menu="ind"><summary class="btn btn-small">Indicators' + (on ? ' <span class="ind-count">' + on + '</span>' : '') + '</summary><div class="ind-pop">' +
         PRICE_IND.map(([k, l, col]) => '<label><input type="checkbox" data-ind="' + k + '"' + (toggles[k] ? ' checked' : '') + '><span class="swatch" style="background:' + col + '"></span>' + esc(l) + '</label>').join('') +
         '</div></details>' +
-        (window.LightweightCharts ? cmpMenu() + drawMenu() : '') +
+        (window.LightweightCharts ? cmpMenu() + drawMenu() + '<button type="button" class="btn btn-small" id="chart-shot" title="Image of this chart to share">📷 Share</button>' : '') +
         '<button type="button" class="btn btn-small' + (logScale ? ' active' : '') + '" id="chart-log" title="Logarithmic price scale">Log</button>' +
         '<button type="button" class="btn btn-small' + (measuring ? ' active' : '') + '" id="chart-measure" title="Drag across the chart to measure the change">📏 Measure</button>' +
         '<button type="button" class="btn btn-small chart-full-btn" id="chart-full" title="Full screen">' + (section.classList.contains('chart-full') ? '✕ Close' : '⛶ Full screen') + '</button>';
@@ -1421,6 +1436,50 @@
       const lg = $('#chart-log'); if (lg) lg.onclick = () => { logScale = !logScale; draw(); };
       const ms = $('#chart-measure'); if (ms) ms.onclick = () => { measuring = !measuring; measure = null; tool = null; pending = null; draw(); };
       const fs = $('#chart-full'); if (fs) fs.onclick = () => toggleFull();
+      const sh = $('#chart-shot'); if (sh) sh.onclick = shareChart;
+    }
+    /* Snapshot: the chart as drawn (indicators, compare lines, drawings) with a header and the site name,
+       shared through the phone's share sheet (WhatsApp, X, ...) or downloaded */
+    function shareChart() {
+      if (!tvChart) return;
+      const shot = tvChart.takeScreenshot(), dpr = Math.max(1, shot.width / Math.max(1, $('#tv-chart').clientWidth));
+      const W = shot.width, headH = Math.round(78 * dpr), footH = Math.round(34 * dpr), pad = Math.round(16 * dpr);
+      const cv = document.createElement('canvas');
+      cv.width = W; cv.height = shot.height + headH + footH;
+      const g = cv.getContext('2d'), bg = cssVar('--bg') || '#fff', ink = cssVar('--ink') || '#1c1d22', ink3 = cssVar('--ink-3') || '#7a8090';
+      g.fillStyle = bg; g.fillRect(0, 0, cv.width, cv.height);
+      const m = c.metrics, chg = m.changePct;
+      g.textBaseline = 'alphabetic';
+      g.fillStyle = ink; g.font = '700 ' + Math.round(18 * dpr) + 'px Inter, system-ui, sans-serif';
+      g.fillText(c.name + ' (' + c.symbol + ')', pad, Math.round(30 * dpr));
+      g.font = '600 ' + Math.round(15 * dpr) + 'px Inter, system-ui, sans-serif';
+      const priceTxt = '₹ ' + num(m.price, 2);
+      g.fillText(priceTxt, pad, Math.round(54 * dpr));
+      const pw = g.measureText(priceTxt).width;
+      if (chg != null) { g.fillStyle = chg >= 0 ? (cssVar('--green') || '#11813d') : (cssVar('--red') || '#d33a3a'); g.fillText((chg >= 0 ? '▲ ' : '▼ ') + num(Math.abs(chg), 2) + '%', pad + pw + 10 * dpr, Math.round(54 * dpr)); }
+      // what is on the chart
+      const on = PRICE_IND.filter(([k]) => toggles[k] && ['volume', 'hl52', 'events'].indexOf(k) < 0).map(x => x[1].replace(/ \(.*\)$/, ''));
+      const cmpNames = compare.filter(x => cmpData[x.key]).map(x => 'vs ' + x.name);
+      g.fillStyle = ink3; g.font = Math.round(12 * dpr) + 'px Inter, system-ui, sans-serif';
+      g.fillText([style === 'ha' ? 'Heikin Ashi' : style === 'line' ? 'Line' : 'Candles', new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })].concat(on, cmpNames).join(' · ').slice(0, 140), pad, Math.round(72 * dpr));
+      g.drawImage(shot, 0, headH);
+      g.fillStyle = cssVar('--primary') || '#6056ff'; g.font = '700 ' + Math.round(13 * dpr) + 'px Inter, system-ui, sans-serif';
+      g.fillText('sankhyas.com', pad, headH + shot.height + Math.round(22 * dpr));
+      g.fillStyle = ink3; g.font = Math.round(11 * dpr) + 'px Inter, system-ui, sans-serif';
+      const note = 'Chart by TradingView Lightweight Charts · not investment advice';
+      g.fillText(note, W - pad - g.measureText(note).width, headH + shot.height + Math.round(22 * dpr));
+      cv.toBlob(blob => {
+        if (!blob) return;
+        const name = 'sankhyas-' + c.symbol.toLowerCase() + '-chart.png', file = new File([blob], name, { type: 'image/png' });
+        const url = URL.createObjectURL(blob);
+        const link = location.origin + location.pathname + '#/company/' + encodeURIComponent(c.symbol);
+        const canShare = navigator.canShare && navigator.canShare({ files: [file] });
+        const bd = modal('Share this chart', '<img src="' + url + '" alt="Chart of ' + esc(c.name) + '" style="width:100%;border:1px solid var(--line);border-radius:8px">', [
+          { label: 'Download', onClick: () => { const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); return false; } }
+        ].concat(canShare ? [{ label: 'Share…', primary: true, onClick: () => { navigator.share({ files: [file], title: c.name + ' chart', text: c.name + ' on Sankhyas: ' + link }).catch(() => {}); return false; } }] : []));
+        const obs = new MutationObserver(() => { if (!bd.isConnected) { URL.revokeObjectURL(url); obs.disconnect(); } });
+        obs.observe(document.body, { childList: true });
+      }, 'image/png');
     }
     function toggleFull(force) {
       const open = force != null ? force : !section.classList.contains('chart-full');
@@ -1569,6 +1628,19 @@
       // readout above the chart: the bar under the pointer, or the latest
       const rsiAll = toggles.rsi ? rsi(closes, 14) : null;
       const rsiVals = rsiAll ? rsiAll.slice(off) : null;
+      // more indicators (on the real OHLC, not Heikin Ashi), cut to the bars shown
+      if (toggles.ema9) ind.ema9 = ema(closes, 9).slice(off);
+      if (toggles.ema21) ind.ema21 = ema(closes, 21).slice(off);
+      if (toggles.vwap) ind.vwap = vwapN(allBars, 20).slice(off);
+      const st = toggles.st ? (x => ({ up: x.up.slice(off), dn: x.dn.slice(off), dir: x.dir.slice(off) }))(supertrend(allBars, 10, 3)) : null;
+      let macd = null;
+      if (toggles.macd) {
+        const e12 = ema(closes, 12), e26 = ema(closes, 26);
+        const line = closes.map((x, i) => (e12[i] != null && e26[i] != null ? e12[i] - e26[i] : null));
+        const first = line.findIndex(x => x != null), sig = new Array(line.length).fill(null);
+        if (first >= 0) ema(line.slice(first), 9).forEach((x, j) => { sig[first + j] = x; });
+        macd = { line: line.slice(off), sig: sig.slice(off), hist: line.map((x, i) => (x != null && sig[i] != null ? x - sig[i] : null)).slice(off) };
+      }
       const unitName = unit === 'day' ? 'Daily' : unit === 'week' ? 'Weekly' : 'Monthly';
       // compare lines: each one's close on every bar (the last close on or before the bar's last day)
       const cmpVals = {};
@@ -1597,6 +1669,9 @@
         PRICE_IND.slice(0, 3).forEach(([k, l, color]) => { if (toggles[k] && ind[k][i] != null) extra.push('<span style="color:' + color + '">' + l + ' ' + num(ind[k][i], 2) + '</span>'); });
         if (bb && bb.up[i] != null) extra.push('<span style="color:#9b6ad6">BB ' + num(bb.lo[i], 1) + ' – ' + num(bb.up[i], 1) + '</span>');
         if (rsiVals && rsiVals[i] != null) extra.push('<span>RSI ' + num(rsiVals[i], 1) + '</span>');
+        [['ema9', 'EMA 9'], ['ema21', 'EMA 21'], ['vwap', 'VWAP']].forEach(([k, l]) => { if (ind[k] && ind[k][i] != null) extra.push('<span style="color:' + PRICE_IND.find(x => x[0] === k)[2] + '">' + l + ' ' + num(ind[k][i], 2) + '</span>'); });
+        if (st && st.dir[i]) extra.push('<span class="' + (st.dir[i] > 0 ? 'up' : 'down') + '">Supertrend ' + (st.dir[i] > 0 ? '▲ ' + num(st.up[i], 2) : '▼ ' + num(st.dn[i], 2)) + '</span>');
+        if (macd && macd.line[i] != null) extra.push('<span>MACD ' + num(macd.line[i], 2) + (macd.sig[i] != null ? ' / ' + num(macd.sig[i], 2) : '') + '</span>');
         // compare: change since the left edge of the chart, for the stock and each line
         const cmpOn = compare.filter(x => cmpVals[x.key]);
         if (cmpOn.length) {
@@ -1687,9 +1762,10 @@
       legend();
       function legend() {
       const note = style === 'line' ? '' : unitName + (style === 'ha' ? ' Heikin Ashi candles' : ' candles') + (c.ohlc ? '' : ' from closing prices');
-      $('#chart-legend').innerHTML = PRICE_IND.filter(([k]) => toggles[k] && k !== 'rsi' && k !== 'hl52' && k !== 'events').map(([k, l, color]) =>
+      $('#chart-legend').innerHTML = PRICE_IND.filter(([k]) => toggles[k] && k !== 'rsi' && k !== 'hl52' && k !== 'events' && k !== 'macd').map(([k, l, color]) =>
         '<label><span class="swatch" style="background:' + (k === 'volume' ? alpha(up, 0.5) : color) + '"></span>' + esc(l) + '</label>').join('') +
         (toggles.rsi ? '<label><span class="swatch" style="background:#6056ff"></span>RSI (14) below: over 70 often read as overbought, under 30 as oversold</label>' : '') +
+        (toggles.macd && tv ? '<label><span class="swatch" style="background:#2962ff"></span>MACD (12, 26, 9) below: line, signal (orange) and histogram</label>' : '') +
         compare.filter(x => cmpVals[x.key]).map(x => '<label><span class="swatch" style="background:' + x.col + '"></span>' + esc(x.name) + ' <button type="button" class="btn-link" data-cmp-remove="' + esc(x.key) + '" aria-label="Remove ' + esc(x.name) + '">✕</button></label>').join('') +
         (compare.some(x => cmpVals[x.key]) ? '<span class="sub">Compare lines start from ' + esc(c.symbol) + '\'s price at the left edge; the readout shows each one\'s change from there.</span>' : '') +
         (compare.some(x => !cmpData[x.key]) ? '<span class="sub">' + compare.filter(x => !cmpData[x.key]).map(x => esc(x.name)).join(', ') + ': prices not available yet.</span>' : '') +
@@ -1737,6 +1813,8 @@
         };
         PRICE_IND.slice(0, 3).forEach(([k, , color]) => { if (toggles[k]) line(ind[k], color); });
         if (bb) { line(bb.up, '#9b6ad6'); line(bb.lo, '#9b6ad6'); line(bb.mid, 'rgba(155,106,214,.7)', { lineStyle: LW.LineStyle.Dashed }); }
+        [['ema9', 1.5], ['ema21', 1.5], ['vwap', 1.5]].forEach(([k, w]) => { if (ind[k]) line(ind[k], PRICE_IND.find(x => x[0] === k)[2], { lineWidth: w, lineStyle: k === 'vwap' ? LW.LineStyle.Dashed : LW.LineStyle.Solid }); });
+        if (st) { line(st.up, up, { lineWidth: 2 }); line(st.dn, down, { lineWidth: 2 }); }
         lines.forEach(l => main.createPriceLine({ price: l.v, color: l.color, lineWidth: 1, lineStyle: LW.LineStyle.Dashed, axisLabelVisible: true, title: /high/.test(l.label) ? '52W H' : '52W L' }));
         // event flags under the candles (up to three a candle)
         const marks = [];
@@ -1753,6 +1831,17 @@
           rs.createPriceLine({ price: 30, color: alpha(up, 0.7), lineWidth: 1, lineStyle: LW.LineStyle.Dashed, axisLabelVisible: false, title: '30' });
           const panes = tvc.panes();
           if (panes[1]) panes[1].setHeight(110);
+        }
+        if (macd) {
+          const pi = rsiVals ? 2 : 1;
+          const h = tvc.addSeries(LW.HistogramSeries, { priceLineVisible: false, lastValueVisible: false, priceFormat: { type: 'price', precision: 2, minMove: 0.01 } }, pi);
+          h.setData(bars.map((b, i) => (macd.hist[i] == null ? { time: t(b) } : { time: t(b), value: macd.hist[i], color: alpha(macd.hist[i] >= 0 ? up : down, 0.55) })));
+          const ml = tvc.addSeries(LW.LineSeries, { color: '#2962ff', lineWidth: 1.5, priceLineVisible: false, crosshairMarkerVisible: false }, pi);
+          ml.setData(bars.map((b, i) => (macd.line[i] == null ? { time: t(b) } : { time: t(b), value: macd.line[i] })));
+          const sl = tvc.addSeries(LW.LineSeries, { color: '#f59e0b', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, pi);
+          sl.setData(bars.map((b, i) => (macd.sig[i] == null ? { time: t(b) } : { time: t(b), value: macd.sig[i] })));
+          const panes = tvc.panes();
+          if (panes[pi]) panes[pi].setHeight(110);
         }
         // measure: a line from the first to the second date picked
         let measureLine = null;
@@ -2998,6 +3087,7 @@
       ['#/ratings', 'Credit rating changes', 'Upgrades, downgrades and outlook changes from CRISIL, ICRA, CARE, India Ratings and others.'],
       ['#/ipo', 'IPOs', 'Open and upcoming IPOs with live subscription, recent listings vs issue price, and rights issues.'],
       ['#/calendar', 'Results calendar', 'Upcoming board meetings for results, dividends and fund raising.'],
+      ['#/dividends', 'Dividends, bonus and splits', 'Record dates coming up, with the amount a share and the yield at today\'s price.'],
       ['#/themes', 'Theme tracker', 'Defence, railways, EV, PSU banks, renewables and more, with leaders and laggards.'],
       ['#/studio', 'Social post studio', 'Turn results, red flags, listings and themes into Instagram and X posts.']
     ];
@@ -3404,6 +3494,52 @@
         if (g) adminChart.push(new Chart(g, { type: 'bar', data: { labels, datasets: [{ label: 'Sign-ups', data: by(s.signups_daily, 'n'), backgroundColor: primary, borderRadius: 4, maxBarThickness: 18 }] }, options: opts }));
       }
     }).catch(e => { if (token === navToken) app.innerHTML = shell('<p class="down">' + esc(e.message || 'Could not load the dashboard.') + '</p>'); });
+  }
+
+  /* ---------- Dividends, bonus issues and splits by record date (data/yahoo/corporate_actions.json) ---------- */
+  function pageDividends(parts, params) {
+    setTitle('Upcoming dividends, bonus and splits');
+    app.innerHTML = LOADING;
+    const token = navToken;
+    fetch('data/yahoo/corporate_actions.json').then(r => (r.ok ? r.json() : { items: [] })).catch(() => ({ items: [] })).then(d => {
+      if (token !== navToken) return;
+      const today = isoDay(new Date()), items = d.items || [];
+      let tab = params.tab === 'recent' ? 'recent' : 'upcoming', kind = params.kind === 'div' || params.kind === 'split' ? params.kind : 'all', mine = false, q = '';
+      const when = rd => {
+        const days = Math.round((Date.parse(rd + 'T00:00:00') - Date.parse(today + 'T00:00:00')) / 864e5);
+        return days === 0 ? 'today' : days === 1 ? 'tomorrow' : days > 0 ? 'in ' + days + ' days' : -days === 1 ? 'yesterday' : -days + ' days ago';
+      };
+      const shell = () => {
+        app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Dividends, bonus &amp; splits</h1>' +
+          '<p>Record dates announced to the exchanges. To get a dividend or bonus you must own the shares on the record date, so buy by the trading day before it (T+1 settlement); the price usually drops by the dividend on that day.</p></div></div>' +
+          '<div class="dv-bar"><div class="seg">' + [['upcoming', 'Upcoming'], ['recent', 'Last 45 days']].map(([k, l]) => '<button type="button" class="' + (tab === k ? 'active' : '') + '" data-tab="' + k + '">' + l + '</button>').join('') + '</div>' +
+          '<div class="seg">' + [['all', 'All'], ['div', 'Dividends'], ['split', 'Bonus & splits']].map(([k, l]) => '<button type="button" class="' + (kind === k ? 'active' : '') + '" data-kind="' + k + '">' + l + '</button>').join('') + '</div>' +
+          (user() ? '<label class="check-line"><input type="checkbox" id="dv-mine"' + (mine ? ' checked' : '') + '> My watchlists only</label>' : '') +
+          '<input type="search" id="dv-find" placeholder="Find a company" value="' + esc(q) + '" autocomplete="off"></div>' +
+          '<div id="dv-list"></div><p class="table-note">From the companies\' record-date filings on NSE; the amount is the dividend declared in the 75 days before the record date ("to be announced" until the board declares it). Yield is on today\'s price. Not investment advice.' +
+          (d.updated ? ' Updated ' + new Date(d.updated).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + '.' : '') + '</p></div></div>';
+        $$('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; shell(); });
+        $$('[data-kind]').forEach(b => b.onclick = () => { kind = b.dataset.kind; shell(); });
+        const mc = $('#dv-mine'); if (mc) mc.onchange = () => { mine = mc.checked; list(); };
+        $('#dv-find').addEventListener('input', e => { q = e.target.value.trim().toLowerCase(); list(); });
+        list();
+      };
+      const list = () => {
+        const w = watchlist();
+        let rows = items.filter(x => (tab === 'upcoming' ? x.rd >= today : x.rd < today) && (kind === 'all' || x.k === kind) && (!mine || w.indexOf(x.s) >= 0) &&
+          (!q || (x.s + ' ' + x.n).toLowerCase().indexOf(q) >= 0));
+        if (tab === 'recent') rows = rows.slice().sort((a, b) => (a.rd < b.rd ? 1 : a.rd > b.rd ? -1 : b.mc - a.mc));
+        const co = x => (Data.exists(x.s) ? '<a href="#/company/' + encodeURIComponent(x.s) + '">' + esc(x.n) + '</a>' : esc(x.n)) + ' <span class="sub">' + esc(x.s) + '</span>';
+        $('#dv-list').innerHTML = rows.length ? '<div class="table-wrap"><table class="data dv-table"><thead><tr><th class="l">Record date</th><th class="l">Company</th><th class="l">Action</th><th>Per share</th><th>Yield</th><th></th></tr></thead><tbody>' +
+          rows.slice(0, 400).map(x => '<tr><td class="l"><b>' + new Date(x.rd + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + '</b><div class="sub">' + when(x.rd) + '</div></td>' +
+            '<td class="l">' + co(x) + '</td><td class="l"><span class="ev-dot ev-' + x.k + '">' + (x.k === 'div' ? 'D' : 'S') + '</span> ' + esc(x.label) + '</td>' +
+            '<td>' + (x.k === 'div' ? (x.amt ? '₹ ' + num(x.amt, x.amt % 1 ? 2 : 0) : '<span class="sub">to be announced</span>') : '-') + '</td>' +
+            '<td>' + (x.y != null ? num(x.y, 2) + '%' : '-') + '</td><td><a target="_blank" rel="noopener noreferrer" href="' + esc(x.u) + '">filing ↗</a></td></tr>').join('') +
+          '</tbody></table></div>' + (rows.length > 400 ? '<p class="sub">Showing the first 400 of ' + rows.length + '.</p>' : '')
+          : '<p class="muted">' + (mine ? 'None of your watchlist companies has a record date in this period.' : tab === 'upcoming' ? 'No record dates announced yet for the coming weeks.' : 'No record dates in the last 45 days.') + '</p>';
+      };
+      shell();
+    });
   }
 
   /* ---------- Results calendar ---------- */
@@ -4406,7 +4542,7 @@
 
   /* ---------- the installable app: tab bar, "More" sheet, install button, offline service worker ---------- */
   const MORE_LINKS = [
-    ['Research', [['#/ai', '✦', 'Ask AI'], ['#/feed', '📰', 'Feed'], ['#/results/latest', '📊', 'Latest results'], ['#/calendar', '📅', 'Results calendar'], ['#/ipo', '🔔', 'IPOs'],
+    ['Research', [['#/ai', '✦', 'Ask AI'], ['#/feed', '📰', 'Feed'], ['#/results/latest', '📊', 'Latest results'], ['#/calendar', '📅', 'Results calendar'], ['#/dividends', '💰', 'Dividends'], ['#/ipo', '🔔', 'IPOs'],
       ['#/ratings', '🏦', 'Credit ratings'], ['#/deals', '💼', 'Smart money'], ['#/orders', '📦', 'Order wins']]],
     ['Tools', [['#/market', '🏭', 'Sectors'], ['#/themes', '🧭', 'Themes'], ['#/compare', '⚖️', 'Compare'], ['#/portfolio', '🩻', 'Portfolio X-ray'], ['#/alerts', '⏰', 'Alerts'],
       ['#/studio', '🖼️', 'Post studio'], ['#/tools', '🧰', 'All tools']]],

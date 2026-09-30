@@ -109,6 +109,40 @@
     return { list: A, latest, head, up: changes.filter(a => a.act === 'upgrade' || a.act === 'outlook_up').length,
       down: changes.filter(a => a.act === 'downgrade' || a.act === 'outlook_down').length, changes, rank: ratingRank(head.rt) };
   }
+  /* ---------- dividends, bonus issues and splits, from the exchange filings ---------- */
+  const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+  const isoDay = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  function parseDay(t) {   // "14-Oct-2026", "Jun 30, 2026", "June 30, 2026", "March 31, 2026"
+    let m = String(t).match(/(\d{1,2})[-\s]([A-Za-z]{3})[A-Za-z]*[-\s,]+(\d{4})/);
+    if (m && MONTHS[m[2].toLowerCase()] != null) return isoDay(new Date(+m[3], MONTHS[m[2].toLowerCase()], +m[1]));
+    m = String(t).match(/([A-Za-z]{3})[A-Za-z]*\.?\s+(\d{1,2}),?\s+(\d{4})/);
+    if (m && MONTHS[m[1].toLowerCase()] != null) return isoDay(new Date(+m[3], MONTHS[m[1].toLowerCase()], +m[2]));
+    return null;
+  }
+  /** Record dates announced in the filings: [{ k: 'div' | 'split', rd: 'YYYY-MM-DD', rdText, label, amt (₹ a share, dividends), url, on (filed) }].
+      The stock trades without the dividend or bonus from the record date (T+1 settlement). */
+  function corporateActions(filings) {
+    const A = (filings && filings.announcements) || [], out = [], seen = {};
+    const day = a => String(a.d).slice(0, 10);
+    const declared = A.filter(a => /dividend of (?:rs\.?|₹|inr)\s*[\d.]+/i.test(a.t)).map(a => ({ d: day(a), amt: +a.t.match(/dividend of (?:rs\.?|₹|inr)\s*([\d.]+)/i)[1], kind: (a.t.match(/(interim|final|special)\s+dividend/i) || [])[1] || '' }));
+    A.forEach(a => {
+      const m = String(a.t).match(/record date for the purpose of (.+?) is (\d{1,2}-[A-Za-z]{3}-\d{4})/i);
+      if (!m) return;
+      const rd = parseDay(m[2]), what = m[1];
+      if (!rd || seen[rd + what]) return;
+      seen[rd + what] = 1;
+      if (/bonus|split|sub-?division/i.test(what)) {
+        out.push({ k: 'split', rd, rdText: m[2], label: /bonus/i.test(what) && /split|sub/i.test(what) ? 'Bonus and split' : /bonus/i.test(what) ? 'Bonus issue' : 'Stock split', amt: null, url: a.u, on: day(a) });
+      } else if (/dividend/i.test(what)) {
+        const dec = declared.filter(x => x.d <= rd && x.d >= isoDay(new Date(Date.parse(rd) - 75 * 864e5)));
+        const amt = dec.reduce((t, x) => t + x.amt, 0);
+        out.push({ k: 'div', rd, rdText: m[2], label: (dec.length ? dec.map(x => x.kind ? x.kind[0].toUpperCase() + x.kind.slice(1).toLowerCase() : '').filter(Boolean).join(' + ') + ' dividend' : 'Dividend').trim(),
+          amt: amt || null, url: a.u, on: day(a) });
+      }
+    });
+    return out;
+  }
+
   const ratingText = a => (a.ag ? a.ag + ' ' : '') + a.rt + (a.ol ? ' (' + a.ol + ')' : '');
 
   /* ---------- annual report forensic check (scripts/ar_forensics.py) ---------- */
@@ -589,5 +623,5 @@
     return head + ': ' + (good.length && bad.length ? list(good) + ', but ' + list(bad) : list(good.length ? good : bad)) + '.';
   }
 
-  window.Insights = { creditRatings, annualReportCheck, ratingRank, RATING_ACT, ratingText, quickRead, resultsWhy, computeScores, scoreOf, scoreBand, PILLARS, redFlags, guidance, whatChanged, redFlagsMd, guidanceMd, whatChangedMd, METRIC_LABEL, resultsVerdict, holdingStats, quarterLabel };
+  window.Insights = { corporateActions, parseDay, isoDay, creditRatings, annualReportCheck, ratingRank, RATING_ACT, ratingText, quickRead, resultsWhy, computeScores, scoreOf, scoreBand, PILLARS, redFlags, guidance, whatChanged, redFlagsMd, guidanceMd, whatChangedMd, METRIC_LABEL, resultsVerdict, holdingStats, quarterLabel };
 })();

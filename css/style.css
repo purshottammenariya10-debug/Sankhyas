@@ -984,3 +984,8 @@ body.chart-full-open .tabbar { display: none; }
 .draw-pop .sub { margin: 6px 8px 2px; }
 .ci-tool { background: var(--primary-bg); }
 .chart-legend .btn-link { text-decoration: none; font-size: 12px; margin-left: 2px; }
+
+/* dividends page */
+.dv-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.dv-bar input[type=search] { max-width: 260px; }
+.dv-table td .ev-dot { vertical-align: -3px; }

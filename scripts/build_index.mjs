@@ -27,7 +27,7 @@ const KEYS = Screener.RATIOS.map(r => r.key).concat(['change', 'changePct', 'qtr
 const round = v => (v == null || !Number.isFinite(v) ? null : Number(v.toPrecision(6)));
 
 const index = fs.existsSync(path.join(dir, 'index.json')) ? JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')) : {};
-const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !['index.json', 'metrics.json', 'metrics.v2.json', 'calendar.json', 'activity.json', 'results.json', 'ratings.json', 'ipo.json', 'ipo_leads.json', 'indices.json'].includes(f));
+const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !['index.json', 'metrics.json', 'metrics.v2.json', 'calendar.json', 'activity.json', 'results.json', 'ratings.json', 'ipo.json', 'ipo_leads.json', 'indices.json', 'corporate_actions.json'].includes(f));
 const companies = [];
 let skipped = 0;
 const latestResults = [];
@@ -271,5 +271,31 @@ if (fs.existsSync(filingsDir)) {
   const recentDeals = deals.filter(x => x.d >= since.slice(0, 10)).map(x => Object.assign({}, x, { n: names[x.s] || x.n }));
   fs.writeFileSync(path.join(dir, 'activity.json'), JSON.stringify({ updated: new Date().toISOString(), orders, disclosures, deals: recentDeals }));
   console.log(`activity.json: ${orders.length} order wins (${orders.filter(o => o.amt).length} with value), ${disclosures.length} insider/promoter disclosures, ${recentDeals.length} bulk/block deals`);
+}
+
+// dividends, bonus issues and splits by record date (the Dividends page and search-engine page):
+// the last 45 days and the next 150, with the amount a share and what it yields at today's price
+{
+  const from = new Date(Date.now() - 45 * 864e5).toISOString().slice(0, 10), to = new Date(Date.now() + 150 * 864e5).toISOString().slice(0, 10);
+  const priceOf = {}, mcapOf = {};
+  companies.forEach(c => { priceOf[c.s] = c.m.price; mcapOf[c.s] = c.m.marketCap; });
+  const items = [];
+  if (fs.existsSync(filingsDir)) {
+    for (const f of fs.readdirSync(filingsDir)) {
+      if (!f.endsWith('.json') || f === 'latest.json') continue;
+      let doc;
+      try { doc = JSON.parse(fs.readFileSync(path.join(filingsDir, f), 'utf8')); } catch (e) { continue; }
+      const sym = doc.symbol || f.replace(/\.json$/, '');
+      if (!names[sym]) continue;   // companies the site covers
+      for (const x of Insights.corporateActions(doc)) {
+        if (x.rd < from || x.rd > to) continue;
+        const p = priceOf[sym];
+        items.push({ s: sym, n: names[sym], k: x.k, rd: x.rd, label: x.label, amt: x.amt, y: x.amt && p > 0 ? Math.round(x.amt / p * 10000) / 100 : null, mc: mcapOf[sym] || 0, on: x.on, u: x.url });
+      }
+    }
+  }
+  items.sort((a, b) => (a.rd < b.rd ? -1 : a.rd > b.rd ? 1 : b.mc - a.mc));
+  fs.writeFileSync(path.join(dir, 'corporate_actions.json'), JSON.stringify({ updated: new Date().toISOString(), items }));
+  console.log(`corporate_actions.json: ${items.length} record dates (${items.filter(x => x.k === 'div').length} dividends)`);
 }
 

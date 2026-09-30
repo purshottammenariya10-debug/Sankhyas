@@ -6,6 +6,7 @@
 //   node scripts/build_seo.mjs <site dir> <site origin, e.g. https://sankhyas.com/>
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const site = path.resolve(process.argv[2] || '_site');
@@ -116,7 +117,102 @@ const homeLd = { '@context': 'https://schema.org', '@graph': [
   { '@type': 'WebSite', '@id': origin + '#website', name: 'Sankhyas', alternateName: 'Sankhyas.com', url: origin, publisher: { '@id': origin + '#org' } }] };
 fs.writeFileSync(path.join(site, 'index.html'), shell.replace('<head>', `<head>\n  <script type="application/ld+json">${JSON.stringify(homeLd)}</script>\n  <link rel="canonical" href="${origin}">\n  <meta property="og:type" content="website"><meta property="og:site_name" content="Sankhyas"><meta property="og:title" content="Sankhyas - India's AI-Powered Financial Research Terminal"><meta property="og:description" content="${esc(homeDesc)}"><meta property="og:url" content="${origin}"><meta property="og:image" content="${origin}assets/logo-512.png">`));
 const today = new Date().toISOString().slice(0, 10);
-const urls = [origin].concat(companies.filter(c => c.s && c.n).map(c => urlOf(c.s)));
+// ---------- ready-made screens (screens/<slug>/) and the dividends calendar (dividends/) ----------
+// Pages people search for ("debt free stocks", "upcoming dividends"): today's list, readable without
+// JavaScript, which then boots the full app on the same view (body data-route).
+const sctx = { window: {} };
+vm.createContext(sctx);
+vm.runInContext(fs.readFileSync(path.join(root, 'js/screener.js'), 'utf8'), sctx);
+const Screener = sctx.window.Screener;
+const monthYear = new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+const todayText = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+const everyone = companies.filter(c => c.s && c.n).map(c => ({ symbol: c.s, name: c.n, metrics: c.m || {} }));
+const screenUrl = slug => origin + 'screens/' + slug + '/';
+const fmtKey = (k, v) => {
+  const r = Screener.BY_KEY[k], u = r ? r.unit : '';
+  if (v == null || !isFinite(v)) return '-';
+  return u === 'Rs.Cr.' ? cr(v) : u === '%' ? pct(v, 1) : u === 'Rs.' ? '₹ ' + inr(v, Math.abs(v) < 100 ? 2 : 0) : inr(v, Math.abs(v) < 10 ? 2 : 1);
+};
+const colName = k => (Screener.BY_KEY[k] ? Screener.BY_KEY[k].label : k);
+function staticPage(rel, depth, route, headHtml, bodyHtml) {
+  const html = shellHead
+    .replace('<head>', '<head>\n  <base href="' + '../'.repeat(depth) + '">\n  ' + headHtml)
+    .replace('<body>', `<body data-route="${esc(route)}">`)
+    .replace('<main id="app"></main>', '<main id="app">' + bodyHtml + '</main>');
+  const dir = path.join(site, rel);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'index.html'), html);
+}
+const pageHead = (title, desc, url, ld) => `<title>${esc(title)}</title>
+  <meta name="description" content="${esc(desc)}">
+  <link rel="canonical" href="${esc(url)}">
+  <meta property="og:type" content="website"><meta property="og:site_name" content="Sankhyas">
+  <meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(desc)}">
+  <meta property="og:url" content="${esc(url)}"><meta property="og:image" content="${origin}assets/logo-512.png">
+  <meta name="twitter:card" content="summary">` + (ld ? `\n  <script type="application/ld+json">${JSON.stringify(ld).replace(/</g, '\\u003c')}</script>` : '');
+
+const screenCounts = {};
+const screenPages = [];
+for (const p of Screener.PRESETS) {
+  let res;
+  try { res = Screener.run(p.query, everyone); } catch (e) { continue; }
+  const list = res.results.slice().sort((a, b) => (b.metrics.marketCap || 0) - (a.metrics.marketCap || 0));
+  screenCounts[p.slug] = list.length;
+  const base = ['price', 'marketCap', 'pe', 'roce'];
+  const cols = base.concat(res.used.filter(k => base.indexOf(k) < 0)).slice(0, 7);
+  const url = screenUrl(p.slug);
+  const title = `${p.name}: ${list.length} stocks in India (${monthYear}) | Sankhyas`;
+  const desc = (`${p.desc} ${list.length} NSE and BSE stocks match today` + (list.length ? `, largest first: ${list.slice(0, 4).map(x => x.name.replace(/ (Limited|Ltd\.?)$/i, '')).join(', ')}.` : '.')).slice(0, 300);
+  const ld = { '@context': 'https://schema.org', '@graph': [
+    { '@type': 'ItemList', name: p.name, numberOfItems: list.length, itemListElement: list.slice(0, 10).map((x, i) => ({ '@type': 'ListItem', position: i + 1, name: x.name, url: urlOf(x.symbol) })) },
+    { '@type': 'BreadcrumbList', itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Sankhyas', item: origin },
+      { '@type': 'ListItem', position: 2, name: 'Stock screens', item: origin + 'screens/' },
+      { '@type': 'ListItem', position: 3, name: p.name, item: url }] }] };
+  const related = Screener.PRESETS.filter(x => x.slug !== p.slug && x.cat === p.cat).slice(0, 6);
+  const bodyHtml = `<div class="container page seo-page"><nav class="sub" aria-label="Breadcrumb"><a href="${origin}">Sankhyas</a> › <a href="${origin}screens/">Stock screens</a> › ${esc(p.name)}</nav>
+<h1>${esc(p.name)}: ${list.length} stocks</h1>
+<p>${esc(p.desc)}</p>
+<p class="sub">Screen: <code>${esc(p.query)}</code> · updated ${esc(todayText)} · ${list.length} NSE and BSE companies match, largest first.</p>
+<p><a class="btn btn-primary" href="${origin}#/screens/${esc(p.slug)}">Open this screen: sort, change it, export</a></p>
+<section class="card"><div class="table-wrap"><table class="data"><thead><tr><th class="l">#</th><th class="l">Company</th>${cols.map(k => `<th>${esc(colName(k))}</th>`).join('')}</tr></thead><tbody>` +
+    list.slice(0, 50).map((x, i) => `<tr><td class="l">${i + 1}</td><td class="l"><a href="${esc(urlOf(x.symbol))}">${esc(x.name)}</a></td>${cols.map(k => `<td>${fmtKey(k, x.metrics[k])}</td>`).join('')}</tr>`).join('') +
+    `</tbody></table></div>${list.length > 50 ? `<p class="sub">Showing the 50 largest of ${list.length}. <a href="${origin}#/screens/${esc(p.slug)}">See all ${list.length}</a>.</p>` : ''}</section>` +
+    (related.length ? `<section class="card"><h2>Similar screens</h2><ul class="seo-peers">${related.map(x => `<li><a href="${esc(screenUrl(x.slug))}">${esc(x.name)}</a></li>`).join('')}</ul></section>` : '') +
+    `<p class="table-note">Lists are worked out from each company's latest reported numbers and prices, end of day. For research and education, not investment advice.</p></div>`;
+  staticPage(path.join('screens', p.slug), 2, 'screens/' + p.slug, pageHead(title, desc, url, ld), bodyHtml);
+  screenPages.push(url);
+}
+// all screens
+{
+  const url = origin + 'screens/';
+  const cats = [...new Set(Screener.PRESETS.map(p => p.cat || 'More'))];
+  const bodyHtml = `<div class="container page seo-page"><nav class="sub" aria-label="Breadcrumb"><a href="${origin}">Sankhyas</a> › Stock screens</nav>
+<h1>Stock screens for Indian shares</h1><p>Ready-made lists of NSE and BSE stocks, updated every day: debt-free companies, high dividend yield, compounders, stocks near their 52-week low and more. Open any one to sort it, change the rules or export it.</p>` +
+    cats.map(cat => `<section class="card"><h2>${esc(cat)}</h2><ul class="seo-peers">${Screener.PRESETS.filter(p => (p.cat || 'More') === cat).map(p => `<li><a href="${esc(screenUrl(p.slug))}">${esc(p.name)}</a> <span class="sub">${screenCounts[p.slug] != null ? screenCounts[p.slug] + ' stocks' : ''}</span></li>`).join('')}</ul></section>`).join('') + '</div>';
+  staticPage('screens', 1, 'screens', pageHead(`Stock screens: debt free, high dividend, compounders and more (${monthYear}) | Sankhyas`, 'Ready-made stock screens for NSE and BSE shares, updated daily: debt free companies, high dividend yield, magic formula, coffee can, stocks near 52-week low and more.', url), bodyHtml);
+  screenPages.push(url);
+}
+// dividends calendar
+const dividendsUrl = origin + 'dividends/';
+{
+  const ca = readJSON(path.join(yahoo, 'corporate_actions.json'));
+  const up = ((ca && ca.items) || []).filter(x => x.rd >= today0()).slice(0, 150);
+  const dd = s => new Date(s + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  const title = `Upcoming dividends, bonus issues and stock splits in India (${monthYear}) | Sankhyas`;
+  const desc = `Record dates for dividends, bonus issues and stock splits of NSE and BSE companies, with the amount per share and yield.` + (up.length ? ` Next: ${up.slice(0, 3).map(x => x.n.replace(/ (Limited|Ltd\.?)$/i, '') + ' (' + dd(x.rd) + ')').join(', ')}.` : '');
+  const bodyHtml = `<div class="container page seo-page"><nav class="sub" aria-label="Breadcrumb"><a href="${origin}">Sankhyas</a> › Dividends</nav>
+<h1>Upcoming dividends, bonus &amp; stock splits</h1><p>Record dates announced by NSE and BSE companies. Own the shares on the record date to get the dividend or bonus: buy by the trading day before it (T+1 settlement). Updated ${esc(todayText)}.</p>
+<p><a class="btn btn-primary" href="${origin}#/dividends">Open the full calendar</a></p>` +
+    (up.length ? `<section class="card"><div class="table-wrap"><table class="data"><thead><tr><th class="l">Record date</th><th class="l">Company</th><th class="l">Action</th><th>Per share</th><th>Yield</th></tr></thead><tbody>` +
+      up.map(x => `<tr><td class="l">${dd(x.rd)}</td><td class="l"><a href="${esc(urlOf(x.s))}">${esc(x.n)}</a></td><td class="l">${esc(x.label)}</td><td>${x.k === 'div' ? (x.amt ? '₹ ' + inr(x.amt, x.amt % 1 ? 2 : 0) : 'to be announced') : '-'}</td><td>${x.y != null ? inr(x.y, 2) + '%' : '-'}</td></tr>`).join('') +
+      '</tbody></table></div></section>' : '<p class="muted">No record dates announced for the coming weeks yet.</p>') +
+    `<p class="table-note">From the companies' filings on NSE. Not investment advice.</p></div>`;
+  staticPage('dividends', 1, 'dividends', pageHead(title, desc, dividendsUrl), bodyHtml);
+}
+function today0() { return new Date().toISOString().slice(0, 10); }
+
+const urls = [origin].concat(screenPages, [dividendsUrl], companies.filter(c => c.s && c.n).map(c => urlOf(c.s)));
 // sitemaps hold at most 50,000 URLs each
 fs.writeFileSync(path.join(site, 'sitemap.xml'), '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
   urls.map(u => `<url><loc>${esc(u)}</loc><lastmod>${today}</lastmod><changefreq>daily</changefreq></url>`).join('\n') + '\n</urlset>\n');
