@@ -536,6 +536,7 @@
           refreshDocuments();
           refreshInsights(c);
           refreshSummary(c);
+          if (c._chartRefresh) c._chartRefresh();
         }
         // fill the gaps live: concall history for companies the data job has not reached yet, and
         // summaries other visitors already generated
@@ -549,11 +550,13 @@
         if (token !== navToken || !act) return;
         c._activity = act;
         refreshInsights(c);
+        if (c._chartRefresh) c._chartRefresh();
       });
       Data.loadResults(sym).then(r => {
         if (token !== navToken || !r || !(r.quarters || []).length) return;
         c._res = r;
         refreshInsights(c);
+        if (c._chartRefresh) c._chartRefresh();
         const bq = r.quarters[0].bank && bankQuartersSection(c), old = $('#quarters');
         if (bq && old) { old.outerHTML = bq; bindStatements($('#quarters')); }
       });
@@ -1069,8 +1072,90 @@
   const PRICE_IND = [
     ['dma20', '20 DMA', '#2f9bd6', false], ['dma50', '50 DMA', '#e8a33d', true], ['dma200', '200 DMA', '#8a8fa0', true],
     ['bb', 'Bollinger Bands (20, 2)', '#9b6ad6', false], ['hl52', '52-week high / low', '#6b7280', true],
-    ['volume', 'Volume', '#6056ff', true], ['rsi', 'RSI (14)', '#6056ff', false]
+    ['volume', 'Volume', '#6056ff', true], ['rsi', 'RSI (14)', '#6056ff', false],
+    ['events', 'Events: results, dividends, ratings, orders, deals', '#0e9f8f', true]
   ];
+
+  /* Events for the price chart, from the exchange filings, the results filings and the deals data:
+     results (R), dividends (D), bonus/split (S), credit rating actions (★), order wins (O) and
+     bulk/block deals (B). Each: { d: 'YYYY-MM-DD', k, label, sub, url, tone: 'pos'|'neg'|'' }. */
+  const EV_KIND = {
+    res: ['R', 'Results', '#6056ff'], div: ['D', 'Dividend', '#0e9f8f'], split: ['S', 'Bonus / split', '#d9861a'],
+    rating: ['★', 'Credit rating', '#8a5cd6'], order: ['O', 'Order win', '#2f7ed8'], deal: ['B', 'Bulk / block deal', '#6b7280']
+  };
+  const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+  const isoDay = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  function parseDay(t) {   // "14-Oct-2026", "Jun 30, 2026", "June 30, 2026", "March 31, 2026"
+    let m = String(t).match(/(\d{1,2})[-\s]([A-Za-z]{3})[A-Za-z]*[-\s,]+(\d{4})/);
+    if (m && MONTHS[m[2].toLowerCase()] != null) return isoDay(new Date(+m[3], MONTHS[m[2].toLowerCase()], +m[1]));
+    m = String(t).match(/([A-Za-z]{3})[A-Za-z]*\.?\s+(\d{1,2}),?\s+(\d{4})/);
+    if (m && MONTHS[m[1].toLowerCase()] != null) return isoDay(new Date(+m[3], MONTHS[m[1].toLowerCase()], +m[2]));
+    return null;
+  }
+  function chartEvents(c) {
+    const out = [], A = (c._filings && c._filings.announcements) || [];
+    const day = a => String(a.d).slice(0, 10);
+    // results: one per filing of the financial results, with the growth from the results filings when we have them
+    const quarters = (c._res && c._res.quarters) || [];
+    const seenQ = {};
+    A.forEach(a => {
+      const m = a.k === 'results' && String(a.t).match(/financial results for the (?:period|quarter|half year|year) ended (.+?)\.?$/i);
+      const qe = m && parseDay(m[1]);
+      if (!qe || seenQ[qe]) return;
+      seenQ[qe] = 1;
+      const q = quarters.find(x => x.qe === qe), ya = q && quarters.find(x => x.qe === String(+qe.slice(0, 4) - 1) + qe.slice(4) && x.cons === q.cons);
+      const np = q && (q.np_owners != null ? q.np_owners : q.np), npY = ya && (ya.np_owners != null ? ya.np_owners : ya.np);
+      const g = (x, y) => (x != null && y > 0 ? (x / y - 1) * 100 : null);
+      const sg = q && ya ? g(q.sales, ya.sales) : null, pg = q && ya ? g(np, npY) : null;
+      out.push({ d: day(a), k: 'res', label: Insights.quarterLabel(qe) + ' results',
+        sub: q ? 'Revenue ₹' + num(q.sales, 0) + ' Cr' + (sg != null ? ' (' + (sg >= 0 ? '+' : '') + num(sg, 0) + '% YoY)' : '') + ', profit ₹' + num(np, 0) + ' Cr' + (pg != null ? ' (' + (pg >= 0 ? '+' : '') + num(pg, 0) + '% YoY)' : '') : '',
+        url: a.u, tone: pg == null ? '' : pg >= 5 ? 'pos' : pg <= -5 ? 'neg' : '' });
+    });
+    // dividends: on the record date (the stock trades without the dividend from then), with the amount declared before it
+    const declared = A.filter(a => /dividend of (?:rs\.?|₹|inr)\s*[\d.]+/i.test(a.t)).map(a => ({ d: day(a), amt: +a.t.match(/dividend of (?:rs\.?|₹|inr)\s*([\d.]+)/i)[1], kind: (a.t.match(/(interim|final|special)\s+dividend/i) || [])[1] || '' }));
+    const seenR = {};
+    A.forEach(a => {
+      const m = String(a.t).match(/record date for the purpose of (.+?) is (\d{1,2}-[A-Za-z]{3}-\d{4})/i);
+      if (!m) return;
+      const rd = parseDay(m[2]), what = m[1];
+      if (!rd || seenR[rd + what]) return;
+      seenR[rd + what] = 1;
+      if (/bonus|split|sub-?division/i.test(what)) {
+        out.push({ d: rd, k: 'split', label: /bonus/i.test(what) && /split|sub/i.test(what) ? 'Bonus and split' : /bonus/i.test(what) ? 'Bonus issue' : 'Stock split', sub: 'Record date ' + m[2], url: a.u, tone: '' });
+      } else if (/dividend/i.test(what)) {
+        const dec = declared.filter(x => x.d <= rd && x.d >= isoDay(new Date(Date.parse(rd) - 75 * 864e5)));
+        const amt = dec.reduce((t, x) => t + x.amt, 0);
+        out.push({ d: rd, k: 'div', label: (dec.length ? dec.map(x => x.kind ? x.kind[0].toUpperCase() + x.kind.slice(1).toLowerCase() : '').filter(Boolean).join(' + ') + ' dividend' : 'Dividend').trim(),
+          sub: (amt ? '₹' + num(amt, amt % 1 ? 2 : 0) + ' per share · ' : '') + 'record date ' + m[2], url: a.u, tone: '' });
+      }
+    });
+    // credit rating actions (not plain reaffirmations)
+    const cr = c._filings && Insights.creditRatings(c._filings);
+    (cr ? cr.list : []).filter(a => a.act && a.act !== 'reaffirm').forEach(a => {
+      out.push({ d: day(a), k: 'rating', label: (Insights.RATING_ACT[a.act] || 'Rating') + ': ' + Insights.ratingText(a), sub: [a.from ? 'from ' + a.from : '', a.ins || ''].filter(Boolean).join(' · '),
+        url: a.u, tone: /upgrade|outlook_up|assign/.test(a.act) ? 'pos' : /downgrade|outlook_down|watch|withdraw/.test(a.act) ? 'neg' : '' });
+    });
+    // order wins: from the filings and the 12-month activity list
+    const seenU = {};
+    const orders = A.filter(a => a.k === 'order').map(a => ({ d: day(a), amt: a.amt, u: a.u, desc: '' }))
+      .concat(((c._activity && c._activity.orders) || []).filter(o => o.s === c.symbol).map(o => ({ d: String(o.d).slice(0, 10), amt: o.amt, u: o.u, desc: o.desc || '', cust: o.cust })));
+    orders.forEach(o => {
+      if (seenU[o.u]) { const e = seenU[o.u]; if (!e.sub && o.desc) e.sub = o.desc.slice(0, 120); return; }
+      const e = { d: o.d, k: 'order', label: 'Order win' + (o.amt ? ' ₹' + num(o.amt, o.amt < 10 ? 1 : 0) + ' Cr' : '') + (o.cust ? ' from ' + o.cust : ''), sub: (o.desc || '').slice(0, 120), url: o.u, tone: 'pos' };
+      seenU[o.u] = e;
+      out.push(e);
+    });
+    // bulk / block deals: one event per day, net value
+    const byDay = {};
+    ((c._activity && c._activity.deals) || []).filter(x => x.s === c.symbol).forEach(x => { (byDay[String(x.d).slice(0, 10)] = byDay[String(x.d).slice(0, 10)] || []).push(x); });
+    Object.keys(byDay).forEach(d => {
+      const l = byDay[d], net = l.reduce((t, x) => t + (x.side === 'B' ? x.v : -x.v), 0), gross = l.reduce((t, x) => t + x.v, 0);
+      if (gross < 1) return;   // under ₹1 Cr in total
+      const names = [...new Set(l.map(x => x.c))].slice(0, 2).join(', ');
+      out.push({ d, k: 'deal', label: 'Bulk/block deals: net ' + (net >= 0 ? 'buy' : 'sell') + ' ₹' + num(Math.abs(net), Math.abs(net) < 10 ? 1 : 0) + ' Cr', sub: names + (l.length > 2 ? ' and others' : ''), url: '#/deals', tone: net >= 0 ? 'pos' : 'neg' });
+    });
+    return out.sort((a, b) => (a.d < b.d ? -1 : 1));
+  }
 
   function bindChart(c) {
     let range = '1Yr', type = 'price', chart = null, rsiChart = null;
@@ -1095,6 +1180,13 @@
       return out;
     }
     const dma = { dma20: sma(c.prices, 20), dma50: sma(c.prices, 50), dma200: sma(c.prices, 200) };
+    const dayStr = c.dates.map(isoDay);
+    // session index for a date (the next session when it fell on a holiday)
+    const sessionOf = d => { let lo = 0, hi = dayStr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (dayStr[m] < d) lo = m + 1; else hi = m; } return lo < dayStr.length ? lo : -1; };
+    let events = null;
+    // filings, results and deals arrive after the chart is drawn: redraw the price chart with their events
+    c._chartRefresh = () => { events = null; if (type === 'price' && toggles.events) draw(true); };
+    onLeave(() => { c._chartRefresh = null; });
     const lastFY = c.years.length ? +c.years[c.years.length - 1].slice(-4) : 0;
     const epsAt = d => {
       const fy = d.getMonth() >= 3 ? d.getFullYear() + 1 : d.getFullYear();
@@ -1191,6 +1283,20 @@
           g.fillRect(x0, a.top, Math.max(1, x1 - x0), a.bottom - a.top);
           g.strokeStyle = o.m.up ? '#11813d' : '#d33a3a'; g.lineWidth = 1.5; g.setLineDash([]);
           g.beginPath(); g.moveTo(x.getPixelForValue(o.m.i0), y.getPixelForValue(o.m.p0)); g.lineTo(x.getPixelForValue(o.m.i1), y.getPixelForValue(o.m.p1)); g.stroke();
+        }
+        (o.events || []).forEach(g => {
+          const px = x.getPixelForValue(g.i);
+          if (!(px >= a.left - 2 && px <= a.right + 2)) return;
+          g.list.slice(0, 3).forEach((e, k) => {
+            const cy = a.bottom - 9 - k * 16, K = EV_KIND[e.k];
+            const col = e.k === 'rating' || e.k === 'deal' ? (e.tone === 'pos' ? '#11813d' : e.tone === 'neg' ? '#d33a3a' : K[2]) : e.k === 'res' && e.tone ? (e.tone === 'pos' ? '#11813d' : '#d33a3a') : K[2];
+            g2(px, cy, col, g.list.length > 3 && k === 2 ? '+' : K[0]);
+          });
+        });
+        function g2(px, cy, col, letter) {
+          g.beginPath(); g.arc(px, cy, 7, 0, Math.PI * 2); g.fillStyle = col; g.fill();
+          g.lineWidth = 1.5; g.strokeStyle = o.bg || '#fff'; g.stroke();
+          g.fillStyle = '#fff'; g.font = '700 9px Inter, system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(letter, px, cy + 0.5);
         }
         if (o.last != null) {
           const py = y.getPixelForValue(o.last);
@@ -1361,7 +1467,17 @@
         if (isFinite(hi)) { lines.push({ v: hi, color: up, label: '52W high ' + num(hi, 2) }); lines.push({ v: lo, color: down, label: '52W low ' + num(lo, 2) }); }
       }
       const lastBar = bars[bars.length - 1];
-      common.plugins.sankhyasOverlay = { lines, last: lastBar ? lastBar.c : null, lastColor: lastBar && lastBar.c >= lastBar.o ? up : down, crossColor: ink3, crossTag: cssVar('--ink-2') || '#333', m: measure };
+      // events on the bar (candle) they fall in
+      const evAt = {};
+      if (toggles.events) {
+        if (!events) events = chartEvents(c);
+        const barOf = new Int32Array(n).fill(-1);
+        bars.forEach((b, bi) => { for (let k = b.first; k <= b.last; k++) barOf[k] = bi; });
+        events.forEach(e => { const si = sessionOf(e.d); const bi = si >= 0 ? barOf[si] : -1; if (bi >= 0) (evAt[bi] = evAt[bi] || []).push(e); });
+      }
+      const evGroups = Object.keys(evAt).map(i => ({ i: +i, list: evAt[i] }));
+      common.plugins.sankhyasOverlay = { lines, last: lastBar ? lastBar.c : null, lastColor: lastBar && lastBar.c >= lastBar.o ? up : down, crossColor: ink3, crossTag: cssVar('--ink-2') || '#333', m: measure,
+        events: evGroups, bg: cssVar('--bg') || '#fff' };
 
       // readout above the chart: the bar under the pointer, or the latest
       const rsiAll = toggles.rsi ? rsi(closes, 14) : null;
@@ -1388,20 +1504,30 @@
           m = '<div class="ci-measure ' + (r >= 0 ? 'up' : 'down') + '">📏 ' + c.dates[bars[a].last].toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) + ' ₹' + num(p0, 2) + ' → ' +
             c.dates[bars[z].last].toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) + ' ₹' + num(p1, 2) + ': <b>' + (r >= 0 ? '+' : '') + num(r, 2) + '%</b> (' + (p1 - p0 >= 0 ? '+' : '') + num(p1 - p0, 2) + ') in ' + num(dd, 0) + ' days</div>';
         } else if (measuring) m = '<div class="ci-measure">📏 Drag across the chart to measure the change between two dates.</div>';
+        // events on this bar, or (for a near miss with a finger) the next bar either side
+        const evs = evAt[i] || (hoverI != null && (evAt[i - 1] || evAt[i + 1])) || [];
+        const evHtml = evs.length ? '<div class="ci-events">' + evs.map(e => {
+          const K = EV_KIND[e.k], ext = /^https?:/.test(e.url);
+          return '<div class="ci-ev"><span class="ev-dot ev-' + e.k + (e.tone ? ' ev-' + e.tone : '') + '">' + K[0] + '</span><div><b>' + esc(e.label) + '</b> <span class="sub">' +
+            new Date(e.d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + (e.sub ? ' · ' + esc(e.sub) : '') + '</span>' +
+            (e.url ? ' <a href="' + esc(e.url) + '"' + (ext ? ' target="_blank" rel="noopener noreferrer"' : '') + '>' + (ext ? 'filing ↗' : 'see deals') + '</a>' : '') + '</div></div>';
+        }).join('') + '</div>' : '';
         $('#chart-info').innerHTML = '<div class="ci-row"><span class="ci-date">' + when + '</span>' +
           '<span>O <b>' + num(b.o, 2) + '</b></span><span>H <b>' + num(b.h, 2) + '</b></span><span>L <b>' + num(b.l, 2) + '</b></span><span>C <b>' + num(b.c, 2) + '</b></span>' +
           '<span class="' + cls + '">' + (ch >= 0 ? '+' : '') + num(ch, 2) + ' (' + (ch >= 0 ? '+' : '') + num(chp, 2) + '%)</span>' +
           (b.v ? '<span>Vol <b>' + fmtVol(b.v) + '</b></span>' : '') + '</div>' +
-          (extra.length ? '<div class="ci-row ci-ind">' + extra.join('') + '</div>' : '') + m;
+          (extra.length ? '<div class="ci-row ci-ind">' + extra.join('') + '</div>' : '') + m + evHtml;
       }
-      let hoverI = null;
+      let hoverI = null, lastPointer = 'mouse';
       common.onHover = (e, els, ch) => {
         if (!ch.chartArea) return;
+        // a tap on a phone is followed by a "left the chart" event: keep what was tapped on screen
+        if (e.type === 'mouseout' && lastPointer !== 'mouse') return;
         const i = e.x >= ch.chartArea.left && e.x <= ch.chartArea.right ? Math.round(ch.scales.x.getValueForPixel(e.x)) : null;
         if (i !== hoverI) { hoverI = i; info(i == null || i < 0 || i >= bars.length ? bars.length - 1 : i); }
       };
       chart = new Chart($('#price-chart'), { type: 'bar', data: { labels, datasets: ds }, options: common, plugins: [overlay] });
-      $('#price-chart').onmouseleave = () => { hoverI = null; info(bars.length - 1); };
+      $('#price-chart').onpointerleave = ev => { if (ev.pointerType === 'mouse') { hoverI = null; info(bars.length - 1); } };
       info(bars.length - 1);
 
       // measure: drag (or with Measure on, touch-drag) from one date to another
@@ -1409,6 +1535,7 @@
       let dragging = false;
       const idxAt = ev => { const r = cv.getBoundingClientRect(); const i = Math.round(chart.scales.x.getValueForPixel(ev.clientX - r.left)); return Math.max(0, Math.min(bars.length - 1, i)); };
       cv.onpointerdown = ev => {
+        lastPointer = ev.pointerType || 'mouse';
         if (!measuring && !ev.shiftKey) return;
         dragging = true; cv.setPointerCapture(ev.pointerId);
         const i = idxAt(ev);
@@ -1447,9 +1574,11 @@
       }
 
       const note = style === 'line' ? '' : unitName + (style === 'ha' ? ' Heikin Ashi candles' : ' candles') + (c.ohlc ? '' : ' from closing prices');
-      $('#chart-legend').innerHTML = PRICE_IND.filter(([k]) => toggles[k] && k !== 'rsi' && k !== 'hl52').map(([k, l, color]) =>
+      $('#chart-legend').innerHTML = PRICE_IND.filter(([k]) => toggles[k] && k !== 'rsi' && k !== 'hl52' && k !== 'events').map(([k, l, color]) =>
         '<label><span class="swatch" style="background:' + (k === 'volume' ? alpha(up, 0.5) : color) + '"></span>' + esc(l) + '</label>').join('') +
         (toggles.rsi ? '<label><span class="swatch" style="background:#6056ff"></span>RSI (14) below: over 70 often read as overbought, under 30 as oversold</label>' : '') +
+        (toggles.events ? '<span class="ev-key">' + Object.keys(EV_KIND).map(k => '<span><span class="ev-dot ev-' + k + '">' + EV_KIND[k][0] + '</span>' + EV_KIND[k][1] + '</span>').join('') +
+          (evGroups.length ? '' : '<span class="sub">No events in this period yet.</span>') + '</span>' : '') +
         (note ? '<span class="sub">' + note + '. Hover or drag across the chart to read values' + (measuring ? '' : '; Shift-drag or 📏 Measure to measure a move') + '.</span>' : '');
     }
     $$('#chart-range button').forEach(b => b.onclick = () => { range = b.dataset.range; measure = null; $$('#chart-range button').forEach(x => x.classList.toggle('active', x === b)); draw(); });
