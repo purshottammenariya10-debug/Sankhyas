@@ -241,7 +241,7 @@
       },
       async log() {
         if (!client || !state.user) return [];
-        const { data } = await client.from('alert_log').select('message, channels, sent_at').order('sent_at', { ascending: false }).limit(30);
+        const { data } = await client.from('alert_log').select('message, channels, sent_at, delivered, note').order('sent_at', { ascending: false }).limit(30);
         return data || [];
       },
       async telegramLink() {

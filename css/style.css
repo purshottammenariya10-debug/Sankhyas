@@ -965,3 +965,7 @@ body.chart-full-open .tabbar { display: none; }
 .ios-steps { padding-left: 20px; margin: 8px 0; line-height: 1.55; }
 .ios-steps li { margin-bottom: 8px; }
 #ios-url { flex: 1; min-width: 0; }
+.al-st { font-size: 12.5px; margin-top: 3px; }
+.al-st.ok { color: var(--green); }
+.al-st.bad { color: var(--red); }
+.check-line.is-off { opacity: .55; cursor: not-allowed; }

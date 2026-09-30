@@ -3809,10 +3809,15 @@
       '<label id="al-co-wrap">Company<div class="nav-search"><input type="search" id="al-co" placeholder="Search company" autocomplete="off"></div></label>' +
       '<label id="al-price-wrap" hidden>Price (₹)<input type="number" id="al-price" min="0" step="any"></label>' +
       '<label id="al-screen-wrap" hidden>Screen<select id="al-screen">' + (screens.length ? screens.map((x, i) => '<option value="' + i + '">' + esc(x.name) + '</option>').join('') : '<option value="">No saved screens yet</option>') + '</select></label>' +
-      '<div class="al-ch">Send by ' + CHANNELS.map(c => '<label class="check-line"><input type="checkbox" name="al-ch" value="' + c[0] + '"' + (c[0] === 'email' || (c[0] === 'telegram' && tgOn) ? ' checked' : '') + '> ' + c[1] + '</label>').join(' ') + '</div>' +
+      // a channel can be chosen once it can actually deliver: WhatsApp when switched on, Telegram once connected
+      '<div class="al-ch">Send by ' + CHANNELS.map(c => {
+        const off = (c[0] === 'whatsapp' && !cfg.whatsappAlerts) || (c[0] === 'telegram' && !tgOn);
+        return '<label class="check-line' + (off ? ' is-off' : '') + '"' + (off ? ' title="' + (c[0] === 'whatsapp' ? 'WhatsApp alerts are coming soon' : 'Connect Telegram above first') + '"' : '') + '><input type="checkbox" name="al-ch" value="' + c[0] + '"' +
+          (off ? ' disabled' : c[0] === 'email' || (c[0] === 'telegram' && tgOn) ? ' checked' : '') + '> ' + c[1] + (c[0] === 'whatsapp' && !cfg.whatsappAlerts ? ' <span class="sub">(soon)</span>' : '') + '</label>';
+      }).join(' ') + '</div>' +
       '<button class="btn btn-primary" type="submit">Create alert</button></form><div id="al-msg"></div>' +
       '<h3>Your alerts</h3><div id="al-list" class="muted">Loading…</div>' +
-      '<h3>Recently sent</h3><div id="al-log" class="muted">Loading…</div>' +
+      '<h3>Recent alerts</h3><div id="al-log" class="muted">Loading…</div>' +
       '<p class="table-note">Alerts are checked after every data refresh (about every 2 hours during market days). Screen alerts tell you about companies that newly match. Not investment advice.</p>'
     );
     const msg = (id, html) => { const el = $(id); if (el) el.innerHTML = html; };
@@ -3885,7 +3890,12 @@
     Account.alerts.log().then(list => {
       const el = $('#al-log');
       if (!el) return;
-      el.innerHTML = list.length ? '<ul class="act-list">' + list.map(x => '<li><span class="sub">' + new Date(x.sent_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + '</span> ' + esc(x.message) + '</li>').join('') + '</ul>' : 'Nothing sent yet.';
+      const CH = { email: 'email', telegram: 'Telegram', whatsapp: 'WhatsApp' };
+      // delivered: channels it went out on ([] = none could take it; missing = sent before this was recorded)
+      const status = x => !Array.isArray(x.delivered) ? '' : x.delivered.length
+        ? '<div class="al-st ok">✓ Sent by ' + x.delivered.map(c => CH[c] || c).join(' and ') + (x.note ? ' · ' + esc(x.note) : '') + '</div>'
+        : '<div class="al-st bad">⚠ Not delivered: ' + esc(x.note || 'no channel to send on') + '. We will try again for 3 days; add email or Telegram above to receive it.</div>';
+      el.innerHTML = list.length ? '<ul class="act-list">' + list.map(x => '<li><span class="sub">' + new Date(x.sent_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + '</span> ' + esc(x.message) + status(x) + '</li>').join('') + '</ul>' : 'Nothing yet.';
     });
   }
 

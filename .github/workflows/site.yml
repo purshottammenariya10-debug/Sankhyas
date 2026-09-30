@@ -53,6 +53,8 @@ jobs:
           SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
           RAZORPAY_KEY_ID: ${{ vars.RAZORPAY_KEY_ID }}
           PRO_FREE_DURING_BETA: ${{ vars.PRO_FREE_DURING_BETA }}
+          TELEGRAM_BOT: ${{ vars.TELEGRAM_BOT }}
+          WHATSAPP_ALERTS: ${{ vars.WHATSAPP_ALERTS }}
           BUSINESS_NAME: ${{ vars.BUSINESS_NAME }}
           BUSINESS_EMAIL: ${{ vars.BUSINESS_EMAIL }}
           BUSINESS_INSTAGRAM: ${{ vars.BUSINESS_INSTAGRAM }}

@@ -145,33 +145,73 @@ Deno.serve(async (req) => {
   }
 
   // ---- record once, then deliver grouped per user ----
-  const byUser: Record<string, { text: string; channels: Set<string> }[]> = {};
-  const priceDone: number[] = [];
+  type Msg = { id: number; rule: Rule; text: string; channels: Set<string> };
+  const byUser: Record<string, Msg[]> = {};
   for (const { rule, ev } of out) {
-    const { data, error } = await db.from('alert_log').insert({ alert_id: rule.id, user_id: rule.user_id, event_key: ev.key.slice(0, 500), message: ev.text.slice(0, 1000), channels: rule.channels }).select('id');
-    if (error || !data?.length) continue;   // already sent
-    (byUser[rule.user_id] = byUser[rule.user_id] || []).push({ text: ev.text, channels: new Set(rule.channels) });
-    if (rule.kind.startsWith('price_')) priceDone.push(rule.id);
+    const key = ev.key.slice(0, 500);
+    const { data, error } = await db.from('alert_log').insert({ alert_id: rule.id, user_id: rule.user_id, event_key: key, message: ev.text.slice(0, 1000), channels: rule.channels }).select('id');
+    let id = data?.length ? data[0].id : null;
+    if (!id) {
+      // already recorded: send again only if no channel could take it before (up to 3 days back)
+      const { data: old } = await db.from('alert_log').select('id, delivered, sent_at').eq('alert_id', rule.id).eq('event_key', key).maybeSingle();
+      if (!old || !Array.isArray(old.delivered) || old.delivered.length || Date.now() - Date.parse(old.sent_at) > 3 * 864e5) continue;
+      id = old.id;
+    }
+    (byUser[rule.user_id] = byUser[rule.user_id] || []).push({ id, rule, text: ev.text, channels: new Set(rule.channels) });
   }
-  if (priceDone.length) await db.from('alerts').update({ active: false }).in('id', priceDone);   // price alerts fire once
   for (const k in stateWrites) await db.from('dispatch_state').upsert({ key: k, value: stateWrites[k], updated_at: new Date().toISOString() });
 
+  // which channels this server can send on (keys set), and for each user which they can receive on
+  const can = { email: !!env('RESEND_API_KEY'), telegram: !!env('TELEGRAM_BOT_TOKEN'), whatsapp: !!(env('WHATSAPP_TOKEN') && env('WHATSAPP_PHONE_ID')) };
   const users = Object.keys(byUser);
-  let sent = 0;
+  let sent = 0, undelivered = 0;
+  const priceDone: number[] = [];
   if (users.length) {
     const { data: profs } = await db.from('profiles').select('id, email, full_name, email_alerts, telegram_chat_id, whatsapp_number, whatsapp_opt_in').in('id', users);
     for (const p of profs || []) {
       const msgs = byUser[p.id];
-      const pick = (ch: string) => msgs.filter(m => m.channels.has(ch)).map(m => m.text);
-      const email = pick('email'), tg = pick('telegram'), wa = pick('whatsapp');
-      try {
-        if (email.length && p.email_alerts !== false && p.email && env('RESEND_API_KEY')) { await sendEmail(p.email, email); sent++; }
-        if (tg.length && p.telegram_chat_id && env('TELEGRAM_BOT_TOKEN')) { await sendTelegram(p.telegram_chat_id, tg); sent++; }
-        if (wa.length && p.whatsapp_opt_in && p.whatsapp_number && env('WHATSAPP_TOKEN')) { for (const t of wa.slice(0, 5)) await sendWhatsApp(p.whatsapp_number, t); sent++; }
-      } catch (e) { console.error('delivery failed for', p.id, (e as Error).message); }
+      const ready: Record<string, boolean> = {
+        email: can.email && !!p.email && p.email_alerts !== false,
+        telegram: can.telegram && !!p.telegram_chat_id,
+        whatsapp: can.whatsapp && !!p.whatsapp_opt_in && !!p.whatsapp_number,
+      };
+      // each alert goes on the channels it asked for that work; when none of them does, it falls back to
+      // email, then Telegram, so an alert is never silently lost
+      const why: Record<number, string[]> = {}, route: Record<number, string[]> = {};
+      for (const m of msgs) {
+        const asked = [...m.channels], ok = asked.filter(c => ready[c]);
+        why[m.id] = asked.filter(c => !ready[c]).map(c => c === 'whatsapp' ? (can.whatsapp ? 'WhatsApp number not saved' : 'WhatsApp sending is not switched on yet')
+          : c === 'telegram' ? (can.telegram ? 'Telegram not connected' : 'Telegram is not switched on yet') : (can.email ? 'email alerts are off' : 'email sending is not switched on yet'));
+        route[m.id] = ok.length ? ok : ready.email ? ['email'] : ready.telegram ? ['telegram'] : [];
+      }
+      const done: Record<number, string[]> = {};
+      const pick = (ch: string) => msgs.filter(m => route[m.id].includes(ch));
+      for (const ch of ['email', 'telegram', 'whatsapp']) {
+        const list = pick(ch);
+        if (!list.length) continue;
+        try {
+          if (ch === 'email') await sendEmail(p.email, list.map(m => m.text));
+          else if (ch === 'telegram') await sendTelegram(p.telegram_chat_id, list.map(m => m.text));
+          else for (const m of list.slice(0, 5)) await sendWhatsApp(p.whatsapp_number, m.text);
+          list.forEach(m => (done[m.id] = (done[m.id] || []).concat(ch)));
+          sent++;
+        } catch (e) {
+          console.error('delivery failed for', p.id, ch, (e as Error).message);
+          list.forEach(m => why[m.id].push(ch + ' failed, will not retry'));
+        }
+      }
+      for (const m of msgs) {
+        const d = done[m.id] || [];
+        const note = d.length ? (why[m.id].length ? why[m.id].join('; ') + ' (sent by ' + d.join(' and ') + ' instead)' : '') : (why[m.id].join('; ') || 'no channel to send on');
+        await db.from('alert_log').update({ delivered: d, note: note || null }).eq('id', m.id);
+        if (d.length && m.rule.kind.startsWith('price_')) priceDone.push(m.rule.id);
+        if (!d.length) undelivered++;
+      }
     }
   }
-  return json({ rules: rules.length, events: out.length, users: users.length, deliveries: sent });
+  // a price alert switches off once it has reached the user; an undelivered one stays on
+  if (priceDone.length) await db.from('alerts').update({ active: false }).in('id', priceDone);
+  return json({ rules: rules.length, events: out.length, users: users.length, deliveries: sent, undelivered, channels: can });
 });
 
 const escHtml = (s: string) => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
