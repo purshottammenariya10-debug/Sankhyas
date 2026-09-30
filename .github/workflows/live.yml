@@ -30,7 +30,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: scripts
+          sparse-checkout: |
+            scripts
+            js
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -73,6 +75,8 @@ jobs:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           DISPATCH_SECRET: ${{ secrets.DISPATCH_SECRET }}
         run: |
+          # the accounts server: the repository variable, else the one in js/config.js (as the site uses)
+          [ -n "$SUPABASE_URL" ] || SUPABASE_URL=$(node -e 'global.window = {}; require("./js/config.js"); process.stdout.write((window.SANKHYAS_CONFIG || {}).supabaseUrl || "")')
           if [ -z "$SUPABASE_URL" ]; then echo "Accounts are off; no alerts to send."; exit 0; fi
           sleep 60   # let GitHub Pages serve the new prices
           curl -sS -m 140 -X POST "${SUPABASE_URL%/}/functions/v1/dispatch-alerts" -H "Content-Type: application/json" \
