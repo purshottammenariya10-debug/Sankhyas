@@ -607,7 +607,8 @@
       former: pick(/\bformerly known as ([A-Z][A-Za-z0-9 .&'()-]+?)(?:\s+and\s+changed|\.|,)/)
     };
     // sentences that only restate those facts move out of the description
-    const sentences = text.split(/(?<=\.)\s+(?=[A-Z])/).filter(x => !/^(?:The company|It) (?:was (?:formerly known|founded|incorporated|established)|is (?:based|headquartered)|operates as a subsidiary)/i.test(x));
+    const sentences = text.replace(/\.\s+(?=[A-Z])/g, '.\u0001').split('\u0001')   // (no look-behind: iPhones before iOS 16.4 cannot load a script that uses one)
+      .filter(x => !/^(?:The company|It) (?:was (?:formerly known|founded|incorporated|established)|is (?:based|headquartered)|operates as a subsidiary)/i.test(x));
     // long "It offers A, a ...; B, a ...; C, a ..." product lists become "It offers A, B, C and 12 more"
     const shorten = x => {
       const parts = x.split(/;\s+(?:and\s+)?/);
@@ -4154,13 +4155,33 @@
   ];
   let installEvt = null;
   const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-  const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
+  // iPads report themselves as Macs; a touch screen tells them apart
+  const isIOS = () => (/iphone|ipad|ipod/i.test(navigator.userAgent) || (/macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1)) && !window.MSStream;
+  // links opened inside WhatsApp, Instagram, Facebook, Telegram, Gmail... cannot be added to the home screen
+  const inAppBrowser = () => /FBAN|FBAV|Instagram|WhatsApp|Line\/|Telegram|GSA\/|LinkedInApp|Twitter/i.test(navigator.userAgent);
+  const SHARE_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-3px"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>';
+  // iPhone and iPad: Apple does not let sites show an install prompt, so show the steps
+  function iosInstallSteps() {
+    const url = location.origin + location.pathname;
+    const body = inAppBrowser()
+      ? '<p>This page is open inside another app (WhatsApp, Instagram and others), which cannot add apps to your home screen.</p>' +
+        '<ol class="ios-steps"><li>Tap <b>⋯</b> or the share button in this app and choose <b>Open in Safari</b> (or copy the link below and paste it into Safari).</li>' +
+        '<li>In Safari, tap ' + SHARE_ICON + ' <b>Share</b>, then <b>Add to Home Screen</b>.</li></ol>' +
+        '<div class="flex" style="margin-top:12px"><input type="text" readonly id="ios-url" value="' + esc(url) + '"><button class="btn" type="button" id="ios-copy">Copy link</button></div>'
+      : '<ol class="ios-steps"><li>Tap ' + SHARE_ICON + ' <b>Share</b>: at the bottom of Safari on iPhone (top right on iPad; in Chrome it is at the top right).</li>' +
+        '<li>Scroll down and tap <b>Add to Home Screen</b>. If you do not see it, tap <b>Edit Actions</b> and add it.</li>' +
+        '<li>Tap <b>Add</b>. Sankhyas appears on your home screen and opens full screen, like an app.</li></ol>' +
+        '<p class="sub">Needs iOS 16.4 or later in Chrome and other browsers; Safari works on any recent iPhone.</p>';
+    const bd = modal('Install Sankhyas on your ' + (/ipad|macintosh/i.test(navigator.userAgent) ? 'iPad' : 'iPhone'), body, [{ label: 'Got it', primary: true }]);
+    const cp = $('#ios-copy', bd);
+    if (cp) cp.onclick = () => { const i = $('#ios-url', bd); i.select(); try { navigator.clipboard.writeText(i.value); } catch (e) { document.execCommand('copy'); } cp.textContent = 'Copied'; };
+  }
   function installApp() {
     if (installEvt) {
       installEvt.prompt();
       installEvt.userChoice.finally(() => { installEvt = null; syncInstall(); });
     } else if (isIOS()) {
-      alert('To install Sankhyas: tap the Share button in Safari, then "Add to Home Screen".');
+      iosInstallSteps();
     } else {
       alert('Open your browser menu and choose "Install app" or "Add to Home screen".');
     }

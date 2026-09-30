@@ -38,6 +38,14 @@ jobs:
         with:
           node-version: 20
 
+      # iPhones before iOS 16.4 refuse to run a whole script that contains a regex look-behind
+      - name: Check the code still runs on older iPhones
+        run: |
+          if grep -nE '\(\?<[=!]' js/*.js; then
+            echo "::error::A regex look-behind ((?<= or (?<!) stops the site loading on iPhones before iOS 16.4. Rewrite it without one."
+            exit 1
+          fi
+
       - name: Publish the new code over the live site
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
