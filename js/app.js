@@ -390,9 +390,9 @@
       '<div class="container page">' +
       '<a class="ai-cta" href="#/ai"><span class="ai-spark">✦</span><span><b>Ask Sankhyas AI</b><span class="sub"> &middot; "Which IT companies have the best margins?" &middot; "Explain HDFC Bank\'s latest quarter"</span></span><span class="ai-cta-go">Ask AI →</span></a>' +
       '<div class="grid grid-3">' +
-      '<div class="card feature"><h3><span class="feature-icon">⌕</span>Stock screener</h3><p class="muted">Run queries on 10 years of financial data. Filter stocks by 60+ ratios, or just describe what you want in plain English and let AI write the query.</p><a class="btn btn-primary" href="#/screen/new">Create a stock screen</a></div>' +
-      '<div class="card feature"><h3><span class="feature-icon">▤</span>Company financials</h3><p class="muted">Quarterly results, profit &amp; loss, balance sheet, cash flows, ratios and shareholding in one page.</p><a class="btn" href="#/company/TCS">See an example</a></div>' +
-      '<div class="card feature"><h3><span class="feature-icon">★</span>Watchlist &amp; feed</h3><p class="muted">Follow companies to get their latest results and announcements in your feed.</p><a class="btn" href="#/feed">Open feed</a></div>' +
+      '<div class="card feature"><h3><span class="feature-icon" data-icon="⌕" aria-hidden="true"></span>Stock screener</h3><p class="muted">Run queries on 10 years of financial data. Filter stocks by 60+ ratios, or just describe what you want in plain English and let AI write the query.</p><a class="btn btn-primary" href="#/screen/new">Create a stock screen</a></div>' +
+      '<div class="card feature"><h3><span class="feature-icon" data-icon="▤" aria-hidden="true"></span>Company financials</h3><p class="muted">Quarterly results, profit &amp; loss, balance sheet, cash flows, ratios and shareholding in one page.</p><a class="btn" href="#/company/TCS">See an example</a></div>' +
+      '<div class="card feature"><h3><span class="feature-icon" data-icon="★" aria-hidden="true"></span>Watchlist &amp; feed</h3><p class="muted">Follow companies to get their latest results and announcements in your feed.</p><a class="btn" href="#/feed">Open feed</a></div>' +
       '</div>' +
       '<div class="grid grid-3">' +
       '<div class="card"><h3>Top gainers</h3>' + mini(gainers) + '</div>' +

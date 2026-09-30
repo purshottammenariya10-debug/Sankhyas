@@ -10,6 +10,7 @@ on:
     branches: [claude/sankyas-website-build-f3o5tw, main]
     paths:
       - index.html
+      - favicon.ico
       - manifest.webmanifest
       - sw.js
       - "css/**"
@@ -58,7 +59,7 @@ jobs:
             fi
             # the new code, over the live data
             rm -rf _site/css _site/js _site/assets
-            cp -r index.html manifest.webmanifest sw.js css js assets _site/
+            cp -r index.html favicon.ico manifest.webmanifest sw.js css js assets _site/
             node scripts/site_config.mjs _site/js/config.js
             # search-engine pages (company/<SYMBOL>/) carry the page shell, so rebuild them from the live data
             ORIGIN="https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/"

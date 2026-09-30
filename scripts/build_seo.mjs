@@ -109,7 +109,12 @@ for (const c of companies) {
 
 // home page tags, sitemap and robots
 const homeDesc = "Sankhyas: India's AI-powered financial research platform. Financials, ratios, concall AI summaries, red flags, screens and alerts for every NSE and BSE company.";
-fs.writeFileSync(path.join(site, 'index.html'), shell.replace('<head>', `<head>\n  <link rel="canonical" href="${origin}">\n  <meta property="og:type" content="website"><meta property="og:site_name" content="Sankhyas"><meta property="og:title" content="Sankhyas - India's AI-Powered Financial Research Terminal"><meta property="og:description" content="${esc(homeDesc)}"><meta property="og:url" content="${origin}"><meta property="og:image" content="${origin}assets/logo-512.png">`));
+// home page: who runs the site and its logo, so search engines can show the brand (Organization + WebSite)
+const homeLd = { '@context': 'https://schema.org', '@graph': [
+  { '@type': 'Organization', '@id': origin + '#org', name: 'Sankhyas', url: origin, logo: { '@type': 'ImageObject', url: origin + 'assets/logo-512.png', width: 512, height: 512 },
+    email: 'connect@sankhyas.com', sameAs: ['https://www.instagram.com/sankhyas.co/'] },
+  { '@type': 'WebSite', '@id': origin + '#website', name: 'Sankhyas', alternateName: 'Sankhyas.com', url: origin, publisher: { '@id': origin + '#org' } }] };
+fs.writeFileSync(path.join(site, 'index.html'), shell.replace('<head>', `<head>\n  <script type="application/ld+json">${JSON.stringify(homeLd)}</script>\n  <link rel="canonical" href="${origin}">\n  <meta property="og:type" content="website"><meta property="og:site_name" content="Sankhyas"><meta property="og:title" content="Sankhyas - India's AI-Powered Financial Research Terminal"><meta property="og:description" content="${esc(homeDesc)}"><meta property="og:url" content="${origin}"><meta property="og:image" content="${origin}assets/logo-512.png">`));
 const today = new Date().toISOString().slice(0, 10);
 const urls = [origin].concat(companies.filter(c => c.s && c.n).map(c => urlOf(c.s)));
 // sitemaps hold at most 50,000 URLs each

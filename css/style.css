@@ -150,6 +150,7 @@ label { font-size: 14px; font-weight: 500; display: block; margin-bottom: 6px; }
 .grid-4 { grid-template-columns: repeat(4, 1fr); }
 .feature h3 { display: flex; align-items: center; gap: 10px; }
 .feature-icon { width: 36px; height: 36px; border-radius: 8px; background: var(--primary-bg); color: var(--primary); display: grid; place-items: center; }
+.feature-icon::before { content: attr(data-icon); }
 .stat-mini { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line-2); font-size: 14px; }
 .stat-mini:last-child { border-bottom: 0; }
 

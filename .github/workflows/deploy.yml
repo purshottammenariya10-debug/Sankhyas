@@ -126,12 +126,12 @@ jobs:
           # publish the newest site code, even when it was pushed while this run was fetching data
           # (site.yml publishes code at once; this keeps a data update from putting older code back)
           if git fetch -q --depth=1 origin "$GITHUB_REF_NAME"; then
-            git checkout FETCH_HEAD -- index.html manifest.webmanifest sw.js css js assets scripts/build_seo.mjs scripts/site_config.mjs || true
+            git checkout FETCH_HEAD -- index.html favicon.ico manifest.webmanifest sw.js css js assets scripts/build_seo.mjs scripts/site_config.mjs || true
             git rev-parse FETCH_HEAD > .site_code_sha
             echo "Site code from $(git rev-parse --short FETCH_HEAD)"
           fi
           mkdir -p _site
-          cp -r index.html manifest.webmanifest sw.js css js assets _site/
+          cp -r index.html favicon.ico manifest.webmanifest sw.js css js assets _site/
           mkdir -p _site/data
           [ -d data/yahoo ] && cp -r data/yahoo _site/data/ || true
           [ -d data/filings ] && cp -r data/filings _site/data/ || true
