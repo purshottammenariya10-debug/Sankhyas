@@ -973,3 +973,14 @@ body.chart-full-open .tabbar { display: none; }
 /* TradingView Lightweight Charts price chart (fills the chart box; zoom and scroll inside it) */
 .tv-chart { position: absolute; inset: 0; touch-action: none; }
 .chart-box:has(.tv-chart:not([style*="none"])) { overflow: hidden; }
+
+/* chart Compare and Draw menus */
+.cmp-pop { min-width: 250px; }
+.cmp-find { margin-top: 8px; min-width: 0; }
+.cmp-find input { width: 100%; }
+.draw-pop { min-width: 200px; display: flex; flex-direction: column; gap: 2px; }
+.draw-pop button { text-align: left; border: 0; background: none; font: inherit; font-size: 14px; padding: 7px 8px; border-radius: 6px; cursor: pointer; color: var(--ink); }
+.draw-pop button:hover, .draw-pop button.active { background: var(--primary-bg); color: var(--primary); }
+.draw-pop .sub { margin: 6px 8px 2px; }
+.ci-tool { background: var(--primary-bg); }
+.chart-legend .btn-link { text-decoration: none; font-size: 12px; margin-left: 2px; }

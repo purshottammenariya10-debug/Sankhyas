@@ -1173,6 +1173,13 @@
     return lwcP;
   }
 
+  // index closes for Compare (scripts/fetch_indices.py), loaded once when first needed
+  let indicesP = null;
+  const loadIndices = () => indicesP || (indicesP = fetch('data/yahoo/indices.json').then(r => (r.ok ? r.json() : null)).catch(() => null));
+  const CMP_IDX = [['NIFTY50', 'Nifty 50'], ['SENSEX', 'Sensex'], ['NIFTYBANK', 'Nifty Bank'], ['NIFTYIT', 'Nifty IT']];
+  const CMP_COL = ['#0ea5e9', '#db2777', '#0d9488'];   // clear of the DMA, Bollinger and candle colours
+  const DRAW_COL = '#2962ff';
+
   function bindChart(c) {
     let range = '1Yr', type = 'price', chart = null, rsiChart = null, tvChart = null;
     let style = store.get('chart_style', 'candle'), interval = 'auto', logScale = false, measuring = false, measure = null;
@@ -1203,6 +1210,23 @@
     }
     const dma = { dma20: sma(c.prices, 20), dma50: sma(c.prices, 50), dma200: sma(c.prices, 200) };
     const dayStr = c.dates.map(isoDay);
+    // drawings (trend lines, horizontal lines) are kept per company in this browser
+    const drawKey = 'draw_' + c.symbol;
+    let drawings = store.get(drawKey, []) || [], tool = null, pending = null;
+    const saveDrawings = () => store.set(drawKey, drawings);
+    // compare: indices stay chosen across companies; companies are for this page only
+    let compare = (store.get('chart_cmp', []) || []).map(k => CMP_IDX.find(x => x[0] === k)).filter(Boolean).map(x => ({ key: x[0], kind: 'index', name: x[1] }));
+    const cmpData = {};
+    const loadCompare = it => {
+      if (cmpData[it.key]) return Promise.resolve();
+      if (it.kind === 'index') return loadIndices().then(j => { const x = j && j.indices && j.indices[it.key]; if (x) cmpData[it.key] = { dates: x.dates, close: x.close }; });
+      return Data.loadCompany(it.key).then(x => { if (x && x.prices) cmpData[it.key] = { dates: x.dates.map(isoDay), close: x.prices }; }).catch(() => {});
+    };
+    const setCompare = list => {
+      compare = list.slice(0, 3);
+      store.set('chart_cmp', compare.filter(x => x.kind === 'index').map(x => x.key));
+      Promise.all(compare.map(loadCompare)).then(() => draw(true));
+    };
     // session index for a date (the next session when it fell on a holiday)
     const sessionOf = d => { let lo = 0, hi = dayStr.length; while (lo < hi) { const m = (lo + hi) >> 1; if (dayStr[m] < d) lo = m + 1; else hi = m; } return lo < dayStr.length ? lo : -1; };
     let events = null;
@@ -1342,14 +1366,51 @@
       const on = PRICE_IND.filter(([k]) => toggles[k]).length;
       return seg('Chart style', [['candle', 'Candles'], ['ha', 'Heikin Ashi'], ['line', 'Line']], style) +
         (style === 'line' ? '' : seg('Interval', [['auto', 'Auto'], ['day', 'D'], ['week', 'W'], ['month', 'M']], interval)) +
-        '<details class="ind-menu"><summary class="btn btn-small">Indicators' + (on ? ' <span class="ind-count">' + on + '</span>' : '') + '</summary><div class="ind-pop">' +
+        '<details class="ind-menu" data-menu="ind"><summary class="btn btn-small">Indicators' + (on ? ' <span class="ind-count">' + on + '</span>' : '') + '</summary><div class="ind-pop">' +
         PRICE_IND.map(([k, l, col]) => '<label><input type="checkbox" data-ind="' + k + '"' + (toggles[k] ? ' checked' : '') + '><span class="swatch" style="background:' + col + '"></span>' + esc(l) + '</label>').join('') +
         '</div></details>' +
+        (window.LightweightCharts ? cmpMenu() + drawMenu() : '') +
         '<button type="button" class="btn btn-small' + (logScale ? ' active' : '') + '" id="chart-log" title="Logarithmic price scale">Log</button>' +
         '<button type="button" class="btn btn-small' + (measuring ? ' active' : '') + '" id="chart-measure" title="Drag across the chart to measure the change">📏 Measure</button>' +
         '<button type="button" class="btn btn-small chart-full-btn" id="chart-full" title="Full screen">' + (section.classList.contains('chart-full') ? '✕ Close' : '⛶ Full screen') + '</button>';
     }
+    function cmpMenu() {
+      const cos = compare.filter(x => x.kind === 'co');
+      return '<details class="ind-menu" data-menu="cmp"><summary class="btn btn-small">⇄ Compare' + (compare.length ? ' <span class="ind-count">' + compare.length + '</span>' : '') + '</summary><div class="ind-pop cmp-pop">' +
+        '<div class="sub" style="margin-bottom:4px">Up to 3 lines, started from the same point as ' + esc(c.symbol) + ' at the left edge of the chart</div>' +
+        CMP_IDX.map(([k, n]) => '<label><input type="checkbox" data-cmp="' + k + '"' + (compare.some(x => x.key === k) ? ' checked' : '') + '>' + esc(n) + '</label>').join('') +
+        cos.map(x => '<label><input type="checkbox" data-cmp="' + esc(x.key) + '" checked>' + esc(x.name) + '</label>').join('') +
+        (compare.length < 3 ? '<div class="nav-search cmp-find"><input type="search" id="cmp-search" placeholder="Add a company…" autocomplete="off"></div>' : '') + '</div></details>';
+    }
+    function drawMenu() {
+      const b = (k, l) => '<button type="button" class="' + (tool === k ? 'active' : '') + '" data-tool="' + k + '">' + l + '</button>';
+      return '<details class="ind-menu" data-menu="draw"><summary class="btn btn-small' + (tool ? ' active' : '') + '">✏ Draw' + (drawings.length ? ' <span class="ind-count">' + drawings.length + '</span>' : '') + '</summary><div class="ind-pop draw-pop">' +
+        b('trend', '↗ Trend line') + b('hline', '— Horizontal line') +
+        (drawings.length ? '<button type="button" data-draw="undo">↶ Undo last</button><button type="button" data-draw="clear">✕ Clear all</button>' : '') +
+        '<p class="sub">Saved for ' + esc(c.symbol) + ' in this browser.</p></div></details>';
+    }
     function bindTools() {
+      // one chart menu open at a time (on phones they sit over the chart)
+      $$('#chart-tools details').forEach(d => d.addEventListener('toggle', () => { if (d.open) $$('#chart-tools details').forEach(o => { if (o !== d) o.open = false; }); }));
+      $$('#chart-tools [data-cmp]').forEach(cb => cb.onchange = () => {
+        const k = cb.dataset.cmp;
+        if (cb.checked) {
+          if (compare.length >= 3) { cb.checked = false; toast('Compare up to 3 at a time'); return; }
+          const ix = CMP_IDX.find(x => x[0] === k);
+          setCompare(compare.concat([{ key: k, kind: 'index', name: ix ? ix[1] : k }]));
+        } else setCompare(compare.filter(x => x.key !== k));
+      });
+      const cs = $('#cmp-search');
+      if (cs) attachSearch(cs, co => {
+        if (co.symbol === c.symbol || compare.some(x => x.key === co.symbol)) return;
+        setCompare(compare.concat([{ key: co.symbol, kind: 'co', name: co.name.replace(/ (Limited|Ltd\.?)$/i, '') }]));
+      });
+      $$('#chart-tools [data-tool]').forEach(b => b.onclick = () => { tool = tool === b.dataset.tool ? null : b.dataset.tool; pending = null; measuring = false; measure = null; draw(); });
+      $$('#chart-tools [data-draw]').forEach(b => b.onclick = () => {
+        if (b.dataset.draw === 'undo') drawings.pop(); else drawings = [];
+        saveDrawings();
+        draw(true);
+      });
       $$('#chart-tools [data-chart-style]').forEach(b => b.onclick = () => { style = b.dataset.chartStyle; store.set('chart_style', style); measure = null; draw(); });
       $$('#chart-tools [data-interval]').forEach(b => b.onclick = () => { interval = b.dataset.interval; measure = null; draw(); });
       $$('#chart-tools [data-ind]').forEach(cb => cb.onchange = () => {
@@ -1358,7 +1419,7 @@
         draw(true);
       });
       const lg = $('#chart-log'); if (lg) lg.onclick = () => { logScale = !logScale; draw(); };
-      const ms = $('#chart-measure'); if (ms) ms.onclick = () => { measuring = !measuring; measure = null; draw(); };
+      const ms = $('#chart-measure'); if (ms) ms.onclick = () => { measuring = !measuring; measure = null; tool = null; pending = null; draw(); };
       const fs = $('#chart-full'); if (fs) fs.onclick = () => toggleFull();
     }
     function toggleFull(force) {
@@ -1373,9 +1434,10 @@
     function draw(keepMenu) {
       if (typeof Chart === 'undefined') { $('.chart-box', section).innerHTML = '<div class="info-box">Charts need an internet connection to load the chart library.</div>'; return; }
       kill();
-      const menuOpen = keepMenu && $('#chart-tools .ind-menu[open]');
+      const menuOpen = keepMenu && $('#chart-tools details[open]');
+      const openName = menuOpen && menuOpen.dataset.menu;
       $('#chart-tools').innerHTML = toolsHtml();
-      if (menuOpen) $('#chart-tools .ind-menu').open = true;
+      if (openName) { const d = $('#chart-tools details[data-menu="' + openName + '"]'); if (d) d.open = true; }
       bindTools();
       $('#chart-info').innerHTML = '';
       $('#rsi-box').hidden = true;
@@ -1508,6 +1570,19 @@
       const rsiAll = toggles.rsi ? rsi(closes, 14) : null;
       const rsiVals = rsiAll ? rsiAll.slice(off) : null;
       const unitName = unit === 'day' ? 'Daily' : unit === 'week' ? 'Weekly' : 'Monthly';
+      // compare lines: each one's close on every bar (the last close on or before the bar's last day)
+      const cmpVals = {};
+      compare.forEach((x, j) => {
+        x.col = CMP_COL[j % CMP_COL.length];
+        const d = cmpData[x.key];
+        if (!tv || !d || !d.dates.length) return;
+        let k = 0;
+        cmpVals[x.key] = bars.map(b => { const last = dayStr[b.last]; while (k + 1 < d.dates.length && d.dates[k + 1] <= last) k++; return d.dates[k] <= last ? d.close[k] : null; });
+      });
+      const firstVisible = () => {
+        const vr = tvChart && tvChart.timeScale().getVisibleLogicalRange();
+        return vr ? Math.max(0, Math.min(bars.length - 1, Math.ceil(vr.from))) : 0;
+      };
       let hoverI = null, lastPointer = 'mouse';
       function info(i) {
         const b = bars[i];
@@ -1522,8 +1597,18 @@
         PRICE_IND.slice(0, 3).forEach(([k, l, color]) => { if (toggles[k] && ind[k][i] != null) extra.push('<span style="color:' + color + '">' + l + ' ' + num(ind[k][i], 2) + '</span>'); });
         if (bb && bb.up[i] != null) extra.push('<span style="color:#9b6ad6">BB ' + num(bb.lo[i], 1) + ' – ' + num(bb.up[i], 1) + '</span>');
         if (rsiVals && rsiVals[i] != null) extra.push('<span>RSI ' + num(rsiVals[i], 1) + '</span>');
+        // compare: change since the left edge of the chart, for the stock and each line
+        const cmpOn = compare.filter(x => cmpVals[x.key]);
+        if (cmpOn.length) {
+          const f = firstVisible(), pc = (a, z) => (a > 0 && z != null ? (z / a - 1) * 100 : null);
+          const tag = (name, col, v) => '<span style="color:' + col + '">' + esc(name) + ' <b>' + (v == null ? '-' : (v >= 0 ? '+' : '') + num(v, 1) + '%') + '</b></span>';
+          extra.push(tag(c.symbol, primary, pc(bars[f].c, b.c)));
+          cmpOn.forEach(x => { const vv = cmpVals[x.key]; let k = f; while (k < vv.length && vv[k] == null) k++; extra.push(tag(x.kind === 'co' ? x.key : x.name, x.col, i >= k ? pc(vv[k], vv[i]) : null)); });
+        }
         let m = '';
-        if (measure && measure.i1 != null) {
+        if (tool) m = '<div class="ci-measure ci-tool">✏ ' + (tool === 'trend' ? (pending ? 'Now tap the second point of the trend line.' : 'Tap the first point of the trend line.') : 'Tap the price for the horizontal line.') +
+          ' <button type="button" class="btn-link" data-tool-cancel>Cancel</button></div>';
+        else if (measure && measure.i1 != null) {
           const a = Math.min(measure.i0, measure.i1), z = Math.max(measure.i0, measure.i1);
           const p0 = bars[a].c, p1 = bars[z].c, dd = Math.round((c.dates[bars[z].last] - c.dates[bars[a].last]) / 864e5);
           const r = (p1 / p0 - 1) * 100;
@@ -1605,6 +1690,9 @@
       $('#chart-legend').innerHTML = PRICE_IND.filter(([k]) => toggles[k] && k !== 'rsi' && k !== 'hl52' && k !== 'events').map(([k, l, color]) =>
         '<label><span class="swatch" style="background:' + (k === 'volume' ? alpha(up, 0.5) : color) + '"></span>' + esc(l) + '</label>').join('') +
         (toggles.rsi ? '<label><span class="swatch" style="background:#6056ff"></span>RSI (14) below: over 70 often read as overbought, under 30 as oversold</label>' : '') +
+        compare.filter(x => cmpVals[x.key]).map(x => '<label><span class="swatch" style="background:' + x.col + '"></span>' + esc(x.name) + ' <button type="button" class="btn-link" data-cmp-remove="' + esc(x.key) + '" aria-label="Remove ' + esc(x.name) + '">✕</button></label>').join('') +
+        (compare.some(x => cmpVals[x.key]) ? '<span class="sub">Compare lines start from ' + esc(c.symbol) + '\'s price at the left edge; the readout shows each one\'s change from there.</span>' : '') +
+        (compare.some(x => !cmpData[x.key]) ? '<span class="sub">' + compare.filter(x => !cmpData[x.key]).map(x => esc(x.name)).join(', ') + ': prices not available yet.</span>' : '') +
         (toggles.events ? '<span class="ev-key">' + Object.keys(EV_KIND).map(k => '<span><span class="ev-dot ev-' + k + '">' + EV_KIND[k][0] + '</span>' + EV_KIND[k][1] + '</span>').join('') +
           (evGroups.length ? '' : '<span class="sub">No events in this period yet.</span>') + '</span>' : '') +
         (tv ? '<span class="sub">' + (note ? note + '. ' : '') + 'Scroll or pinch to zoom, drag to move back in time; hover or tap to read values' + (measuring ? '' : '; 📏 Measure to measure a move') + '.</span>'
@@ -1678,6 +1766,35 @@
         };
         drawMeasure();
         const clampI = l => Math.max(0, Math.min(bars.length - 1, Math.round(l)));
+        // bar that holds a date (for drawings made on another interval), else the nearest one
+        const barOfDay = d => { const si = sessionOf(d); if (si < 0) return bars.length - 1; let lo = 0, hi = bars.length - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (bars[m].last < si) lo = m + 1; else hi = m; } return lo; };
+        drawings.forEach(dw => {
+          if (dw.k === 'hline') { main.createPriceLine({ price: dw.p, color: DRAW_COL, lineWidth: 2, lineStyle: LW.LineStyle.Solid, axisLabelVisible: true, title: '' }); return; }
+          let a = barOfDay(dw.d1), z = barOfDay(dw.d2), pa = dw.p1, pz = dw.p2;
+          if (a === z) return;
+          if (a > z) { [a, z] = [z, a]; [pa, pz] = [pz, pa]; }
+          const tl = tvc.addSeries(LW.LineSeries, { color: DRAW_COL, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, autoscaleInfoProvider: () => null });
+          tl.setData([{ time: t(bars[a]), value: pa }, { time: t(bars[z]), value: pz }]);
+        });
+        // compare lines, restarted from the stock's price at the left edge whenever the view moves
+        const cmpSeries = compare.filter(x => cmpVals[x.key]).map(x => ({ x, s: tvc.addSeries(LW.LineSeries, { color: x.col, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }) }));
+        let baseAt = -1;
+        const rebase = () => {
+          const f = firstVisible();
+          if (f === baseAt) return;
+          baseAt = f;
+          cmpSeries.forEach(({ x, s }) => {
+            const vv = cmpVals[x.key];
+            let k = f; while (k < vv.length && vv[k] == null) k++;
+            const factor = k < vv.length && vv[k] > 0 ? bars[k].c / vv[k] : null;
+            s.setData(bars.map((b, i) => (factor == null || vv[i] == null ? { time: t(b) } : { time: t(b), value: vv[i] * factor })));
+          });
+          info(hoverI != null ? hoverI : bars.length - 1);
+        };
+        if (cmpSeries.length) {
+          let raf = 0;
+          tvc.timeScale().subscribeVisibleLogicalRangeChange(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(rebase); });
+        }
         tvc.subscribeCrosshairMove(p => {
           if (p.logical == null || !p.point) { if (lastPointer === 'mouse') { hoverI = null; info(bars.length - 1); } return; }
           const i = clampI(p.logical);
@@ -1685,6 +1802,15 @@
         });
         host.onpointerdown = ev => { lastPointer = ev.pointerType || 'mouse'; };
         tvc.subscribeClick(p => {
+          if (tool && p.logical != null && p.point) {
+            const i = clampI(p.logical), price = main.coordinateToPrice(p.point.y);
+            if (price == null) return;
+            if (tool === 'hline') { drawings.push({ k: 'hline', p: +price.toFixed(2) }); tool = null; saveDrawings(); draw(); return; }
+            if (!pending) { pending = { d: dayStr[bars[i].first], p: +price.toFixed(2) }; info(i); return; }
+            drawings.push({ k: 'trend', d1: pending.d, p1: pending.p, d2: dayStr[bars[i].first], p2: +price.toFixed(2) });
+            tool = null; pending = null; saveDrawings(); draw();
+            return;
+          }
           if (!measuring || p.logical == null) return;
           const i = clampI(p.logical);
           if (!measure || measure.i1 != null) measure = { i0: i, p0: bars[i].c, i1: null };
@@ -1695,12 +1821,19 @@
         // first view: the chosen range, most recent bars on the right
         const from = Math.max(0, bars.findIndex(b => b.last >= viewStart));
         tvc.timeScale().setVisibleLogicalRange({ from: from - 0.5, to: bars.length - 1 + 5 });
+        if (cmpSeries.length) rebase();
         info(bars.length - 1);
       }
     }
     $$('#chart-range button').forEach(b => b.onclick = () => { range = b.dataset.range; measure = null; $$('#chart-range button').forEach(x => x.classList.toggle('active', x === b)); draw(); });
     $$('#chart-type button').forEach(b => b.onclick = () => { type = b.dataset.type; measure = null; $$('#chart-type button').forEach(x => x.classList.toggle('active', x === b)); draw(); });
-    ensureLWC().then(() => { if (section.isConnected) draw(); });
+    // Cancel on the drawing prompt, ✕ on a compare line in the legend
+    section.addEventListener('click', e => {
+      if (e.target.closest('[data-tool-cancel]')) { tool = null; pending = null; draw(); return; }
+      const rm = e.target.closest('[data-cmp-remove]');
+      if (rm) setCompare(compare.filter(x => x.key !== rm.dataset.cmpRemove));
+    });
+    ensureLWC().then(() => Promise.all(compare.map(loadCompare))).then(() => { if (section.isConnected) draw(); });
   }
 
   /* analysis */

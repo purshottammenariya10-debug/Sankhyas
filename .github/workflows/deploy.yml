@@ -74,6 +74,11 @@ jobs:
         continue-on-error: true
         run: python scripts/fetch_yahoo.py --universe --max-full "${{ github.event.inputs.max_full || '1200' }}" --delay 0.5
 
+      # Nifty 50, Sensex, Nifty Bank, Nifty IT daily closes for the price chart's Compare (4 small downloads)
+      - name: Index prices (for Compare)
+        continue-on-error: true
+        run: python scripts/fetch_indices.py
+
       - name: NSE/BSE filings
         if: github.event_name != 'push'
         continue-on-error: true
