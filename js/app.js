@@ -380,8 +380,10 @@
   function pageHome() {
     setTitle("India's AI-Powered Financial Research Terminal");
     const all = Data.listCompanies();
-    const gainers = all.slice().sort((a, b) => b.metrics.changePct - a.metrics.changePct).slice(0, 5);
-    const losers = all.slice().sort((a, b) => a.metrics.changePct - b.metrics.changePct).slice(0, 5);
+    // gainers and losers among real shares worth ₹ 500 Cr or more (not rights entitlements or tiny illiquid names)
+    const movers = all.filter(c => c.metrics.changePct != null && c.metrics.marketCap >= 500 && !/-RE\d*(-|$)/.test(c.symbol) && !/-RE\d*$/i.test(c.name));
+    const gainers = movers.slice().sort((a, b) => b.metrics.changePct - a.metrics.changePct).slice(0, 5);
+    const losers = movers.slice().sort((a, b) => a.metrics.changePct - b.metrics.changePct).slice(0, 5);
     const big = all.slice().sort((a, b) => b.metrics.marketCap - a.metrics.marketCap).slice(0, 5);
     const mini = list => list.map(c => '<div class="stat-mini"><a href="#/company/' + esc(c.symbol) + '">' + esc(c.name) +
       '</a><span class="' + signCls(c.metrics.changePct) + '">' + (c.metrics.changePct > 0 ? '+' : '') + num(c.metrics.changePct, 2) + '%</span></div>').join('');
@@ -394,14 +396,14 @@
       '<div class="quick-links">Or analyse: ' + ['TCS', 'RELIANCE', 'HDFCBANK', 'INFY', 'ITC', 'TITAN', 'DMART'].filter(Data.exists).map(s =>
         '<a class="chip" href="#/company/' + s + '">' + s + '</a>').join('') + '</div>' +
       '</section>' +
-      '<div class="container page">' +
+      '<div class="container page home-page">' +
       '<a class="ai-cta" href="#/ai"><span class="ai-spark">✦</span><span><b>Ask Sankhyas AI</b><span class="sub"> &middot; "Which IT companies have the best margins?" &middot; "Explain HDFC Bank\'s latest quarter"</span></span><span class="ai-cta-go">Ask AI →</span></a>' +
       '<div class="grid grid-3">' +
       '<div class="card feature"><h3><span class="feature-icon" data-icon="⌕" aria-hidden="true"></span>Stock screener</h3><p class="muted">Run queries on 10 years of financial data. Filter stocks by 60+ ratios, or just describe what you want in plain English and let AI write the query.</p><a class="btn btn-primary" href="#/screen/new">Create a stock screen</a></div>' +
       '<div class="card feature"><h3><span class="feature-icon" data-icon="▤" aria-hidden="true"></span>Company financials</h3><p class="muted">Quarterly results, profit &amp; loss, balance sheet, cash flows, ratios and shareholding in one page.</p><a class="btn" href="#/company/TCS">See an example</a></div>' +
       '<div class="card feature"><h3><span class="feature-icon" data-icon="★" aria-hidden="true"></span>Watchlist &amp; feed</h3><p class="muted">Follow companies to get their latest results and announcements in your feed.</p><a class="btn" href="#/feed">Open feed</a></div>' +
       '</div>' +
-      '<div class="grid grid-3">' +
+      '<div class="grid grid-3 home-market">' +
       '<div class="card"><h3>Top gainers' + (Data.liveInfo().pricesAt ? ' <span class="sub">' + priceTime(Data.liveInfo().pricesAt) + '</span>' : '') + '</h3>' + mini(gainers) + '</div>' +
       '<div class="card"><h3>Top losers</h3>' + mini(losers) + '</div>' +
       '<div class="card"><h3>Largest companies</h3>' + big.map(c => '<div class="stat-mini"><a href="#/company/' + esc(c.symbol) + '">' + esc(c.name) +
@@ -508,6 +510,15 @@
     $('#export-btn').onclick = () => exportCompany(c);
     $('#share-btn').onclick = () => openCardModal((c._res ? ['verdict'] : []).concat(c.listed && c.listPrice != null ? ['results', 'snapshot', 'redflags', 'listing'] : ['results', 'snapshot', 'redflags']), () => Promise.resolve(c), c.symbol);
     $$('[data-view]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); routeKeepScroll = true; location.hash = a.getAttribute('href'); }));
+
+    // phones: year-by-year tables open on the latest years (the row names stay in view)
+    const latestFirst = () => {
+      if (token !== navToken || !window.matchMedia('(max-width: 720px)').matches) return;
+      ['quarters', 'profit-loss', 'balance-sheet', 'cash-flow', 'ratios'].forEach(id => $$('#' + id + ' .table-wrap').forEach(w => {
+        if (!w.dataset.latest && w.scrollWidth > w.clientWidth) { w.dataset.latest = 1; w.scrollLeft = w.scrollWidth; }
+      }));
+    };
+    latestFirst(); setTimeout(latestFirst, 1500); setTimeout(latestFirst, 4000);
 
     // sub nav
     $$('#sub-nav a').forEach(a => a.addEventListener('click', e => {
