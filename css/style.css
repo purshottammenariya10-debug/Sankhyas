@@ -1042,14 +1042,14 @@ h3 .sub { font-weight: 400; margin-left: 6px; }
   .top-ratios li .value { text-align: left; font-size: 15px; white-space: normal; }
   .sub-nav a { padding: 11px 10px; }
   .sub-nav-price { display: none; }
-  /* lists of companies: no S.No. column, the name stays in view while the numbers scroll */
-  table.data.list th:first-child, table.data.list td:first-child { display: none; }
-  table.data.list th:nth-child(2), table.data.list td:nth-child(2) {
+  /* lists of companies that start with S.No.: no S.No. column, the name stays in view while the numbers scroll */
+  table.data.sno th:first-child, table.data.sno td:first-child { display: none; }
+  table.data.sno th:nth-child(2), table.data.sno td:nth-child(2) {
     text-align: left; position: sticky; left: 0; z-index: 1; background: var(--bg);
     min-width: 128px; max-width: 150px; white-space: normal; line-height: 1.3;
   }
-  table.data.list thead th:nth-child(2) { background: var(--bg-2); z-index: 2; }
-  table.data.list tbody tr:nth-child(even) td:nth-child(2) { background: var(--bg-2); }
+  table.data.sno thead th:nth-child(2) { background: var(--bg-2); z-index: 2; }
+  table.data.sno tbody tr:nth-child(even) td:nth-child(2) { background: var(--bg-2); }
   table.data th, table.data td { padding: 8px 9px; }
   /* screens */
   #query { min-height: 0; height: 96px; }

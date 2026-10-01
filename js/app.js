@@ -2782,7 +2782,7 @@
   function listTableHtml(companies, cols, opts) {
     opts = opts || {};
     const start = opts.offset || 0;
-    let h = '<div class="table-wrap"><table class="data list"><thead><tr><th>S.No.</th><th' + (opts.sortable ? ' class="sortable' + (opts.sortKey === 'name' ? ' sorted' : '') + '" data-sort="name"' : '') + '>Name</th>' +
+    let h = '<div class="table-wrap"><table class="data list sno"><thead><tr><th>S.No.</th><th' + (opts.sortable ? ' class="sortable' + (opts.sortKey === 'name' ? ' sorted' : '') + '" data-sort="name"' : '') + '>Name</th>' +
       cols.map(k => '<th' + (opts.sortable ? ' class="sortable' + (opts.sortKey === k ? ' sorted' : '') + '" data-sort="' + k + '"' : '') + '>' + esc(RBY[k] ? RBY[k].label : k) +
         (opts.sortKey === k ? (opts.sortDir > 0 ? ' ▲' : ' ▼') : '') + '</th>').join('') + (opts.remove ? '<th></th>' : '') + '</tr></thead><tbody>';
     companies.forEach((c, i) => {
@@ -3311,7 +3311,7 @@
       const cs = all.filter(c => c.sector === s);
       return { s, n: cs.length, mcap: cs.reduce((a, c) => a + c.metrics.marketCap, 0), pe: Data.median(cs.map(c => c.metrics.pe)), roce: Data.median(cs.map(c => c.metrics.roce)), ret: Data.median(cs.map(c => c.metrics.ret1y)) };
     });
-    app.innerHTML = '<div class="container page"><div class="card"><h1>Sectors</h1><p class="muted">Browse listed companies by sector.</p><div class="table-wrap"><table class="data list"><thead><tr><th>S.No.</th><th>Sector</th><th>Companies</th><th>Total Mar Cap Rs.Cr.</th><th>Median P/E</th><th>Median ROCE %</th><th>Median 1Yr return %</th></tr></thead><tbody>' +
+    app.innerHTML = '<div class="container page"><div class="card"><h1>Sectors</h1><p class="muted">Browse listed companies by sector.</p><div class="table-wrap"><table class="data list sno"><thead><tr><th>S.No.</th><th>Sector</th><th>Companies</th><th>Total Mar Cap Rs.Cr.</th><th>Median P/E</th><th>Median ROCE %</th><th>Median 1Yr return %</th></tr></thead><tbody>' +
       rows.map((r, i) => '<tr><td>' + (i + 1) + '.</td><td><a href="#/market/' + encodeURIComponent(r.s) + '">' + esc(r.s) + '</a></td><td>' + r.n + '</td><td>' + num(r.mcap, 0) + '</td><td>' + num(r.pe, 1) + '</td><td>' + num(r.roce, 1) +
         '</td><td class="' + signCls(r.ret) + '">' + num(r.ret, 1) + '</td></tr>').join('') + '</tbody></table></div></div></div>';
   }
@@ -3332,7 +3332,7 @@
       app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Latest Results</h1><p>Quarterly results filed with NSE, newest first, with the Sankhyas verdict &middot; ₹ Cr, consolidated where filed</p></div>' +
         '<div class="tabs">' + [['all', 'All ' + list.results.length], ['strong', 'Strong ' + count('Strong')], ['mixed', 'Mixed ' + count('Mixed')], ['weak', 'Weak ' + count('Weak')]].concat(count('New') ? [['new', 'New ' + count('New')]] : [])
           .map(t => '<a class="btn btn-small' + (f === t[0] ? ' active' : '') + '" href="#/results' + (t[0] === 'all' ? '' : '?v=' + t[0]) + '">' + t[1] + '</a>').join('') + '</div></div>' +
-        '<div class="table-wrap"><table class="data list"><thead><tr><th>S.No.</th><th>Name</th><th>Filed</th><th>Quarter</th><th>Verdict</th><th>Sales</th><th>YoY %</th><th>Op. Profit</th><th>OPM %</th><th>Net Profit</th><th>YoY %</th><th>EPS</th><th></th></tr></thead><tbody>' +
+        '<div class="table-wrap"><table class="data list sno"><thead><tr><th>S.No.</th><th>Name</th><th>Filed</th><th>Quarter</th><th>Verdict</th><th>Sales</th><th>YoY %</th><th>Op. Profit</th><th>OPM %</th><th>Net Profit</th><th>YoY %</th><th>EPS</th><th></th></tr></thead><tbody>' +
         rows.slice(0, 500).map((r, i) => '<tr><td>' + (i + 1) + '.</td><td><a href="#/company/' + encodeURIComponent(r.s) + '">' + esc(r.n) + '</a></td><td>' + esc(fmtF(r)) + '</td><td>' + esc(r.q) + (r.cons ? '' : ' <span class="sub">SA</span>') + '</td>' +
           '<td><span class="v-pill ' + VERDICT_CLS[r.v] + '">' + r.v + '</span></td><td>' + num(r.sales, 0) + '</td><td class="' + signCls(r.sy) + '">' + num(r.sy, 1) + '</td><td>' + num(r.op, 0) + '</td><td>' + num(r.opm, 1) +
           '</td><td>' + num(r.np, 0) + '</td><td class="' + signCls(r.py) + '">' + num(r.py, 1) + '</td><td>' + num(r.eps, 2) + '</td>' +
@@ -3344,7 +3344,7 @@
   function pageResultsEstimated() {
     const all = Data.listCompanies().slice().sort((a, b) => resultDate(b) - resultDate(a) || (b.metrics.marketCap || 0) - (a.metrics.marketCap || 0)).slice(0, 300);
     app.innerHTML = '<div class="container page"><div class="card"><div class="section-head"><div><h1>Latest Results</h1><p>Latest reported quarter &middot; figures in Rs. Cr.' + (Data.liveInfo().count ? ' &middot; result dates are estimated' : '') + '</p></div></div>' +
-      '<div class="table-wrap"><table class="data list"><thead><tr><th>S.No.</th><th>Name</th><th>Result date</th><th>Sales</th><th>YoY %</th><th>Operating Profit</th><th>OPM %</th><th>Net Profit</th><th>YoY %</th><th>EPS</th><th></th></tr></thead><tbody>' +
+      '<div class="table-wrap"><table class="data list sno"><thead><tr><th>S.No.</th><th>Name</th><th>Result date</th><th>Sales</th><th>YoY %</th><th>Operating Profit</th><th>OPM %</th><th>Net Profit</th><th>YoY %</th><th>EPS</th><th></th></tr></thead><tbody>' +
       all.map((c, i) => {
         const m = c.metrics;
         return '<tr><td>' + (i + 1) + '.</td><td><a href="#/company/' + esc(c.symbol) + '">' + esc(c.name) + '</a></td><td>' + resultDate(c).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) +
