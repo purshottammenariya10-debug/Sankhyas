@@ -2158,8 +2158,10 @@
     const hl = opts.highlightLast ? headers.length - 1 : -1;
     if (!headers.length) return '<div class="info-box">No data available for this section.</div>';
     let h = '<div class="table-wrap"><table class="data"><thead><tr><th></th>' + headers.map((x, i) => '<th' + (i === hl ? ' class="highlight"' : '') + '>' + esc(x) + '</th>').join('') + '</tr></thead><tbody>';
+    // small companies (most SME ones): amounts under ₹ 100 Cr get two decimals, so ₹ 0.66 Cr does not read as 1
+    const small = rows.every(r => r.type === 'pct' || r.dec || r.values.every(v => v == null || Math.abs(v) < 100));
     rows.forEach(r => {
-      const fmt = v => (r.type === 'pct' ? pct(v, r.dec || 0) : num(v, r.dec || 0));
+      const fmt = v => (r.type === 'pct' ? pct(v, r.dec || 0) : num(v, r.dec != null ? r.dec : small ? 2 : 0));
       const label = r.expand ? '<button class="expand" data-expand="' + r.expand + '">' + esc(r.label) + '</button>' : esc(r.label);
       h += '<tr class="' + (r.strong ? 'strong ' : '') + (r.sub ? 'sub-row hidden ' : '') + '"' + (r.sub ? ' data-sub="' + r.sub + '"' : '') + '><td>' + label + '</td>' +
         r.values.map((v, i) => '<td' + (i === hl ? ' class="highlight"' : '') + '>' + fmt(v) + '</td>').join('') + '</tr>';
@@ -2179,12 +2181,13 @@
       '<div class="head-actions">' + (extra || '') +
       (c.live ? '' : '<a class="btn btn-small btn-plain" href="#/company/' + c.symbol + (c.standalone ? '' : '/standalone') + '" data-view>View ' + alt + '</a>') + '</div></div>';
   }
-  const figs = c => (c.standalone ? 'Standalone' : 'Consolidated') + ' Figures in Rs. Crores' +
-    (c.live ? ' &middot; Source: ' + (c.histN ? 'NSE annual results (' + c.years[0] + '–' + c.years[c.histN - 1] + ') and Yahoo Finance' : 'Yahoo Finance') : '');
+  const figs = c => (c.standalone || c.finStandalone ? 'Standalone' : 'Consolidated') + ' Figures in Rs. Crores' +
+    (c.live ? ' &middot; Source: ' + (c.finSrc === 'nse' ? 'results filed with NSE' : c.finSrc === 'nse+yahoo' ? 'results filed with NSE and Yahoo Finance' : c.histN ? 'NSE annual results (' + c.years[0] + '–' + c.years[c.histN - 1] + ') and Yahoo Finance' : 'Yahoo Finance') : '');
 
   function quartersSection(c) {
     const q = c.q;
-    return sectionHead('quarters', 'Quarterly Results', figs(c), c) + statementTable(c.quarters, [
+    // SME companies (NSE Emerge) report every half year
+    return sectionHead('quarters', c.half ? 'Half-yearly Results' : 'Quarterly Results', c.half ? figs(c) + ' &middot; six months ended' : figs(c), c) + statementTable(c.quarters, [
       { label: 'Sales', values: q.sales, strong: true },
       { label: 'Expenses', values: q.expenses },
       { label: 'Operating Profit', values: q.op, strong: true },
@@ -2196,7 +2199,7 @@
       { label: 'Tax %', values: q.tax, type: 'pct' },
       { label: 'Net Profit', values: q.np, strong: true },
       { label: 'EPS in Rs', values: q.eps, dec: 2 }
-    ], { highlightLast: true }) + '<p class="table-note">Raw PDF and detailed result filings are available under Documents.</p></section>';
+    ], { highlightLast: true }) + '<p class="table-note">' + (c.half ? 'SME companies listed on NSE Emerge report every six months: Sep is April–September, Mar is October–March. ' : '') + 'Raw PDF and detailed result filings are available under Documents.</p></section>';
   }
 
   // banks report differently: interest earned and paid, operating expenses and provisions, financing

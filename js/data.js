@@ -343,8 +343,10 @@
     const q = c.q, p = c.pl;
     const keys = ['sales', 'expenses', 'op', 'otherIncome', 'interest', 'depreciation', 'pbt', 'np'];
     const t = {};
-    const useQ = q && q.sales && q.sales.length >= 4;
-    keys.forEach(k => { t[k] = useQ ? sumN(q[k].slice(-4)) : lastOf(p[k]); if (t[k] == null) t[k] = lastOf(p[k]); });
+    // the last 12 months: four quarters, or two half-years for SME companies
+    const per = c.half ? 2 : 4;
+    const useQ = q && q.sales && q.sales.length >= per;
+    keys.forEach(k => { t[k] = useQ ? sumN(q[k].slice(-per)) : lastOf(p[k]); if (t[k] == null) t[k] = lastOf(p[k]); });
     t.opm = div(t.op, t.sales) != null ? t.op / t.sales * 100 : null;
     t.tax = div(t.np, t.pbt) != null ? (1 - t.np / t.pbt) * 100 : null;
     t.eps = c.shares ? div(t.np, c.shares) : lastOf(p.eps);
@@ -369,7 +371,8 @@
     const ret = days => (n > days ? (last / prices[n - 1 - days] - 1) * 100 : null);
     const retCagr = years => { const d = 252 * years; return n > d ? (Math.pow(last / prices[n - 1 - d], 1 / years) - 1) * 100 : null; };
     const growth = (arr, yrs) => cagr(at(arr, L - yrs), at(arr, L), yrs);
-    const q4 = k => (quarters[k].length >= 8 ? div(sumN(quarters[k].slice(-4)), sumN(quarters[k].slice(-8, -4))) : null);
+    const per = c.half ? 2 : 4;   // periods in a year: quarters, or half-years for SME companies
+    const q4 = k => (quarters[k].length >= per * 2 ? div(sumN(quarters[k].slice(-per)), sumN(quarters[k].slice(-per * 2, -per))) : null);
     const avgLast = (arr, k) => (arr.length >= k ? avgN(arr.slice(-k)) : null);
     const pctVar = (a, b) => (a != null && b != null && b > 0 ? (a / b - 1) * 100 : null);
 
@@ -401,8 +404,8 @@
       qtrSales: at(quarters.sales, qN),
       qtrProfit: at(quarters.np, qN),
       qtrOp: at(quarters.op, qN), qtrOpm: at(quarters.opm, qN), qtrEps: at(quarters.eps, qN),
-      qtrSalesVar: pctVar(at(quarters.sales, qN), at(quarters.sales, qN - 4)),
-      qtrProfitVar: pctVar(at(quarters.np, qN), at(quarters.np, qN - 4)),
+      qtrSalesVar: pctVar(at(quarters.sales, qN), at(quarters.sales, qN - per)),
+      qtrProfitVar: pctVar(at(quarters.np, qN), at(quarters.np, qN - per)),
       salesGrowth3: growth(R.sales, 3), salesGrowth5: growth(R.sales, 5), salesGrowth10: growth(R.sales, 10),
       profitGrowth3: growth(R.np, 3), profitGrowth5: growth(R.np, 5), profitGrowth10: growth(R.np, 10),
       salesGrowthTTM: q4('sales') != null ? (q4('sales') - 1) * 100 : null,
@@ -450,7 +453,9 @@
   }
   function buildLive(j) {
     const known = bySymbol[j.symbol] || {};
-    const a = j.annual || { periods: [] }, qq = j.quarterly || { periods: [] }, qt = j.quote || {};
+    const a = j.annual || { periods: [] }, qq = j.quarterly || { periods: [] };
+    // with statements from the NSE filings (SME companies), Yahoo's own P/E, book value and ROE are stale: work them out
+    const qt = /^nse/.test(a.src || '') ? Object.assign({}, j.quote || {}, { pe: null, bookValue: null, roe: null }) : (j.quote || {});
     const col = (src, k) => (src[k] || src.periods.map(() => null)).map(v => (v == null ? null : v));
     const pl = {};
     ['sales', 'expenses', 'op', 'otherIncome', 'interest', 'depreciation', 'pbt', 'tax', 'np', 'eps'].forEach(k => { pl[k] = col(a, k); });
@@ -498,6 +503,7 @@
       psu: !!known.psu, promoter: ins || 0, shares, about: j.about || '',
       standalone: false, live: true, updated: j.updated,
       years: a.periods, histN: a.histN || 0, quarters: qq.periods, shQuarters: ['Latest'],
+      half: !!qq.half, finSrc: a.src || '', finStandalone: /^nse/.test(a.src || '') && !a.cons,
       pl, bs, cf, ratios, q, sh, sharesOut,
       docs: { announcements: [], reports: [], ratings: [], concalls: [] },
       prices: px.close, volume: px.volume.map(v => v || 0), dates: px.dates.map(d => new Date(d + 'T00:00:00')),

@@ -147,8 +147,9 @@ def parse_nse_items(items):
     return out
 
 
-def nse_announcements(nse, symbol=None, start=None, end=None):
-    params = {"index": "equities"}
+def nse_announcements(nse, symbol=None, start=None, end=None, index="equities"):
+    # SME companies (NSE Emerge) are listed under the 'sme' index
+    params = {"index": index}
     if symbol:
         params["symbol"] = symbol
     if start and end:
@@ -157,8 +158,8 @@ def nse_announcements(nse, symbol=None, start=None, end=None):
     return parse_nse_items(data if isinstance(data, list) else (data or {}).get("data"))
 
 
-def nse_annual_reports(nse, symbol):
-    data = nse.get("https://www.nseindia.com/api/annual-reports", params={"index": "equities", "symbol": symbol})
+def nse_annual_reports(nse, symbol, index="equities"):
+    data = nse.get("https://www.nseindia.com/api/annual-reports", params={"index": index, "symbol": symbol})
     rows = data if isinstance(data, list) else (data or {}).get("data") or []
     out = []
     for r in rows:
@@ -401,6 +402,10 @@ def main(argv=None):
             sweep += nse_announcements(nse, None, start, today)
         except Exception as e:  # noqa: BLE001
             print("NSE sweep failed:", e, file=sys.stderr)
+        try:
+            sweep += nse_announcements(nse, None, start, today, "sme")
+        except Exception as e:  # noqa: BLE001
+            print("NSE SME sweep failed:", e, file=sys.stderr)
     rss = nse_rss_sweep()
     by_name = {norm_name(c["name"]): c for c in universe}
     matched = 0
@@ -431,7 +436,11 @@ def main(argv=None):
         f = OUT / f"{c['symbol']}.json"
         if not f.exists():
             return float("inf")
-        b = json.loads(f.read_text()).get("backfilled")
+        d = json.loads(f.read_text())
+        b = d.get("backfilled")
+        # SME companies backfilled before the 'sme' index was used got nothing: do them again
+        if c.get("sme") and not d.get("sme_idx"):
+            return float("inf")
         return float("inf") if not b else (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(b)).days
     # biggest companies first (by market cap from the Yahoo index when available), NSE before BSE-only
     mcap = {}
@@ -462,9 +471,12 @@ def main(argv=None):
                     bse = None
         if nse and c["yahoo"].endswith(".NS"):
             try:
-                a = nse_announcements(nse, c["symbol"], hist_start, today)
-                r = nse_annual_reports(nse, c["symbol"])
+                idx = "sme" if c.get("sme") else "equities"
+                a = nse_announcements(nse, c["symbol"], hist_start, today, idx)
+                r = nse_annual_reports(nse, c["symbol"], idx)
                 merge_into(doc, a, r)
+                if c.get("sme"):
+                    doc["sme_idx"] = 1
                 got += len(a) + len(r)
                 ok = True
             except Exception as e:  # noqa: BLE001

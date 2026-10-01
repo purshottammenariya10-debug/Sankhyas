@@ -420,14 +420,16 @@
     const q = { 5: 1, 8: 2, 11: 3, 2: 4 }[m];
     return q ? 'Q' + q + ' FY' + String((m === 2 ? d.getFullYear() : d.getFullYear() + 1) % 100).padStart(2, '0') : qe;
   };
+  // H1 FY27 = April–September 2026, H2 FY26 = October 2025–March 2026
+  const halfLabel = qe => { const d = new Date(qe + 'T00:00:00'), m = d.getMonth(); return m === 8 ? 'H1 FY' + String((d.getFullYear() + 1) % 100).padStart(2, '0') : m === 2 ? 'H2 FY' + String(d.getFullYear() % 100).padStart(2, '0') : qe; };
   const growth = (a, b) => (ok(a) && ok(b) && b !== 0 ? (a - b) / Math.abs(b) * 100 : null);
   /** Verdict on the latest quarter vs the same quarter last year (and the previous quarter). */
   function resultsVerdict(doc) {
     const Q = ((doc && doc.quarters) || []).filter(q => q && q.qe).slice().sort((a, b) => (a.qe < b.qe ? 1 : -1));
     if (!Q.length) return null;
-    const cur = Q[0];
+    const cur = Q[0], half = !!cur.h;   // SME companies report half-years
     const back = months => { const d = new Date(cur.qe + 'T00:00:00'); d.setDate(15); d.setMonth(d.getMonth() - months); const k = d.toISOString().slice(0, 7); return Q.find(q => q.qe.slice(0, 7) === k) || null; };
-    const prev = back(3), yago = back(12);
+    const prev = back(half ? 6 : 3), yago = back(12);
     // some filers leave the owners' share as 0 when there is no minority interest; fall back to total profit
     const profit = q => (q ? (ok(q.np_owners) && (q.np_owners !== 0 || !ok(q.np)) ? q.np_owners : q.np) : null);
     const opm = q => (q && ok(q.op) && q.sales ? q.op / q.sales * 100 : null);
@@ -438,7 +440,7 @@
     const qoq = { sales: growth(c.sales, p.sales), op: growth(c.op, p.op), np: growth(c.np, p.np), eps: epsG(c.eps, p.eps), opm: ok(c.opm) && ok(p.opm) ? c.opm - p.opm : null };
     // a bonus issue or split changes EPS without a change in profit: drop EPS growth that disagrees with profit growth
     [[yoy, c.np, y.np], [qoq, c.np, p.np]].forEach(([g]) => { if (ok(g.eps) && ok(g.np) && Math.abs(g.eps - g.np) > 30 && Math.abs(g.eps - g.np) > Math.abs(g.np)) g.eps = null; });
-    const cmp = yago ? yoy : qoq, basis = yago ? 'YoY' : 'QoQ';
+    const cmp = yago ? yoy : qoq, basis = yago ? 'YoY' : half ? 'HoH' : 'QoQ';
     let score = 0;
     const sG = cmp.sales, pG = cmp.np;
     if (ok(sG)) score += sG >= 15 ? 2 : sG >= 5 ? 1 : sG <= -15 ? -2 : sG <= -5 ? -1 : 0;
@@ -451,14 +453,14 @@
     const cr = v => '₹ ' + Math.round(v).toLocaleString('en-IN') + ' Cr';
     const chg = (v, unit) => (v >= 0 ? 'up ' : 'down ') + Math.abs(v).toFixed(Math.abs(v) < 10 ? 1 : 0) + (unit || '%');
     const points = [];
-    if (ok(c.sales)) points.push('Revenue ' + (ok(sG) ? chg(sG) + ' ' + basis + ' to ' : 'of ') + cr(c.sales) + (yago && ok(qoq.sales) ? ' (' + chg(qoq.sales) + ' QoQ)' : ''));
+    if (ok(c.sales)) points.push('Revenue ' + (ok(sG) ? chg(sG) + ' ' + basis + ' to ' : 'of ') + cr(c.sales) + (yago && ok(qoq.sales) ? ' (' + chg(qoq.sales) + (half ? ' HoH' : ' QoQ') + ')' : ''));
     if (ok(c.np)) points.push(c.np < 0 ? 'Net loss of ' + cr(-c.np) + (ok(profit(yago)) ? ' against ' + (profit(yago) < 0 ? 'a loss' : 'a profit') + ' of ' + cr(Math.abs(profit(yago))) + ' a year ago' : '')
       : 'Net profit ' + (ok(pG) ? chg(pG) + ' ' + basis + ' to ' : 'of ') + cr(c.np));
-    if (ok(c.opm) && !cur.bank) points.push('Operating margin ' + c.opm.toFixed(1) + '%' + (ok(cmp.opm) ? ', ' + chg(cmp.opm, ' pts') + ' from ' + (yago ? 'a year ago' : 'last quarter') : ''));
+    if (ok(c.opm) && !cur.bank) points.push('Operating margin ' + c.opm.toFixed(1) + '%' + (ok(cmp.opm) ? ', ' + chg(cmp.opm, ' pts') + ' from ' + (yago ? 'a year ago' : half ? 'the last half-year' : 'last quarter') : ''));
     if (ok(cur.exceptional) && cur.exceptional !== 0 && ok(cur.pbt) && Math.abs(cur.exceptional) >= Math.abs(cur.pbt) * 0.05)
       points.push('Includes a one-off ' + (cur.exceptional < 0 ? 'charge' : 'gain') + ' of ' + cr(Math.abs(cur.exceptional)) + ' (exceptional items)');
     if (ok(c.eps)) points.push('EPS ₹ ' + c.eps.toFixed(2) + (ok(cmp.eps) ? ' (' + chg(cmp.eps) + ' ' + basis + ')' : ''));
-    return { raw: cur, qe: cur.qe, label: quarterLabel(cur.qe), filed: cur.filed || '', cons: !!cur.cons, bank: !!cur.bank, cur: c, prev: prev && p, yago: yago && y,
+    return { raw: cur, qe: cur.qe, label: half ? halfLabel(cur.qe) : quarterLabel(cur.qe), half, filed: cur.filed || '', cons: !!cur.cons, bank: !!cur.bank, cur: c, prev: prev && p, yago: yago && y,
       yoy, qoq, basis, score, verdict, points };
   }
 

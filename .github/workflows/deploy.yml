@@ -115,6 +115,13 @@ jobs:
         timeout-minutes: 25
         run: python scripts/fetch_history.py --max "${{ github.event.schedule == '17 */2 * * *' && '25' || '60' }}" || python scripts/fetch_history.py --merge-only || echo "history not merged"
 
+      # NSE Emerge (SME) companies file every half year, under NSE's 'sme' index: their results, full-year
+      # statements (P&L, balance sheet, cash flow) come from those filings when Yahoo has none
+      - name: SME financials (half-yearly results)
+        continue-on-error: true
+        timeout-minutes: 30
+        run: python scripts/sme_financials.py --max "${{ github.event.schedule == '17 */2 * * *' && '40' || '100' }}" || python scripts/sme_financials.py --merge-only
+
       - name: Build company index
         run: |
           if ls data/yahoo/*.json >/dev/null 2>&1; then node scripts/build_index.mjs; else echo "No Yahoo data yet; the site will use sample data"; fi

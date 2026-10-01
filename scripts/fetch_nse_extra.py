@@ -307,10 +307,11 @@ def repair_shp_scale(doc):
     return changed
 
 
-def update_shp(nse, sym, stats, xbrl_budget):
+def update_shp(nse, sym, stats, xbrl_budget, index="equities"):
     path = SHP_DIR / f"{sym}.json"
     doc = load(path) or {"symbol": sym, "quarters": []}
-    data = nse.get(NSE_HOME + "/api/corporate-share-holdings-master", params={"index": "equities", "symbol": sym})
+    # SME companies (NSE Emerge) are listed under the 'sme' index and file every half year
+    data = nse.get(NSE_HOME + "/api/corporate-share-holdings-master", params={"index": index, "symbol": sym})
     rows = data if isinstance(data, list) else (data or {}).get("data") or []
     # off-cycle filings (e.g. after a scheme or a preferential allotment) carry odd dates; keep quarter-ends only
     have = {q["q"]: q for q in doc["quarters"] if q["q"][5:] in QUARTER_ENDS}
@@ -339,6 +340,7 @@ def update_shp(nse, sym, stats, xbrl_budget):
             cur["src"] = r["xbrl"]
     doc["quarters"] = sorted(have.values(), key=lambda x: x["q"], reverse=True)[:KEEP_SHP]
     doc["checked"] = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    doc["idx"] = index
     path.write_text(json.dumps(doc, separators=(",", ":")))
 
 
@@ -353,6 +355,7 @@ def main(argv=None):
     upath = ROOT / "data" / "universe.json"
     universe = json.loads(upath.read_text())["companies"] if upath.exists() else [{"symbol": s, "yahoo": s + ".NS"} for s in (ROOT / "scripts" / "symbols.txt").read_text().split()]
     nse_syms = [c["symbol"] for c in universe if c.get("yahoo", "").endswith(".NS")]
+    sme = {c["symbol"] for c in universe if c.get("sme")}
     if args.symbols:
         nse_syms = [s for s in nse_syms if s in {x.upper() for x in args.symbols}]
     nse = nse_session()
@@ -379,7 +382,9 @@ def main(argv=None):
     # quarters read before business segments were parsed are read again, largest companies first
     no_seg = sorted([s for s in nse_syms if docs[s] and docs[s].get("quarters") and (docs[s]["quarters"][0].get("sv") != SEG_VERSION
                      or (docs[s]["quarters"][0].get("bank") and docs[s]["quarters"][0].get("bv") != BANK_VERSION))], key=lambda s: -mcap.get(s, 0))
-    queue = list(dict.fromkeys([s for s in fresh if not docs[s] or age_days(docs[s]) > 0.25] + no_seg[:120] + never + stale))[:args.max_results]
+    queue = list(dict.fromkeys([s for s in fresh if not docs[s] or age_days(docs[s]) > 0.25] + no_seg[:120] + never + stale))
+    # SME results (half-yearly, 'sme' index) are read by scripts/sme_financials.py
+    queue = [s for s in queue if s not in sme][:args.max_results]
     for sym in queue:
         try:
             update_results(nse, sym, stats)
@@ -394,6 +399,8 @@ def main(argv=None):
         if d and repair_shp_scale(d):
             (SHP_DIR / f"{s}.json").write_text(json.dumps(d, separators=(",", ":")))
     never = sorted([s for s in nse_syms if not docs[s]], key=lambda s: -mcap.get(s, 0))
+    # SME files read before the 'sme' index was used are empty: read them again
+    never += [s for s in nse_syms if s in sme and docs[s] and not docs[s].get("quarters") and not docs[s].get("idx")]
     # latest quarter missing first (largest companies first), then gaps in older quarters
     latest_missing = sorted([s for s in nse_syms if docs[s] and docs[s]["quarters"] and docs[s]["quarters"][0].get("fii") is None], key=lambda s: -mcap.get(s, 0))
     incomplete = latest_missing + [s for s in nse_syms if docs[s] and any(q.get("fii") is None for q in docs[s]["quarters"])]
@@ -404,7 +411,7 @@ def main(argv=None):
         if stats["shp_x"] >= args.max_shp_xbrl and docs.get(sym):
             continue
         try:
-            update_shp(nse, sym, stats, args.max_shp_xbrl)
+            update_shp(nse, sym, stats, args.max_shp_xbrl, "sme" if sym in sme else "equities")
             stats["shp"] += 1
         except Exception as e:  # noqa: BLE001
             print(f"  {sym}: shareholding list failed ({str(e)[:80]})", file=sys.stderr)
