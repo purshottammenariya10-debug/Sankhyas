@@ -371,18 +371,18 @@ def update_shp(nse, sym, stats, xbrl_budget, index="equities"):
         q = iso_date(r.get("date") or "")
         if q and q[5:] in QUARTER_ENDS and (q not in by_q or (r.get("broadcastDate") or "") > (by_q[q].get("broadcastDate") or "")):
             by_q[q] = r
-    names_read = 0
+    reads = 0
     for q in sorted(by_q, reverse=True)[:KEEP_SHP]:
         r = by_q[q]
         cur = have.get(q) or {"q": q}
         cur["promoter"] = num(r.get("pr_and_prgrp")) if cur.get("fii") is None else cur.get("promoter")
         have[q] = cur
-        if cur.get("fii") is not None and cur.get("src") == r.get("xbrl"):
-            if cur.get("hv") == HOLDER_V or names_read >= 4:
-                continue
-            names_read += 1                       # read again for the named holders (newest quarters first)
-        if not r.get("xbrl") or stats["shp_x"] >= xbrl_budget:
+        if cur.get("fii") is not None and cur.get("src") == r.get("xbrl") and cur.get("hv") == HOLDER_V:
+            continue                              # read, with the named holders
+        # at most four files a company a run (newest quarters first), so the budget reaches many companies
+        if not r.get("xbrl") or stats["shp_x"] >= xbrl_budget or reads >= 4:
             continue
+        reads += 1
         try:
             row = parse_shp(read_shp_xbrl(r["xbrl"]))
         except Exception as e:  # noqa: BLE001
@@ -462,7 +462,8 @@ def main(argv=None):
     no_names = sorted([s for s in nse_syms if docs[s] and docs[s]["quarters"] and docs[s]["quarters"][0].get("hv") != HOLDER_V], key=lambda s: -mcap.get(s, 0))
     stale = sorted([s for s in nse_syms if docs[s] and age_days(docs[s]) > 15], key=lambda s: -age_days(docs[s]))
     # a company showing a blank latest quarter goes before the backlog of never-fetched ones
-    queue = list(dict.fromkeys(latest_missing[:60] + never + no_names[:150] + incomplete + stale))[:args.max_shp]
+    # companies never fetched include many NSE never answers for (ETFs, funds): a few each run, after the rest
+    queue = list(dict.fromkeys(latest_missing[:60] + no_names[:200] + never[:40] + incomplete + stale + never))[:args.max_shp]
     for sym in queue:
         if stats["shp_x"] >= args.max_shp_xbrl and docs.get(sym):
             continue
