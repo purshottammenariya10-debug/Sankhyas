@@ -17,13 +17,15 @@
   /* ---------- sync across devices (signed-in cloud accounts; public.user_data) ----------
      Each group is one row: watchlist (every followed symbol, read by the alert sender), watchlists
      (named lists), screens, portfolio, notes {SYM: text}, cc_extra {SYM: [...]},
-     prefs {topratios, screencols, chart_style}. The newer side wins; the first sync on a device
+     drawings {SYM: [...]} (chart lines), prefs {topratios, screencols, chart_style, chart_ind, chart_cmp,
+     chart_layout}. The newer side wins; the first sync on a device
      merges both sides so nothing saved before logging in is lost. */
   const Sync = (function () {
     const DIRECT = { watchlist: 'watchlist', watchlists: 'watchlists', screens: 'screens', portfolio: 'portfolio' };
-    const PREFS = ['topratios', 'screencols', 'chart_style'];
-    const PREFIX = { notes_: 'notes', cc_extra_: 'cc_extra' };
-    const GROUPS = ['watchlist', 'watchlists', 'screens', 'portfolio', 'notes', 'cc_extra', 'prefs'];
+    const PREFS = ['topratios', 'screencols', 'chart_style', 'chart_ind', 'chart_cmp', 'chart_layout'];
+    const PREFIX = { notes_: 'notes', cc_extra_: 'cc_extra', draw_: 'drawings' };
+    const GROUPS = ['watchlist', 'watchlists', 'screens', 'portfolio', 'notes', 'cc_extra', 'drawings', 'prefs'];
+    const prefixOf = g => Object.keys(PREFIX).find(p => PREFIX[p] === g);
     let timer = null, dirty = {}, applying = false, status = { at: null, error: null };
     const meta = () => store.get('sync_meta', {});
     const setMeta = m => rawSet('sync_meta', m);
@@ -40,13 +42,12 @@
     }
     function collect(g) {
       if (g === 'prefs') { const o = {}; PREFS.forEach(k => { const v = store.get(k, undefined); if (v !== undefined) o[k] = v; }); return o; }
-      if (g === 'notes') return prefixed('notes_');
-      if (g === 'cc_extra') return prefixed('cc_extra_');
+      if (prefixOf(g)) return prefixed(prefixOf(g));
       return store.get(g, null);
     }
     function apply(g, v) {
       if (g === 'prefs') { PREFS.forEach(k => { if (v && v[k] !== undefined) rawSet(k, v[k]); }); return; }
-      if (g === 'notes' || g === 'cc_extra') { const p = g === 'notes' ? 'notes_' : 'cc_extra_'; Object.keys(v || {}).forEach(sym => rawSet(p + sym, v[sym])); return; }
+      if (prefixOf(g)) { const p = prefixOf(g); Object.keys(v || {}).forEach(sym => rawSet(p + sym, v[sym])); return; }
       rawSet(g, v);
     }
     const empty = v => v == null || (Array.isArray(v) ? !v.length : typeof v === 'object' && !Object.keys(v).length);
@@ -1073,12 +1074,15 @@
   }
 
   /* chart */
+  const CHART_RANGES = ['1m', '6m', '1Yr', '3Yr', '5Yr', '10Yr', 'Max'];
+  // range, interval and log scale, kept across companies and (signed in) devices; style, indicators and compare have their own keys
+  const chartLayout = () => { const l = store.get('chart_layout', null) || {}; return { range: CHART_RANGES.indexOf(l.range) >= 0 ? l.range : '1Yr', interval: ['auto', 'day', 'week', 'month'].indexOf(l.interval) >= 0 ? l.interval : 'auto', log: !!l.log }; };
   function chartSection() {
-    const ranges = ['1m', '6m', '1Yr', '3Yr', '5Yr', '10Yr', 'Max'];
+    const cur = chartLayout().range;
     return '<section class="section card" id="chart"><div class="section-head"><div class="tabs" id="chart-range">' +
-      ranges.map(r => '<button class="btn btn-small' + (r === '1Yr' ? ' active' : '') + '" data-range="' + r + '">' + r + '</button>').join('') +
+      CHART_RANGES.map(r => '<button class="btn btn-small' + (r === cur ? ' active' : '') + '" data-range="' + r + '">' + r + '</button>').join('') +
       '</div><div class="tabs" id="chart-type">' +
-      [['price', 'Price'], ['pe', 'PE Ratio'], ['sales', 'Sales & Margin']].map((t, i) => '<button class="btn btn-small' + (i === 0 ? ' active' : '') + '" data-type="' + t[0] + '">' + t[1] + '</button>').join('') +
+      [['price', 'Price'], ['pe', 'PE band'], ['sales', 'Results'], ['eps', 'Price vs EPS']].map((t, i) => '<button class="btn btn-small' + (i === 0 ? ' active' : '') + '" data-type="' + t[0] + '">' + t[1] + '</button>').join('') +
       '</div></div><div class="chart-tools" id="chart-tools"></div><div class="chart-info" id="chart-info"></div>' +
       '<div class="chart-box"><canvas id="price-chart"></canvas></div><div class="rsi-box" id="rsi-box" hidden><canvas id="rsi-chart"></canvas></div>' +
       '<div class="chart-legend" id="chart-legend"></div></section>';
@@ -1178,8 +1182,10 @@
   const DRAW_COL = '#2962ff';
 
   function bindChart(c) {
-    let range = '1Yr', type = 'price', chart = null, rsiChart = null, tvChart = null;
-    let style = store.get('chart_style', 'candle'), interval = 'auto', logScale = false, measuring = false, measure = null;
+    const lay = chartLayout();
+    let range = lay.range, type = 'price', chart = null, rsiChart = null, tvChart = null;
+    let style = store.get('chart_style', 'candle'), interval = lay.interval, logScale = lay.log, measuring = false, measure = null;
+    const saveLayout = () => store.set('chart_layout', { range, interval, log: logScale });
     if (['candle', 'ha', 'line'].indexOf(style) < 0) style = 'candle';
     const saved = store.get('chart_ind', null) || {};
     const toggles = {};
@@ -1211,6 +1217,37 @@
     const drawKey = 'draw_' + c.symbol;
     let drawings = store.get(drawKey, []) || [], tool = null, pending = null;
     const saveDrawings = () => store.set(drawKey, drawings);
+    // price alerts on this company (signed in): shown as lines on the chart, set by tapping a price
+    let alertLines = [];
+    const loadAlertLines = () => {
+      if (!Account.cloud || !user()) return Promise.resolve();
+      return Account.alerts.list().then(list => {
+        alertLines = (list || []).filter(a => a.active && a.symbol === c.symbol && /^price_/.test(a.kind) && +(a.params || {}).price > 0)
+          .map(a => ({ id: a.id, kind: a.kind, p: +a.params.price }));
+      }).catch(() => {});
+    };
+    function chartAlert(price) {
+      if (!Account.cloud) { toast('Alerts need Sankhyas accounts, which are not switched on for this site'); return; }
+      if (!requireLogin('set price alerts')) return;
+      if (!Account.isPro()) { toast('Price alerts are part of Sankhyas Pro'); location.hash = '#/premium'; return; }
+      const now = c.metrics.price, prof = Account.profile() || {}, cfg = Account.config;
+      const chans = ['email'].concat(prof.telegram_chat_id ? ['telegram'] : []).concat(cfg.whatsappAlerts && prof.whatsapp_opt_in && prof.whatsapp_number ? ['whatsapp'] : []);
+      const p = +(+price).toFixed(price >= 100 ? 1 : 2), above = p >= now;
+      const bd = modal('Price alert: ' + c.symbol,
+        '<div class="ca-form"><label>When the price<select id="ca-kind"><option value="price_above"' + (above ? ' selected' : '') + '>rises above</option><option value="price_below"' + (above ? '' : ' selected') + '>falls below</option></select></label>' +
+        '<label>Price (₹)<input type="number" id="ca-price" min="0" step="any" value="' + p + '"></label></div>' +
+        '<p class="sub">' + esc(c.name) + ' is at ₹ ' + num(now, 2) + ' now. Checked every 30 minutes in market hours; sent by ' +
+        chans.map(x => ({ email: 'email', telegram: 'Telegram', whatsapp: 'WhatsApp' })[x]).join(' and ') + ', then switched off. <a href="#/alerts">All alerts</a></p><div id="ca-msg"></div>',
+        [{ label: 'Cancel' }, { label: 'Create alert', primary: true, onClick: () => {
+          const pr = parseFloat($('#ca-price', bd).value), kind = $('#ca-kind', bd).value;
+          if (!(pr > 0)) { $('#ca-msg', bd).innerHTML = errBox('Enter a price.'); return false; }
+          Account.alerts.add({ kind, symbol: c.symbol, params: { price: pr }, channels: chans }).then(r => {
+            if (r.error) { toast(r.error); return; }
+            toast('Alert set: ' + c.symbol + (kind === 'price_above' ? ' above' : ' below') + ' ₹ ' + num(pr, 2));
+            loadAlertLines().then(() => { if (section.isConnected) draw(true); });
+          });
+        } }]);
+    }
     // compare: indices stay chosen across companies; companies are for this page only
     let compare = (store.get('chart_cmp', []) || []).map(k => CMP_IDX.find(x => x[0] === k)).filter(Boolean).map(x => ({ key: x[0], kind: 'index', name: x[1] }));
     const cmpData = {};
@@ -1401,6 +1438,7 @@
         (style === 'line' ? '' : seg('Interval', [['auto', 'Auto'], ['day', 'D'], ['week', 'W'], ['month', 'M']], interval)) +
         '<details class="ind-menu" data-menu="ind"><summary class="btn btn-small">Indicators' + (on ? ' <span class="ind-count">' + on + '</span>' : '') + '</summary><div class="ind-pop">' +
         PRICE_IND.map(([k, l, col]) => '<label><input type="checkbox" data-ind="' + k + '"' + (toggles[k] ? ' checked' : '') + '><span class="swatch" style="background:' + col + '"></span>' + esc(l) + '</label>').join('') +
+        '<p class="sub ind-note">Your chart setup (style, interval, range, indicators, compare) is kept for every company' + (user() ? ' and synced to your account' : '; sign in to keep it on every device') + '. <button type="button" class="btn-link" id="chart-reset">Reset</button></p>' +
         '</div></details>' +
         (window.LightweightCharts ? cmpMenu() + drawMenu() + '<button type="button" class="btn btn-small" id="chart-shot" title="Image of this chart to share">📷 Share</button>' : '') +
         '<button type="button" class="btn btn-small' + (logScale ? ' active' : '') + '" id="chart-log" title="Logarithmic price scale">Log</button>' +
@@ -1418,9 +1456,11 @@
     function drawMenu() {
       const b = (k, l) => '<button type="button" class="' + (tool === k ? 'active' : '') + '" data-tool="' + k + '">' + l + '</button>';
       return '<details class="ind-menu" data-menu="draw"><summary class="btn btn-small' + (tool ? ' active' : '') + '">✏ Draw' + (drawings.length ? ' <span class="ind-count">' + drawings.length + '</span>' : '') + '</summary><div class="ind-pop draw-pop">' +
-        b('trend', '↗ Trend line') + b('hline', '— Horizontal line') +
+        b('trend', '↗ Trend line') + b('hline', '— Horizontal line') + b('alert', '🔔 Price alert') +
+        drawings.filter(d => d.k === 'hline').map(d => '<button type="button" class="draw-alert" data-line-alert="' + d.p + '">🔔 Alert at ₹ ' + num(d.p, 2) + '</button>').join('') +
         (drawings.length ? '<button type="button" data-draw="undo">↶ Undo last</button><button type="button" data-draw="clear">✕ Clear all</button>' : '') +
-        '<p class="sub">Saved for ' + esc(c.symbol) + ' in this browser.</p></div></details>';
+        (alertLines.length ? '<div class="draw-alerts"><div class="sub">Alerts on ' + esc(c.symbol) + '</div>' + alertLines.map(a => '<div class="draw-alert-row"><span>🔔 ' + (a.kind === 'price_above' ? 'Above' : 'Below') + ' ₹ ' + num(a.p, 2) + '</span><button type="button" class="btn-link" data-alert-del="' + a.id + '" aria-label="Delete alert">✕</button></div>').join('') + '</div>' : '') +
+        '<p class="sub">Lines are saved for ' + esc(c.symbol) + (user() ? ' and synced to your account' : ' in this browser') + '.</p></div></details>';
     }
     function bindTools() {
       // one chart menu open at a time (on phones they sit over the chart)
@@ -1439,19 +1479,32 @@
         setCompare(compare.concat([{ key: co.symbol, kind: 'co', name: co.name.replace(/ (Limited|Ltd\.?)$/i, '') }]));
       });
       $$('#chart-tools [data-tool]').forEach(b => b.onclick = () => { tool = tool === b.dataset.tool ? null : b.dataset.tool; pending = null; measuring = false; measure = null; draw(); });
+      $$('#chart-tools [data-line-alert]').forEach(b => b.onclick = () => chartAlert(+b.dataset.lineAlert));
+      $$('#chart-tools [data-alert-del]').forEach(b => b.onclick = () => Account.alerts.remove(+b.dataset.alertDel).then(r => {
+        if (r.error) { toast(r.error); return; }
+        toast('Alert deleted'); loadAlertLines().then(() => draw(true));
+      }));
       $$('#chart-tools [data-draw]').forEach(b => b.onclick = () => {
         if (b.dataset.draw === 'undo') drawings.pop(); else drawings = [];
         saveDrawings();
         draw(true);
       });
       $$('#chart-tools [data-chart-style]').forEach(b => b.onclick = () => { style = b.dataset.chartStyle; store.set('chart_style', style); measure = null; draw(); });
-      $$('#chart-tools [data-interval]').forEach(b => b.onclick = () => { interval = b.dataset.interval; measure = null; draw(); });
+      $$('#chart-tools [data-interval]').forEach(b => b.onclick = () => { interval = b.dataset.interval; saveLayout(); measure = null; draw(); });
+      const rs = $('#chart-reset'); if (rs) rs.onclick = () => {
+        PRICE_IND.forEach(([k, , , on]) => { toggles[k] = on; });
+        style = 'candle'; interval = 'auto'; logScale = false; range = '1Yr';
+        store.set('chart_ind', null); store.set('chart_style', style); saveLayout();
+        $$('#chart-range button').forEach(x => x.classList.toggle('active', x.dataset.range === range));
+        setCompare([]);
+        toast('Chart reset');
+      };
       $$('#chart-tools [data-ind]').forEach(cb => cb.onchange = () => {
         toggles[cb.dataset.ind] = cb.checked;
         store.set('chart_ind', Object.assign({}, toggles));
         draw(true);
       });
-      const lg = $('#chart-log'); if (lg) lg.onclick = () => { logScale = !logScale; draw(); };
+      const lg = $('#chart-log'); if (lg) lg.onclick = () => { logScale = !logScale; saveLayout(); draw(); };
       const ms = $('#chart-measure'); if (ms) ms.onclick = () => { measuring = !measuring; measure = null; tool = null; pending = null; draw(); };
       const fs = $('#chart-full'); if (fs) fs.onclick = () => toggleFull();
       const sh = $('#chart-shot'); if (sh) sh.onclick = shareChart;
@@ -1533,6 +1586,7 @@
       };
       let legend = '';
       if (type === 'price') { drawPrice(start, n, common, ink3, line, primary); return; }
+      if (window.LightweightCharts) { renderFund(); return; }
       const span = n - start, step = Math.max(1, Math.floor(span / 500)), idx = [];
       for (let i = start; i < n; i += step) idx.push(i);
       if (idx[idx.length - 1] !== n - 1) idx.push(n - 1);
@@ -1562,6 +1616,114 @@
         chart = new Chart($('#price-chart'), { type: 'bar', data, options: common });
       }
       $('#chart-legend').innerHTML = legend;
+    }
+
+    /* PE band, quarterly results and price vs EPS on TradingView's chart (zoom, scroll, tap to read),
+       with a readout above the chart like the price chart's */
+    function renderFund() {
+      const LW = window.LightweightCharts, box = $('.chart-box', section);
+      let host = $('#tv-chart', box);
+      if (!host) { host = document.createElement('div'); host.id = 'tv-chart'; host.className = 'tv-chart'; box.appendChild(host); }
+      host.style.display = '';
+      $('#price-chart').style.display = 'none';
+      const ink3 = cssVar('--ink-3'), grid = cssVar('--line-2'), primary = cssVar('--primary') || '#6056ff';
+      const up = cssVar('--green') || '#11813d', down = cssVar('--red') || '#d33a3a', amber = '#e8a33d', epsCol = '#11813d';
+      const pc = primary.startsWith('#') ? primary : '#6056ff';
+      const tvc = tvChart = LW.createChart(host, {
+        autoSize: true,
+        layout: { background: { type: 'solid', color: cssVar('--bg') || '#fff' }, textColor: ink3, fontFamily: 'Inter, system-ui, sans-serif', fontSize: 11, attributionLogo: true, panes: { separatorColor: grid } },
+        grid: { vertLines: { color: grid }, horzLines: { color: grid } },
+        crosshair: { mode: LW.CrosshairMode.Normal },
+        rightPriceScale: { borderColor: grid, scaleMargins: { top: 0.1, bottom: 0.08 } },
+        leftPriceScale: { borderColor: grid, visible: type !== 'pe', scaleMargins: { top: 0.1, bottom: 0.08 } },
+        timeScale: { borderColor: grid, rightOffset: 2, fixLeftEdge: true, fixRightEdge: true },
+        localization: { locale: 'en-IN', priceFormatter: p => num(p, Math.abs(p) >= 1000 ? 0 : Math.abs(p) >= 10 ? 1 : 2) }
+      });
+      const infoEl = $('#chart-info'), n = c.prices.length;
+      const pct = v => (v == null || !isFinite(v) ? '-' : (v >= 0 ? '+' : '') + num(v, 1) + '%');
+      const cls = v => (v == null ? '' : v >= 0 ? 'up' : 'down');
+      const day = t => new Date(t + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+      let rows = [], read = () => '', legendHtml = '', view = null;
+      const empty = msg => { infoEl.innerHTML = '<span class="sub">' + msg + '</span>'; $('#chart-legend').innerHTML = ''; };
+      if (type === 'sales') {
+        // quarterly sales bars and operating margin, net profit below
+        const MON = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 };
+        const timeOf = lab => { const m = String(lab).match(/^([A-Z][a-z]{2})\w* (\d{4})$/); return m && MON[m[1]] ? m[2] + '-' + String(MON[m[1]]).padStart(2, '0') + '-15' : null; };
+        rows = c.quarters.map((lab, i) => ({ t: timeOf(lab), lab, s: c.q.sales[i], op: c.q.op[i], opm: c.q.opm[i], np: c.q.np[i], eps: c.q.eps[i] })).filter(r => r.t && r.s != null);
+        if (!rows.length) return empty('Quarterly results are not available for this company yet.');
+        const yoy = (i, k) => { const r = rows[i], [mo, y] = r.lab.split(' '), a = rows.find(x => x.lab === mo + ' ' + (+y - 1)); return a && a[k] > 0 && r[k] != null ? (r[k] / a[k] - 1) * 100 : null; };
+        const sales = tvc.addSeries(LW.HistogramSeries, { color: alpha(pc, 0.6), priceLineVisible: false, lastValueVisible: false });
+        sales.setData(rows.map(r => ({ time: r.t, value: r.s })));
+        // margin from 0, so a small move does not look like a big one
+        const opms = rows.map(r => r.opm).filter(v => v != null), oLo = Math.min(0, ...opms), oHi = Math.max(1, ...opms);
+        const opm = tvc.addSeries(LW.LineSeries, { color: amber, lineWidth: 2, priceScaleId: 'left', pointMarkersVisible: true, priceLineVisible: false, lastValueVisible: false,
+          priceFormat: { type: 'custom', formatter: v => num(v, 0) + '%' }, autoscaleInfoProvider: () => ({ priceRange: { minValue: oLo, maxValue: oHi * 1.25 } }) });
+        opm.setData(rows.map(r => (r.opm == null ? { time: r.t } : { time: r.t, value: r.opm })));
+        const np = tvc.addSeries(LW.HistogramSeries, { priceLineVisible: false, lastValueVisible: false }, 1);
+        np.setData(rows.map(r => (r.np == null ? { time: r.t } : { time: r.t, value: r.np, color: alpha(r.np >= 0 ? up : down, 0.65) })));
+        const pn = tvc.panes(); if (pn[1]) pn[1].setHeight(110);
+        read = i => {
+          const r = rows[i], sy = yoy(i, 's'), py = yoy(i, 'np');
+          return '<div class="ci-row"><span class="ci-date">' + esc(r.lab) + ' quarter</span><span>Sales <b>₹ ' + num(r.s, 0) + ' Cr</b> ' + (sy == null ? '' : ' <span class="' + cls(sy) + '">' + pct(sy) + ' YoY</span>') + '</span>' +
+            (r.op != null ? '<span>Op. profit <b>₹ ' + num(r.op, 0) + ' Cr</b></span>' : '') + (r.opm != null ? '<span style="color:' + amber + '">OPM <b>' + num(r.opm, 1) + '%</b></span>' : '') +
+            (r.np != null ? '<span>Net profit <b>₹ ' + num(r.np, 0) + ' Cr</b> ' + (py == null ? '' : ' <span class="' + cls(py) + '">' + pct(py) + ' YoY</span>') + '</span>' : '') + (r.eps != null ? '<span>EPS <b>₹ ' + num(r.eps, 2) + '</b></span>' : '') + '</div>';
+        };
+        legendHtml = '<label><span class="swatch" style="background:' + alpha(pc, 0.6) + '"></span>Quarterly sales (₹ Cr, right)</label><label><span class="swatch" style="background:' + amber + '"></span>Operating margin % (left)</label>' +
+          '<label><span class="swatch" style="background:' + alpha(up, 0.65) + '"></span>Net profit (₹ Cr, below)</label><span class="sub">YoY compares with the same quarter a year before. Tap a quarter to read it.</span>';
+        const qn = { '1m': 4, '6m': 4, '1Yr': 5, '3Yr': 12, '5Yr': 20, '10Yr': 40, 'Max': 1e9 }[range];
+        view = Math.min(rows.length, qn);
+      } else if (type === 'pe') {
+        // PE every day (price / the latest full-year EPS), against its own 5-year median and middle 80%
+        for (let i = 0; i < n; i++) { const pe = peSeries[i]; if (pe > 0 && pe < 500) rows.push({ t: dayStr[i], pe, p: c.prices[i], e: epsAt(c.dates[i]) }); }
+        if (rows.length < 20) return empty('No PE history: the company has not had positive earnings over this period.');
+        const recent = rows.slice(-1260).map(r => r.pe).sort((a, b) => a - b);
+        const q = f => recent[Math.min(recent.length - 1, Math.round(f * (recent.length - 1)))];
+        const med = q(0.5), lo = q(0.1), hi = q(0.9);
+        // the band (low, median, high) always in view, whatever the range
+        const pe = tvc.addSeries(LW.LineSeries, { color: pc, lineWidth: 2, priceLineVisible: false,
+          autoscaleInfoProvider: orig => { const r = orig(); return r && r.priceRange ? { priceRange: { minValue: Math.min(r.priceRange.minValue, lo), maxValue: Math.max(r.priceRange.maxValue, hi) } } : r; } });
+        pe.setData(rows.map(r => ({ time: r.t, value: r.pe })));
+        pe.createPriceLine({ price: med, color: amber, lineWidth: 1, lineStyle: LW.LineStyle.Dashed, axisLabelVisible: true, title: 'Median' });
+        pe.createPriceLine({ price: hi, color: alpha(down, 0.7), lineWidth: 1, lineStyle: LW.LineStyle.Dotted, axisLabelVisible: true, title: 'High' });
+        pe.createPriceLine({ price: lo, color: alpha(up, 0.8), lineWidth: 1, lineStyle: LW.LineStyle.Dotted, axisLabelVisible: true, title: 'Low' });
+        const eps = tvc.addSeries(LW.LineSeries, { color: epsCol, lineWidth: 1.5, lineType: LW.LineType.WithSteps, priceLineVisible: false, crosshairMarkerVisible: false }, 1);
+        eps.setData(rows.map(r => (r.e == null ? { time: r.t } : { time: r.t, value: r.e })));
+        const pn = tvc.panes(); if (pn[1]) pn[1].setHeight(90);
+        const now = rows[rows.length - 1].pe, vsMed = (now / med - 1) * 100;
+        read = i => {
+          const r = rows[i], vm = (r.pe / med - 1) * 100;
+          return '<div class="ci-row"><span class="ci-date">' + day(r.t) + '</span><span style="color:' + pc + '">PE <b>' + num(r.pe, 1) + '</b></span><span>Price <b>₹ ' + num(r.p, 2) + '</b></span>' +
+            (r.e != null ? '<span style="color:' + epsCol + '">EPS (year) <b>₹ ' + num(r.e, 2) + '</b></span>' : '') + '<span>vs 5-year median <b>' + pct(vm) + '</b></span></div>';
+        };
+        legendHtml = '<label><span class="swatch" style="background:' + pc + '"></span>PE</label><label><span class="swatch" style="background:' + amber + '"></span>5-year median ' + num(med, 1) + '</label>' +
+          '<label><span class="swatch" style="background:' + alpha(up, 0.8) + '"></span>Low ' + num(lo, 1) + '</label><label><span class="swatch" style="background:' + alpha(down, 0.7) + '"></span>High ' + num(hi, 1) + '</label>' +
+          '<label><span class="swatch" style="background:' + epsCol + '"></span>EPS (below)</label><span class="sub">PE now ' + num(now, 1) + ', ' + (Math.abs(vsMed) < 1 ? 'at' : num(Math.abs(vsMed), 0) + '% ' + (vsMed > 0 ? 'above' : 'below')) +
+          ' its 5-year median. Low and high hold the middle 80% of the last 5 years. PE here is the price over the latest full year\'s EPS, so it can differ from the trailing PE in the summary.</span>';
+        view = Math.min(rows.length, RANGE_DAYS[range]);
+      } else {
+        // price (right) and earnings per share (left, stepping at each year's results): does the price follow earnings?
+        for (let i = 0; i < n; i++) rows.push({ t: dayStr[i], p: c.prices[i], e: epsAt(c.dates[i]) });
+        if (!rows.length) return empty('No price history.');
+        const price = tvc.addSeries(LW.LineSeries, { color: pc, lineWidth: 2, priceLineVisible: false });
+        price.setData(rows.map(r => ({ time: r.t, value: r.p })));
+        const eps = tvc.addSeries(LW.LineSeries, { color: epsCol, lineWidth: 2, lineType: LW.LineType.WithSteps, priceScaleId: 'left', priceLineVisible: false, crosshairMarkerVisible: false });
+        eps.setData(rows.map(r => (r.e == null ? { time: r.t } : { time: r.t, value: r.e })));
+        read = i => {
+          const r = rows[i], pe = r.e > 0 ? r.p / r.e : null;
+          return '<div class="ci-row"><span class="ci-date">' + day(r.t) + '</span><span style="color:' + pc + '">Price <b>₹ ' + num(r.p, 2) + '</b></span>' +
+            (r.e != null ? '<span style="color:' + epsCol + '">EPS (year) <b>₹ ' + num(r.e, 2) + '</b></span>' : '') + (pe ? '<span>PE <b>' + num(pe, 1) + '</b></span>' : '') + '</div>';
+        };
+        legendHtml = '<label><span class="swatch" style="background:' + pc + '"></span>Price (₹, right)</label><label><span class="swatch" style="background:' + epsCol + '"></span>EPS of the latest full year (₹, left)</label>' +
+          '<span class="sub">When the price rises faster than EPS the stock gets more expensive (higher PE); when EPS rises faster it gets cheaper.</span>';
+        view = Math.min(rows.length, RANGE_DAYS[range]);
+      }
+      $('#chart-legend').innerHTML = legendHtml;
+      tvc.timeScale().setVisibleLogicalRange({ from: rows.length - view - 0.5, to: rows.length - 1 + (type === 'sales' ? 0.5 : 2) });
+      infoEl.innerHTML = read(rows.length - 1);
+      tvc.subscribeCrosshairMove(p => {
+        const i = p.logical == null || !p.point ? rows.length - 1 : Math.max(0, Math.min(rows.length - 1, Math.round(p.logical)));
+        infoEl.innerHTML = read(i);
+      });
     }
 
     function drawPrice(start, n, common, ink3, gridLine, primary) {
@@ -1699,7 +1861,7 @@
           cmpOn.forEach(x => { const vv = cmpVals[x.key]; let k = f; while (k < vv.length && vv[k] == null) k++; extra.push(tag(x.kind === 'co' ? x.key : x.name, x.col, i >= k ? pc(vv[k], vv[i]) : null)); });
         }
         let m = '';
-        if (tool) m = '<div class="ci-measure ci-tool">✏ ' + (tool === 'trend' ? (pending ? 'Now tap the second point of the trend line.' : 'Tap the first point of the trend line.') : 'Tap the price for the horizontal line.') +
+        if (tool) m = '<div class="ci-measure ci-tool">✏ ' + (tool === 'trend' ? (pending ? 'Now tap the second point of the trend line.' : 'Tap the first point of the trend line.') : tool === 'alert' ? 'Tap the price to be alerted at.' : 'Tap the price for the horizontal line.') +
           ' <button type="button" class="btn-link" data-tool-cancel>Cancel</button></div>';
         else if (measure && measure.i1 != null) {
           const a = Math.min(measure.i0, measure.i1), z = Math.max(measure.i0, measure.i1);
@@ -1875,6 +2037,7 @@
         const clampI = l => Math.max(0, Math.min(bars.length - 1, Math.round(l)));
         // bar that holds a date (for drawings made on another interval), else the nearest one
         const barOfDay = d => { const si = sessionOf(d); if (si < 0) return bars.length - 1; let lo = 0, hi = bars.length - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (bars[m].last < si) lo = m + 1; else hi = m; } return lo; };
+        alertLines.forEach(a => main.createPriceLine({ price: a.p, color: '#d97706', lineWidth: 1, lineStyle: LW.LineStyle.LargeDashed, axisLabelVisible: true, title: '🔔 ' + (a.kind === 'price_above' ? '▲' : '▼') }));
         drawings.forEach(dw => {
           if (dw.k === 'hline') { main.createPriceLine({ price: dw.p, color: DRAW_COL, lineWidth: 2, lineStyle: LW.LineStyle.Solid, axisLabelVisible: true, title: '' }); return; }
           let a = barOfDay(dw.d1), z = barOfDay(dw.d2), pa = dw.p1, pz = dw.p2;
@@ -1913,6 +2076,7 @@
             const i = clampI(p.logical), price = main.coordinateToPrice(p.point.y);
             if (price == null) return;
             if (tool === 'hline') { drawings.push({ k: 'hline', p: +price.toFixed(2) }); tool = null; saveDrawings(); draw(); return; }
+            if (tool === 'alert') { tool = null; draw(); chartAlert(price); return; }
             if (!pending) { pending = { d: dayStr[bars[i].first], p: +price.toFixed(2) }; info(i); return; }
             drawings.push({ k: 'trend', d1: pending.d, p1: pending.p, d2: dayStr[bars[i].first], p2: +price.toFixed(2) });
             tool = null; pending = null; saveDrawings(); draw();
@@ -1932,7 +2096,7 @@
         info(bars.length - 1);
       }
     }
-    $$('#chart-range button').forEach(b => b.onclick = () => { range = b.dataset.range; measure = null; $$('#chart-range button').forEach(x => x.classList.toggle('active', x === b)); draw(); });
+    $$('#chart-range button').forEach(b => b.onclick = () => { range = b.dataset.range; saveLayout(); measure = null; $$('#chart-range button').forEach(x => x.classList.toggle('active', x === b)); draw(); });
     $$('#chart-type button').forEach(b => b.onclick = () => { type = b.dataset.type; measure = null; $$('#chart-type button').forEach(x => x.classList.toggle('active', x === b)); draw(); });
     // Cancel on the drawing prompt, ✕ on a compare line in the legend
     section.addEventListener('click', e => {
@@ -1940,7 +2104,7 @@
       const rm = e.target.closest('[data-cmp-remove]');
       if (rm) setCompare(compare.filter(x => x.key !== rm.dataset.cmpRemove));
     });
-    ensureLWC().then(() => Promise.all(compare.map(loadCompare))).then(() => { if (section.isConnected) draw(); });
+    ensureLWC().then(() => Promise.all(compare.map(loadCompare).concat([loadAlertLines()]))).then(() => { if (section.isConnected) draw(); });
   }
 
   /* analysis */
@@ -4221,7 +4385,7 @@
       '<button class="btn btn-primary" type="submit">Create alert</button></form><div id="al-msg"></div>' +
       '<h3>Your alerts</h3><div id="al-list" class="muted">Loading…</div>' +
       '<h3>Recent alerts</h3><div id="al-log" class="muted">Loading…</div>' +
-      '<p class="table-note">Alerts are checked after every data refresh (about every 2 hours during market days). Screen alerts tell you about companies that newly match. Not investment advice.</p>'
+      '<p class="table-note">Alerts are checked after every data refresh: price alerts every 30 minutes in market hours, the rest about every 2 hours. Set a price alert straight from a company\'s chart with ✏ Draw → 🔔 Price alert. Screen alerts tell you about companies that newly match. Not investment advice.</p>'
     );
     const msg = (id, html) => { const el = $(id); if (el) el.innerHTML = html; };
     $('#ch-email').onchange = async e => { const r = await Account.updateProfile({ email_alerts: e.target.checked }); msg('#ch-msg', r.error ? errBox(r.error) : ''); toast(e.target.checked ? 'Email alerts on' : 'Email alerts off'); };
