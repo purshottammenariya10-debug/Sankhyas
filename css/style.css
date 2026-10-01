@@ -156,7 +156,7 @@ label { font-size: 14px; font-weight: 500; display: block; margin-bottom: 6px; }
 .stat-mini:last-child { border-bottom: 0; }
 
 /* Company page */
-.company-head { background: var(--bg); border-bottom: 1px solid var(--line); padding: 20px 0 0; }
+.company-head { background: var(--bg); padding: 20px 0 16px; }
 .company-title { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
 .company-title h1 { margin: 0; }
 .company-links { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; font-size: 13px; }
@@ -171,12 +171,16 @@ label { font-size: 14px; font-weight: 500; display: block; margin-bottom: 6px; }
 .company-actions { display: flex; gap: 8px; }
 .sub-nav {
   position: sticky; top: var(--nav-h); z-index: 40; background: var(--bg); border-bottom: 1px solid var(--line);
-  margin-top: 16px;
 }
+.sub-nav.stuck { box-shadow: 0 2px 8px rgba(15, 23, 42, .08); }
+.sub-nav .sub-nav-name { align-self: center; white-space: nowrap; }
+.sub-nav.stuck a { padding-left: 9px; padding-right: 9px; font-size: 13.5px; }
+.sub-nav-price { font-weight: 500; color: var(--ink-2); margin-left: 6px; font-size: 13px; }
+.sub-nav-price span { margin-left: 4px; }
 .sub-nav .container { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
 .sub-nav .container::-webkit-scrollbar { display: none; }
 .sub-nav a {
-  padding: 12px 14px; font-size: 14px; font-weight: 500; color: var(--ink-2); white-space: nowrap;
+  padding: 12px 12px; font-size: 14px; font-weight: 500; color: var(--ink-2); white-space: nowrap;
   border-bottom: 2px solid transparent;
 }
 .sub-nav a:hover { color: var(--primary); }
@@ -1017,7 +1021,7 @@ h3 .sub { font-weight: 400; margin-left: 6px; }
   .home-page .feature h3 { margin: 0; font-size: 15.5px; }
   .home-page .feature .btn { flex: none; }
   /* company header: name, price on one line, actions in one scrolling row */
-  .company-head { padding-top: 14px; }
+  .company-head { padding-top: 14px; padding-bottom: 10px; }
   .company-title { gap: 10px; }
   .company-title > div:first-child { min-width: 0; width: 100%; }
   .company-title h1 { font-size: 22px; line-height: 1.25; }
@@ -1029,13 +1033,13 @@ h3 .sub { font-weight: 400; margin-left: 6px; }
   .company-actions::-webkit-scrollbar { display: none; }
   .company-actions .btn { flex: none; padding: 6px 12px; font-size: 13.5px; }
   .company-actions #follow-btn { order: -1; }
-  .sub-nav { margin-top: 10px; }
   /* key numbers as two-column tiles instead of one long list */
   .top-ratios { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .top-ratios li { flex-direction: column; gap: 2px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg-2); }
   .top-ratios li .name { font-size: 12.5px; }
   .top-ratios li .value { text-align: left; font-size: 15px; white-space: normal; }
   .sub-nav a { padding: 11px 10px; }
+  .sub-nav-price { display: none; }
   /* lists of companies: no S.No. column, the name stays in view while the numbers scroll */
   table.data.list th:first-child, table.data.list td:first-child { display: none; }
   table.data.list th:nth-child(2), table.data.list td:nth-child(2) {

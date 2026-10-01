@@ -489,10 +489,11 @@
       '<a class="btn" href="#/report/' + encodeURIComponent(c.symbol) + '" title="Printable research report (PDF)">⤓ Research PDF</a>' +
       '<a class="btn" href="#/alerts?s=' + encodeURIComponent(c.symbol) + '" title="Email, Telegram or WhatsApp alerts for this company">🔔 Alerts</a>' +
       '<button class="btn ' + (followed ? 'active' : 'btn-primary') + '" id="follow-btn">' + followLabel() + '</button>' +
-      '</div></div></div>' +
-      '<div class="sub-nav" id="sub-nav"><div class="container"><span class="sub-nav-name">' + esc(c.symbol) + '</span>' +
+      '</div></div></div></div>' +
+      // outside the header, so it stays pinned under the top bar while the page scrolls (sticky works within its parent)
+      '<div class="sub-nav" id="sub-nav"><div class="container"><span class="sub-nav-name">' + esc(c.symbol) +
+      ' <span class="sub-nav-price">₹ ' + num(m.price, m.price < 100 ? 2 : 0) + ' <span class="' + signCls(m.change) + '">' + (m.change >= 0 ? '▲' : '▼') + num(Math.abs(m.changePct), 2) + '%</span></span></span>' +
       COMPANY_SECTIONS.map(s => '<a href="" data-target="' + s[0] + '">' + esc(s[1]) + '</a>').join('') + '</div></div>' +
-      '</div>' +
       '<div class="container page">' +
       summarySection(c) + aiSection(c) + insightsSection(c) + chartSection(c) + analysisSection(c) + peersSection(c) + quartersSection(c) +
       plSection(c) + bsSection(c) + cfSection(c) + ratiosSection(c) + shareholdingSection(c) + documentsSection(c) + notesSection(c) +
@@ -537,7 +538,14 @@
         if (el && s[0] !== 'top' && el.getBoundingClientRect().top < 140) current = s[0];
       });
       $$('#sub-nav a').forEach(a => a.classList.toggle('active', a.dataset.target === current));
+      // phones: keep the highlighted tab in view in the scrolling tab row
+      if (current !== lastTab) {
+        lastTab = current;
+        const a = $('#sub-nav a.active'), row = $('#sub-nav .container');
+        if (a && row && row.scrollWidth > row.clientWidth) row.scrollTo({ left: Math.max(0, a.offsetLeft - row.clientWidth / 2 + a.offsetWidth / 2), behavior: 'smooth' });
+      }
     };
+    let lastTab = null;
     window.addEventListener('scroll', onScroll, { passive: true });
     onLeave(() => window.removeEventListener('scroll', onScroll));
     onScroll();
