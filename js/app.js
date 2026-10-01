@@ -526,16 +526,20 @@
     $$('#sub-nav a').forEach(a => a.addEventListener('click', e => {
       e.preventDefault();
       const el = document.getElementById(a.dataset.target);
-      if (el) window.scrollTo({ top: a.dataset.target === 'top' ? 0 : el.getBoundingClientRect().top + window.scrollY - 118, behavior: 'smooth' });
+      if (el) window.scrollTo({ top: a.dataset.target === 'top' ? 0 : el.getBoundingClientRect().top + window.scrollY - pinnedBottom() - 8, behavior: 'smooth' });
     }));
+    // bottom of the top bar and the pinned tabs, measured (the top bar is taller on phones with a notch)
+    const barBottom = () => { const b = $('.navbar'); return b ? b.getBoundingClientRect().bottom : 56; };
+    const pinnedBottom = () => { const n = $('#sub-nav'); return barBottom() + (n ? n.offsetHeight : 46); };
     const onScroll = () => {
       const nav = $('#sub-nav');
       if (!nav) return;
-      nav.classList.toggle('stuck', nav.getBoundingClientRect().top <= parseInt(getComputedStyle(document.documentElement).getPropertyValue('--nav-h'), 10) + 1);
+      nav.classList.toggle('stuck', nav.getBoundingClientRect().top <= barBottom() + 1);
       let current = 'top';
+      const line = pinnedBottom() + 40;
       COMPANY_SECTIONS.forEach(s => {
         const el = document.getElementById(s[0]);
-        if (el && s[0] !== 'top' && el.getBoundingClientRect().top < 140) current = s[0];
+        if (el && s[0] !== 'top' && el.getBoundingClientRect().top < line) current = s[0];
       });
       $$('#sub-nav a').forEach(a => a.classList.toggle('active', a.dataset.target === current));
       // phones: keep the highlighted tab in view in the scrolling tab row

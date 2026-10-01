@@ -183,7 +183,7 @@ label { font-size: 14px; font-weight: 500; display: block; margin-bottom: 6px; }
   padding: 12px 12px; font-size: 14px; font-weight: 500; color: var(--ink-2); white-space: nowrap;
   border-bottom: 2px solid transparent;
 }
-.sub-nav a:hover { color: var(--primary); }
+@media (hover: hover) { .sub-nav a:hover { color: var(--primary); } }   /* phones keep :hover after a tap */
 .sub-nav a.active { color: var(--primary); border-bottom-color: var(--primary); }
 .sub-nav .sub-nav-name { font-weight: 600; color: var(--ink); padding-right: 18px; display: none; }
 .sub-nav.stuck .sub-nav-name { display: inline-block; }
@@ -846,6 +846,8 @@ details.subs div { display: flex; justify-content: space-between; gap: 10px; fon
   .menu-toggle { display: none !important; }
   .nav-links { display: none !important; }
   .navbar { padding-top: env(safe-area-inset-top); height: calc(var(--nav-h) + env(safe-area-inset-top)); }
+  /* pinned section tabs sit below the taller top bar (phones with a notch, the installed app) */
+  .sub-nav { top: calc(var(--nav-h) + env(safe-area-inset-top, 0px)); }
 }
 .more-sheet { position: fixed; inset: 0; z-index: 80; pointer-events: none; }
 .more-sheet .ms-backdrop { position: absolute; inset: 0; background: rgba(8, 20, 28, .45); opacity: 0; transition: opacity .2s; }
