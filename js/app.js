@@ -516,7 +516,7 @@
     // phones: year-by-year tables open on the latest years (the row names stay in view)
     const latestFirst = () => {
       if (token !== navToken || !window.matchMedia('(max-width: 720px)').matches) return;
-      ['quarters', 'profit-loss', 'balance-sheet', 'cash-flow', 'ratios'].forEach(id => $$('#' + id + ' .table-wrap').forEach(w => {
+      ['quarters', 'profit-loss', 'balance-sheet', 'cash-flow', 'ratios', 'shareholding'].forEach(id => $$('#' + id + ' .table-wrap').forEach(w => {
         if (!w.dataset.latest && w.scrollWidth > w.clientWidth) { w.dataset.latest = 1; w.scrollLeft = w.scrollWidth; }
       }));
     };
@@ -595,7 +595,7 @@
         if (token !== navToken || !sh || !(sh.quarters || []).some(q => q.fii != null)) return;
         c._shp = sh;
         const el = $('#sh-table');
-        if (el) el.innerHTML = shareholdingTable(c, !!$('#sh-tabs [data-sh=y].active'));
+        if (el) { el.innerHTML = shareholdingTable(c, !!$('#sh-tabs [data-sh=y].active')); bindStatements(el); latestCols(el); }
         refreshInsights(c);
         refreshSummary(c);
       });
@@ -2356,16 +2356,21 @@
     const hs = Insights.holdingStats(c._shp);
     const chg = (v, label) => (v == null || Math.abs(v) < 0.01 ? '' : '<span class="' + (v > 0 ? 'up' : 'down') + '">' + label + ' ' + (v > 0 ? '+' : '−') + num(Math.abs(v), 2) + ' pts</span>');
     const moves = hs ? [chg(hs.promoterChg1q, 'Promoters'), chg(hs.fiiChg1q, 'FIIs'), chg(hs.diiChg1q, 'DIIs')].filter(Boolean) : [];
-    return statementTable(heads, [
-      { label: 'Promoters', values: col('promoter'), type: 'pct', dec: 2 },
-      { label: 'FIIs', values: col('fii'), type: 'pct', dec: 2 },
-      { label: 'DIIs', values: col('dii'), type: 'pct', dec: 2 },
-      { label: 'Government', values: col('gov'), type: 'pct', dec: 2 },
-      { label: 'Public', values: col('public'), type: 'pct', dec: 2 },
-      { label: 'No. of Shareholders', values: col('holders') }
-    ].concat(Q.some(q => q.pledge > 0) ? [{ label: 'Pledged (% of promoter)', values: col('pledge'), type: 'pct', dec: 2 }] : []), { highlightLast: true }) +
+    // + on a group lists its named holders (every promoter group entity, public holders above 1%), largest now first
+    const group = (label, k) => {
+      const names = {};
+      Q.forEach((q, i) => ((q.h && q.h[k]) || []).forEach(([nm, p]) => { (names[nm] = names[nm] || new Array(Q.length).fill(null))[i] = p; }));
+      const list = Object.keys(names).sort((a, b) => (names[b][Q.length - 1] || 0) - (names[a][Q.length - 1] || 0) || Math.max(...names[b].map(v => v || 0)) - Math.max(...names[a].map(v => v || 0)));
+      const row = { label, values: col(k), type: 'pct', dec: 2 };
+      if (!list.length) return [row];
+      return [Object.assign(row, { expand: 'sh-' + k })].concat(list.map(nm => ({ label: nm, values: names[nm], type: 'pct', dec: 2, sub: 'sh-' + k })));
+    };
+    return statementTable(heads, [].concat(
+      group('Promoters', 'promoter'), group('FIIs', 'fii'), group('DIIs', 'dii'), group('Government', 'gov'), group('Public', 'public'),
+      [{ label: 'No. of Shareholders', values: col('holders') }]
+    ).concat(Q.some(q => q.pledge > 0) ? [{ label: 'Pledged (% of promoter)', values: col('pledge'), type: 'pct', dec: 2 }] : []), { highlightLast: true }) +
       '<p class="table-note">' + (moves.length ? 'Last quarter: ' + moves.join(' &middot; ') + '. ' : '') + (hs && hs.fiiUpQtrs >= 2 ? 'FIIs have raised their stake for ' + hs.fiiUpQtrs + ' quarters in a row. ' : '') +
-      'Source: shareholding pattern filed with NSE.</p>';
+      (Q.some(q => q.h) ? 'Tap + to see the shareholders: every promoter group holder, and other holders of more than 1%. ' : '') + 'Source: shareholding pattern filed with NSE.</p>';
   }
   function shareholdingSection(c) {
     return '<section class="section card" id="shareholding"><div class="section-head"><div><h2>Shareholding Pattern</h2><p>Numbers in percentages</p></div>' +
@@ -2373,10 +2378,17 @@
       '<div class="tabs" id="sh-tabs"><button class="btn btn-small active" data-sh="q">Quarterly</button><button class="btn btn-small" data-sh="y">Yearly</button></div></div></div>' +
       '<div id="sh-table">' + shareholdingTable(c, false) + '</div></section>';
   }
+  // phones: a year-by-year table opens on its latest columns
+  function latestCols(root) {
+    if (!window.matchMedia('(max-width: 720px)').matches) return;
+    $$('.table-wrap', root).forEach(w => { if (w.scrollWidth > w.clientWidth) w.scrollLeft = w.scrollWidth; });
+  }
   function bindShareholding(c) {
     $$('#sh-tabs button').forEach(b => b.onclick = () => {
       $$('#sh-tabs button').forEach(x => x.classList.toggle('active', x === b));
       $('#sh-table').innerHTML = shareholdingTable(c, b.dataset.sh === 'y');
+      bindStatements($('#sh-table'));
+      latestCols($('#sh-table'));
     });
     $('#trades-btn').onclick = () => openTrades(c);
     const ca = $('#ca-btn');

@@ -1064,3 +1064,7 @@ h3 .sub { font-weight: 400; margin-left: 6px; }
 .ind-note { margin: 8px 0 2px; font-size: 12px; }
 .ca-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
 .ca-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--ink-2); }
+
+/* shareholding: named holders under each group */
+#sh-table table.data tr.sub-row td:first-child { white-space: normal; min-width: 210px; max-width: 300px; font-size: 13px; line-height: 1.35; }
+@media (max-width: 720px) { #sh-table table.data tr.sub-row td:first-child { min-width: 140px; max-width: 170px; } }

@@ -69,18 +69,67 @@ SHP_ROWS = {"promoter": "ShareholdingOfPromoterAndPromoterGroup_ContextI", "fii"
             "dii": "InstitutionsDomestic_ContextI", "gov": "Governments_ContextI", "public_all": "PublicShareholding_ContextI"}
 
 
-def read_shp_xbrl(url, limit=1_600_000):
-    """Only the start of a shareholding XBRL is needed: the category totals come before the long
-    list of individual holders, so stop reading once the grand total has been seen."""
+def read_shp_xbrl(url, limit=8_000_000):
+    """The whole shareholding XBRL: the category totals come first, then the named holders (every
+    promoter group entity, and public holders of more than 1%)."""
     buf = ""
-    with requests.get(url, headers=HEADERS, timeout=60, stream=True) as r:
+    with requests.get(url, headers=HEADERS, timeout=90, stream=True) as r:
         r.raise_for_status()
         for chunk in r.iter_content(65536, decode_unicode=True):
             buf += chunk if isinstance(chunk, str) else chunk.decode("utf-8", "ignore")
-            i = buf.find('contextRef="ShareholdingPattern_ContextI"')
-            if (i >= 0 and len(buf) > i + 40000) or len(buf) > limit:
+            if len(buf) > limit:
                 break
     return buf
+
+
+# named holders: the XBRL category of each name (prefix "DetailsOfSharesHeldBy" removed) tells the group
+HOLDER_V = 1
+DII_CATS = ("MutualFundsOrUTI", "VentureCapitalFunds", "AlternativeInvestmentFunds", "Banks", "InsuranceCompanies", "ProvidentFundsOrPensionFunds",
+            "AssetReconstructionCompanies", "SovereignWealthFundsDomestic", "NBFCsRegisteredWithRBI", "OtherFinancialInstitutions", "OtherInstitutionsDomestic")
+PROMOTER_CATS = ("IndividualsOrHUF", "IndividualsOrHinduUndividedFamily", "OthersIndianShareholders", "OtherForeignShareholders",
+                 "CentralGovernmentOrStateGovernment", "CentralGovernmentOrStateGovernments", "FinancialInstitutionsOrBanks",
+                 "IndividualsNonResidentIndividualsOrForeignIndividuals")
+GOV_CATS = ("CentralGovernmentOrPresidentOfIndia", "StateGovernmentsOrGovernors", "ShareholdingByCompaniesOrBodiesCorporateWhereCentralOrStateGovernmentIsPromoter")
+SKIP_CATS = ("CustodianOrDRHolder", "EmployeeBenefitsTrusts")
+
+
+def holder_group(cat):
+    cat = re.sub(r"^DetailsOfSharesHeldBy", "", cat)
+    if cat in SKIP_CATS:
+        return None
+    if cat in PROMOTER_CATS:
+        return "promoter"
+    if cat in DII_CATS:
+        return "dii"
+    if cat in GOV_CATS:
+        return "gov"
+    if "Foreign" in cat and cat not in ("ForeignNationals", "ForeignCompanies"):
+        return "fii"
+    return "public"
+
+
+def parse_holders(text, mult):
+    """{group: [[name, %], ...]} largest first; holders at 0% (dormant promoter group entities) left out."""
+    f = facts(text)
+    out = {}
+    for (name, ctx), val in f.items():
+        if name != "NameOfTheShareholder" or not ctx.startswith("D_"):
+            continue
+        c = ctx[2:]
+        p = num(f.get(("ShareholdingAsAPercentageOfTotalNumberOfShares", c)))
+        g = holder_group(re.sub(r"_Context\w+$", "", c))
+        if g is None or p is None or p <= 0:
+            continue
+        nm = html.unescape(val).strip()
+        if nm:
+            out.setdefault(g, []).append([nm[:90], round(p * mult, 2)])
+    for g in out:
+        # one entry per name (some filers list a holder twice), largest first, at most 30 a group
+        best = {}
+        for nm, p in out[g]:
+            best[nm] = max(p, best.get(nm, 0))
+        out[g] = sorted(([k, v] for k, v in best.items()), key=lambda x: -x[1])[:30]
+    return out
 
 
 def parse_shp(text):
@@ -109,6 +158,8 @@ def parse_shp(text):
     inst = sum(v or 0 for v in (row["fii"], row["dii"], row["gov"]))
     row["public"] = round(max(0.0, 100 - (row["promoter"] or 0) - inst), 2)
     row.pop("public_all", None)
+    row["h"] = parse_holders(text, mult)
+    row["hv"] = HOLDER_V
     return row
 
 
@@ -320,13 +371,16 @@ def update_shp(nse, sym, stats, xbrl_budget, index="equities"):
         q = iso_date(r.get("date") or "")
         if q and q[5:] in QUARTER_ENDS and (q not in by_q or (r.get("broadcastDate") or "") > (by_q[q].get("broadcastDate") or "")):
             by_q[q] = r
+    names_read = 0
     for q in sorted(by_q, reverse=True)[:KEEP_SHP]:
         r = by_q[q]
         cur = have.get(q) or {"q": q}
         cur["promoter"] = num(r.get("pr_and_prgrp")) if cur.get("fii") is None else cur.get("promoter")
         have[q] = cur
         if cur.get("fii") is not None and cur.get("src") == r.get("xbrl"):
-            continue
+            if cur.get("hv") == HOLDER_V or names_read >= 4:
+                continue
+            names_read += 1                       # read again for the named holders (newest quarters first)
         if not r.get("xbrl") or stats["shp_x"] >= xbrl_budget:
             continue
         try:
@@ -404,9 +458,11 @@ def main(argv=None):
     # latest quarter missing first (largest companies first), then gaps in older quarters
     latest_missing = sorted([s for s in nse_syms if docs[s] and docs[s]["quarters"] and docs[s]["quarters"][0].get("fii") is None], key=lambda s: -mcap.get(s, 0))
     incomplete = latest_missing + [s for s in nse_syms if docs[s] and any(q.get("fii") is None for q in docs[s]["quarters"])]
+    # files read before the named holders were kept: largest companies first
+    no_names = sorted([s for s in nse_syms if docs[s] and docs[s]["quarters"] and docs[s]["quarters"][0].get("hv") != HOLDER_V], key=lambda s: -mcap.get(s, 0))
     stale = sorted([s for s in nse_syms if docs[s] and age_days(docs[s]) > 15], key=lambda s: -age_days(docs[s]))
     # a company showing a blank latest quarter goes before the backlog of never-fetched ones
-    queue = list(dict.fromkeys(latest_missing[:60] + never + incomplete + stale))[:args.max_shp]
+    queue = list(dict.fromkeys(latest_missing[:60] + never + no_names[:150] + incomplete + stale))[:args.max_shp]
     for sym in queue:
         if stats["shp_x"] >= args.max_shp_xbrl and docs.get(sym):
             continue
