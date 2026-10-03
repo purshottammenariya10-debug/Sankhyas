@@ -354,7 +354,7 @@
       '': pageHome, company: pageCompany, screens: pageScreens, screen: pageScreen, feed: pageFeed, tools: pageTools,
       market: pageMarket, results: pageResults, compare: pageCompare, watchlist: pageWatchlist,
       login: pageLogin, register: pageRegister, premium: pagePremium, about: pageAbout, ai: pageAI,
-      deals: pageDeals, orders: pageOrders, ratings: pageRatings, report: pageReport,
+      deals: pageDeals, orders: pageOrders, ratings: pageRatings, investors: pageInvestors, investor: pageInvestor, holders: pageHolders, report: pageReport,
       ipo: pageIPO, admin: pageAdmin, calendar: pageCalendar, dividends: pageDividends, themes: pageThemes, theme: pageThemes, studio: pageStudio,
       account: pageAccount, portfolio: pagePortfolio, alerts: pageAlerts, forgot: pageForgot, reset: pageReset, terms: pageLegal, privacy: pageLegal, refunds: pageLegal, contact: pageLegal
     };
@@ -2370,7 +2370,7 @@
       [{ label: 'No. of Shareholders', values: col('holders') }]
     ).concat(Q.some(q => q.pledge > 0) ? [{ label: 'Pledged (% of promoter)', values: col('pledge'), type: 'pct', dec: 2 }] : []), { highlightLast: true }) +
       '<p class="table-note">' + (moves.length ? 'Last quarter: ' + moves.join(' &middot; ') + '. ' : '') + (hs && hs.fiiUpQtrs >= 2 ? 'FIIs have raised their stake for ' + hs.fiiUpQtrs + ' quarters in a row. ' : '') +
-      (Q.some(q => q.h) ? 'Tap + to see the shareholders: every promoter group holder, and other holders of more than 1%. ' : '') + 'Source: shareholding pattern filed with NSE.</p>';
+      (Q.some(q => q.h) ? 'Tap + to see the shareholders: every promoter group holder, and other holders of more than 1%. ' : '') + 'Source: shareholding pattern filed with NSE.</p>' + holderChangesBlock(c);
   }
   function shareholdingSection(c) {
     return '<section class="section card" id="shareholding"><div class="section-head"><div><h2>Shareholding Pattern</h2><p>Numbers in percentages</p></div>' +
@@ -3292,6 +3292,8 @@
       ['#/watchlist', 'Watchlist', 'Track companies you follow in one table.'],
       ['#/screens', 'Popular screens', 'Ready-made screens such as Magic Formula and Coffee Can.'],
       ['#/deals', 'Smart money', 'Bulk and block deals, and insider and promoter buying and selling, market-wide.'],
+      ['#/investors', 'Investor portfolios', 'What LIC, mutual funds, foreign funds and well-known investors hold, and how their stakes changed.'],
+      ['#/holders', 'Who bought and who sold', 'Named shareholders who came onto, added to, trimmed or left a company\'s list last quarter.'],
       ['#/orders', 'Order wins', 'Every order and contract win announced to the exchange, with its value.'],
       ['#/ratings', 'Credit rating changes', 'Upgrades, downgrades and outlook changes from CRISIL, ICRA, CARE, India Ratings and others.'],
       ['#/ipo', 'IPOs', 'Open and upcoming IPOs with live subscription, recent listings vs issue price, and rights issues.'],
@@ -4744,6 +4746,142 @@
       '<h3>Disclaimer</h3><p class="muted">Nothing on this site is investment advice. Please consult a SEBI registered advisor before investing.</p></article></div>';
   }
 
+  /* ---------- Investors: named shareholders' portfolios, and who came, went, added or trimmed this quarter ----------
+   * From the shareholding patterns companies file each quarter, which name every promoter group holder and
+   * every other holder of 1% or more (data/yahoo/investors.json, data/yahoo/inv/<letter>.json). */
+  const INV_GROUPS = [['', 'All'], ['mf', 'Mutual fund houses'], ['fii', 'Foreign investors'], ['dii', 'Indian institutions'], ['public', 'Individuals & others'], ['promoter', 'Promoters'], ['gov', 'Government']];
+  const INV_TYPE = { mf: 'Mutual fund house', fii: 'Foreign investor', dii: 'Indian institution', public: 'Individual / other', promoter: 'Promoter group', gov: 'Government' };
+  const HOLD_KIND = { new: ['New', 'up', 'Came onto the list: bought in, or crossed 1%'], up: ['Added', 'up', 'Raised its stake'], down: ['Trimmed', 'down', 'Cut its stake'], exit: ['Left the list', 'down', 'Sold out, or fell below 1%'] };
+  const qLabel = q => monYear(new Date(q + 'T00:00:00'));
+  const invLink = (slug, name) => '<a href="#/investor/' + encodeURIComponent(slug) + '">' + esc(name) + '</a>';
+  const coLink = sym => { const c = Data.getCompany(sym); return Data.exists(sym) ? '<a href="#/company/' + encodeURIComponent(sym) + '">' + esc((c && c.name) || sym) + '</a>' : esc(sym); };
+  const pts = v => (v > 0 ? '+' : v < 0 ? '−' : '') + num(Math.abs(v), 2);
+  const invNote = '<p class="table-note">From the shareholding patterns companies file with NSE each quarter. These list every promoter group holder by name, and other holders only at 1% or more. So "came onto the list" can mean crossing 1%, and "left the list" can mean falling below it. Mutual fund houses add up the schemes listed by name. Values are at today\'s market value. For information only, not investment advice.</p>';
+  function invTabs(active) {
+    return '<div class="seg" style="margin-bottom:14px"><a class="' + (active === 'investors' ? 'active' : '') + '" href="#/investors">Investors</a><a class="' + (active === 'holders' ? 'active' : '') + '" href="#/holders">Who bought &amp; sold</a></div>';
+  }
+
+  function pageInvestors(parts, params) {
+    setTitle('Investors and their portfolios');
+    const g = params.g || '', q = (params.q || '').trim();
+    app.innerHTML = LOADING;
+    const token = navToken;
+    Data.loadInvestors().then(d => {
+      if (token !== navToken) return;
+      const link = o => '#/investors?' + Object.entries(Object.assign({ g, q }, o)).filter(([, v]) => v !== '').map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+      const match = text => { const words = text.toLowerCase().split(/\s+/).filter(Boolean); return d ? d.inv.filter(r => (!g || r[2] === g) && words.every(w => r[1].toLowerCase().indexOf(w) >= 0)) : []; };
+      const body = list => (list.length ? list.slice(0, 200).map((r, i) => '<tr><td>' + (i + 1) + '</td><td class="l">' + invLink(r[0], r[1]) + '<div class="inv-sub muted">' + (INV_TYPE[r[2]] || '') + '</div></td><td class="l inv-col">' + (INV_TYPE[r[2]] || '') + '</td><td>' + r[3] + '</td><td>' + num(r[4], 0) + '</td></tr>').join('')
+        : '<tr><td colspan="5" class="muted" style="text-align:center;padding:20px">No investor matches.</td></tr>');
+      const more = list => (list.length > 200 ? 'Showing the 200 largest of ' + list.length + '. Search to find others.' : list.length + ' investor' + (list.length === 1 ? '' : 's') + '.');
+      const list = match(q);
+      app.innerHTML = '<div class="container page"><div class="card">' + invTabs('investors') +
+        '<div class="section-head"><div><h1>Investors</h1><p>Who owns what: the stocks each big investor holds, with the stake and how it changed last quarter.</p></div></div>' +
+        (!d ? '<p class="muted">Investor portfolios appear with the live data, from shareholding patterns.</p>'
+          : '<div class="flex flex-wrap" style="gap:10px;margin-bottom:14px"><input type="search" id="inv-q" placeholder="Search: LIC, Singapore, Vanguard, Jhunjhunwala…" value="' + esc(q) + '" style="max-width:340px">' +
+            '<div class="seg flex-wrap">' + INV_GROUPS.map(([k, l]) => '<a class="' + (k === g ? 'active' : '') + '" href="' + link({ g: k }) + '">' + l + '</a>').join('') + '</div></div>' +
+            '<div class="table-wrap"><table class="data list sno hold-list"><thead><tr><th>S.No.</th><th class="l">Investor</th><th class="l inv-col">Type</th><th>Companies</th><th>Value ₹ Cr</th></tr></thead><tbody id="inv-body">' +
+            body(list) + '</tbody></table></div><p class="table-note" id="inv-more">' + more(list) + '</p>' + invNote) +
+        '</div></div>';
+      const box = $('#inv-q');
+      if (box) {
+        let t;
+        box.oninput = () => {
+          clearTimeout(t);
+          t = setTimeout(() => {
+            const l = match(box.value);
+            $('#inv-body').innerHTML = body(l);
+            $('#inv-more').textContent = more(l);
+            history.replaceState(null, '', link({ q: box.value.trim() }));
+          }, 200);
+        };
+      }
+    });
+  }
+
+  function pageInvestor(parts) {
+    const slug = parts[0] || '';
+    setTitle('Investor portfolio');
+    app.innerHTML = LOADING;
+    const token = navToken;
+    Promise.all([Data.loadInvestors(), Data.loadInvestorHoldings(slug)]).then(([d, hold]) => {
+      if (token !== navToken) return;
+      const row = d && d.inv.find(r => r[0] === slug);
+      if (!row || !hold) {
+        app.innerHTML = '<div class="container page"><div class="card">' + invTabs('') + '<h1>Investor not found</h1><p class="muted">We have no holdings under this name. <a href="#/investors">Search the investors</a>.</p></div></div>';
+        return;
+      }
+      setTitle(row[1] + ' portfolio');
+      const mcap = s => { const c = Data.getCompany(s); return (c && c.metrics.marketCap) || 0; };
+      const held = hold.filter(h => h[1] > 0), left = hold.filter(h => !(h[1] > 0));
+      const kind = h => (h[2] == null ? '' : !(h[2] > 0) ? 'new' : h[1] - h[2] >= 0.01 ? 'up' : h[2] - h[1] >= 0.01 ? 'down' : '');
+      const count = k => held.filter(h => kind(h) === k).length;
+      const value = held.reduce((t, h) => t + h[1] / 100 * mcap(h[0]), 0);
+      const quarters = [...new Set(held.map(h => h[3]))].sort().reverse();
+      const badge = k => (k ? '<span class="hold-tag ' + HOLD_KIND[k][1] + '" title="' + HOLD_KIND[k][2] + '">' + HOLD_KIND[k][0] + '</span>' : '');
+      app.innerHTML = '<div class="container page"><div class="card">' + invTabs('') +
+        '<div class="section-head"><div><h1>' + esc(row[1]) + '</h1><p>' + (INV_TYPE[row[2]] || 'Investor') + ' &middot; holdings as filed for ' + quarters.slice(0, 2).map(qLabel).join(' and ') + (quarters.length > 2 ? ' and earlier' : '') + '</p></div></div>' +
+        '<div class="stats-row"><div class="stat"><div class="sub">Companies</div><b>' + held.length + '</b></div><div class="stat"><div class="sub">Holding value</div><b>₹ ' + num(value, 0) + ' Cr</b></div>' +
+        '<div class="stat"><div class="sub">Last quarter</div><b>' + [['new', 'new'], ['up', 'added'], ['down', 'trimmed']].map(([k, l]) => count(k) + ' ' + l).join(', ') + (left.length ? ', ' + left.length + ' left' : '') + '</b></div></div>' +
+        '<div class="table-wrap"><table class="data list sno"><thead><tr><th>S.No.</th><th class="l">Company</th><th>Stake %</th><th>Change pts</th><th>Previous %</th><th>Value ₹ Cr</th><th class="l">Quarter</th></tr></thead><tbody>' +
+        held.map((h, i) => '<tr><td>' + (i + 1) + '</td><td class="l">' + coLink(h[0]) + ' ' + badge(kind(h)) + '</td><td>' + num(h[1], 2) + '</td><td class="' + (kind(h) === 'up' || kind(h) === 'new' ? 'up' : kind(h) === 'down' ? 'down' : '') + '">' +
+          (h[2] == null ? '<span class="muted">-</span>' : pts(h[1] - h[2])) + '</td><td>' + (h[2] == null ? '<span class="muted">-</span>' : num(h[2], 2)) + '</td><td>' + num(h[1] / 100 * mcap(h[0]), 0) + '</td><td class="l">' + qLabel(h[3]) + '</td></tr>').join('') +
+        '</tbody></table></div>' +
+        (left.length ? '<h3 style="margin-top:20px">Left the list last quarter</h3><p class="muted" style="margin-top:0">Sold out, or now below 1% (promoters are always listed).</p><div class="table-wrap"><table class="data list"><thead><tr><th class="l">Company</th><th>Previous %</th><th class="l">Quarter</th></tr></thead><tbody>' +
+          left.map(h => '<tr><td class="l">' + coLink(h[0]) + '</td><td>' + num(h[2], 2) + '</td><td class="l">' + qLabel(h[3]) + '</td></tr>').join('') + '</tbody></table></div>' : '') +
+        invNote + '</div></div>';
+    });
+  }
+
+  function pageHolders(parts, params) {
+    setTitle('Who bought and who sold this quarter');
+    const kind = HOLD_KIND[params.kind] ? params.kind : 'new', g = params.g || '';
+    app.innerHTML = LOADING;
+    const token = navToken;
+    Data.loadInvestors().then(d => {
+      if (token !== navToken) return;
+      const inv = {};
+      (d ? d.inv : []).forEach(r => { inv[r[0]] = r; });
+      // the quarter most companies have filed for so far, unless another is picked
+      const byQ = {};
+      (d ? d.chg : []).forEach(x => { byQ[x[5]] = (byQ[x[5]] || 0) + 1; });
+      const qs = Object.keys(byQ).filter(k => byQ[k] >= 20).sort().reverse();
+      const top = qs.slice().sort((a, b) => byQ[b] - byQ[a])[0];
+      const q = qs.indexOf(params.q) >= 0 ? params.q : top;
+      const link = o => '#/holders?' + Object.entries(Object.assign({ kind, g, q }, o)).filter(([, v]) => v).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+      const all = d ? d.chg.filter(x => x[5] === q && inv[x[1]] && (!g || inv[x[1]][2] === g)) : [];
+      const list = all.filter(x => x[2] === kind);
+      const limit = listLimit(15);
+      app.innerHTML = '<div class="container page"><div class="card">' + invTabs('holders') +
+        '<div class="section-head"><div><h1>Who bought and who sold</h1><p>Named shareholders who came onto a company\'s list, added, trimmed or left it, ' + (q ? qLabel(q) + ' against the quarter before' : 'last quarter') + '. Biggest by value first.</p></div></div>' +
+        (!d || !q ? '<p class="muted">Changes appear once companies have filed two quarters of named shareholders.</p>'
+          : '<div class="flex flex-wrap" style="gap:10px;margin-bottom:14px"><div class="seg">' + Object.entries(HOLD_KIND).map(([k, v]) => '<a class="' + (k === kind ? 'active' : '') + '" href="' + link({ kind: k }) + '">' + v[0] + ' <span class="sub">' + all.filter(x => x[2] === k).length + '</span></a>').join('') + '</div>' +
+            '<select id="hold-g" aria-label="Investor type" style="width:auto">' + INV_GROUPS.map(([k, l]) => '<option value="' + k + '"' + (k === g ? ' selected' : '') + '>' + (k ? l : 'All investors') + '</option>').join('') + '</select>' +
+            (qs.length > 1 ? '<select id="hold-q" aria-label="Quarter" style="width:auto">' + qs.map(k => '<option value="' + k + '"' + (k === q ? ' selected' : '') + '>' + qLabel(k) + '</option>').join('') + '</select>' : '') + '</div>' +
+            '<p class="muted" style="margin-top:0">' + HOLD_KIND[kind][2] + '.</p>' +
+            '<div class="table-wrap"><table class="data list hold-list"><thead><tr><th class="l">Company</th><th class="l inv-col">Investor</th><th class="prev-col">Previous %</th><th>Now %</th><th>Change pts</th><th>Value ₹ Cr</th></tr></thead><tbody>' +
+            (list.length ? list.slice(0, limit).map(x => '<tr><td class="l">' + coLink(x[0]) + '<div class="inv-sub">' + invLink(x[1], inv[x[1]][1]) + '</div></td><td class="l inv-col">' + invLink(x[1], inv[x[1]][1]) + '</td><td class="prev-col">' + num(x[4], 2) + '</td><td>' + num(x[3], 2) + '</td><td class="' + HOLD_KIND[kind][1] + '">' + pts(x[3] - x[4]) + '</td><td>' + num(x[6], x[6] < 10 ? 1 : 0) + '</td></tr>').join('')
+              : '<tr><td colspan="6" class="muted" style="text-align:center;padding:20px">None this quarter.</td></tr>') +
+            '</tbody></table></div>' + proLock(Math.min(limit, list.length), list.length, 'changes') + invNote) +
+        '</div></div>';
+      const sg = $('#hold-g'), sq = $('#hold-q');
+      if (sg) sg.onchange = () => { location.hash = link({ g: sg.value }); };
+      if (sq) sq.onchange = () => { location.hash = link({ q: sq.value }); };
+    });
+  }
+
+  // company page: the named holders who came, went, added or trimmed last quarter
+  function holderChangesBlock(c) {
+    const ch = c._shp && Insights.holderChanges(c._shp, { family: true });
+    if (!ch || !ch.items.length) return '';
+    const slug = x => (x.g === 'mf' ? 'amc-' + Insights.holderSlug(x.name.toLowerCase()) : Insights.holderSlug(x.key));
+    const row = x => '<li><span class="hold-tag ' + HOLD_KIND[x.kind][1] + '" title="' + HOLD_KIND[x.kind][2] + '">' + HOLD_KIND[x.kind][0] + '</span> ' + invLink(slug(x), x.name + (x.g === 'mf' ? ' (schemes)' : '')) +
+      '<span class="hold-num">' + (x.kind === 'new' ? num(x.pct, 2) + '%' : x.kind === 'exit' ? 'was ' + num(x.prev, 2) + '%' : num(x.prev, 2) + '% → ' + num(x.pct, 2) + '%') + '</span></li>';
+    const items = ch.items;   // biggest moves first
+    return '<div class="hold-changes"><h3>Who bought and who sold <span class="sub">' + qLabel(ch.prevQ) + ' → ' + qLabel(ch.q) + '</span></h3><ul>' + items.slice(0, 8).map(row).join('') + '</ul>' +
+      (items.length > 8 ? '<details><summary>Show all ' + items.length + '</summary><ul>' + items.slice(8).map(row).join('') + '</ul></details>' : '') +
+      '<p class="table-note">Named holders only: every promoter group holder, and others at 1% or more ("left the list" can mean falling below 1%). <a href="#/holders">Market-wide changes</a> &middot; <a href="#/investors">Investor portfolios</a></p></div>';
+  }
+
   function pageNotFound() {
     setTitle('Not found');
     app.innerHTML = '<div class="container page" style="text-align:center"><h1>Page not found</h1><p class="muted">We could not find what you were looking for.</p><a class="btn btn-primary" href="#/">Go home</a></div>';
@@ -4752,7 +4890,7 @@
   /* ---------- the installable app: tab bar, "More" sheet, install button, offline service worker ---------- */
   const MORE_LINKS = [
     ['Research', [['#/ai', '✦', 'Ask AI'], ['#/feed', '📰', 'Feed'], ['#/results/latest', '📊', 'Latest results'], ['#/calendar', '📅', 'Results calendar'], ['#/dividends', '💰', 'Dividends'], ['#/ipo', '🔔', 'IPOs'],
-      ['#/ratings', '🏦', 'Credit ratings'], ['#/deals', '💼', 'Smart money'], ['#/orders', '📦', 'Order wins']]],
+      ['#/ratings', '🏦', 'Credit ratings'], ['#/deals', '💼', 'Smart money'], ['#/investors', '👥', 'Investors'], ['#/holders', '🔁', 'Who bought & sold'], ['#/orders', '📦', 'Order wins']]],
     ['Tools', [['#/market', '🏭', 'Sectors'], ['#/themes', '🧭', 'Themes'], ['#/compare', '⚖️', 'Compare'], ['#/portfolio', '🩻', 'Portfolio X-ray'], ['#/alerts', '⏰', 'Alerts'],
       ['#/studio', '🖼️', 'Post studio'], ['#/tools', '🧰', 'All tools']]],
     ['Account', [['#/premium', '⭐', 'Sankhyas Pro'], ['#/account', '👤', 'My account'], ['#/contact', '💬', 'Help & contact']]]

@@ -479,6 +479,107 @@
       holdersChg1q: Q[1] && Q[0].holders && Q[1].holders ? (Q[0].holders / Q[1].holders - 1) * 100 : null, fiiUpQtrs: fiiUp, diiUpQtrs: diiUp, fiiDownQtrs: streak('fii', -1), diiDownQtrs: streak('dii', -1) };
   }
 
+  /* ---------- Named shareholders: one key for every spelling of a holder, and who came, went, added or trimmed ----------
+   * Filings spell the same holder many ways ("LIFE INSURANCE CORPORATION OF INDIA - P & GS FUND",
+   * "Life Insurance Corporation Of India", "LIC ... (Under different sub accounts)"); holderKey folds them
+   * to one key, or '' for a category label that is not a holder ("Body Corp-Ltd Liability Partnership"). */
+  const HOLDER_ALIAS = [
+    [/^(life insurance corp of india|lici|lic of india)\b|^lic$/, 'life insurance corp of india'],
+    [/^(investor education and protection fund|iepf)\b/, 'investor education and protection fund'],
+    [/^president of india\b/, 'president of india'],
+    [/^(nps trust|national pension system trust)\b/, 'national pension system trust'],
+    [/^government of singapore\b/, 'government of singapore'],
+    [/^government pension fund global\b/, 'government pension fund global'],
+    [/^general insurance corp of india\b/, 'general insurance corp of india'],
+    [/^the new india assurance\b|^new india assurance\b/, 'new india assurance co ltd']
+  ];
+  const HOLDER_NAME = { 'life insurance corp of india': 'Life Insurance Corporation of India', 'investor education and protection fund': 'Investor Education and Protection Fund (IEPF)',
+    'president of india': 'President of India', 'national pension system trust': 'National Pension System Trust', 'government of singapore': 'Government of Singapore', 'government pension fund global': 'Government Pension Fund Global',
+    'general insurance corp of india': 'General Insurance Corporation of India', 'new india assurance co ltd': 'The New India Assurance Company Limited' };
+  const HOLDER_GENERIC = /^(body corp.*|corporate body.*|bodies corporate|office bearers?|foreign (institutional|portfolio) investors?( category [i ]+)?|fpis?|fiis?|clearing members?|huf|hindu undivided family|nris?|non resident indians?( non)?( repat\w*)?|trusts?|llps?|others?|unclaimed.*|directors? and (their )?relatives|key managerial personnel|employees?|foreign nationals?|alternate investment funds?|banks?|insurance companies|mutual funds?|any other.*|individuals?.*|n a|na|nil|none|not applicable|public|promoters?( group)?|adrs?|gdrs?|depository receipts?|.*depository receipts?)$/;
+  function holderKey(name) {
+    let s = String(name || '').toLowerCase().replace(/&/g, ' and ').replace(/\([^)]*\)?/g, ' ').replace(/[^a-z0-9]+/g, ' ');
+    s = (' ' + s + ' ').replace(/ limited /g, ' ltd ').replace(/ private /g, ' pvt ').replace(/ company /g, ' co ').replace(/ corporation /g, ' corp ')
+      .replace(/ incorporated /g, ' inc ').replace(/\s+/g, ' ').trim().replace(/^the /, '')
+      .replace(/^(.+?) (through|thru|a c|ac) (its |their )?(various|different|its) (schemes?|sub accounts?|plans?|funds?)\b.*$/,
+        (m, who) => (/fund|insurance|assurance|pension|trust/.test(who) ? who : who + ' mutual fund'));
+    for (const [re, k] of HOLDER_ALIAS) if (re.test(s)) return k;
+    return HOLDER_GENERIC.test(s) ? '' : s;
+  }
+  // an investor page's name in the address (#/investor/<slug>); fund houses are 'amc-' + the house's name
+  const holderSlug = key => String(key || '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80);
+  // the mutual-fund house behind a scheme, for a domestic-institution holder ('' when not a mutual fund)
+  const AMC = [['sbi', 'SBI Mutual Fund'], ['hdfc', 'HDFC Mutual Fund'], ['icici prudential|icici', 'ICICI Prudential Mutual Fund'], ['nippon', 'Nippon India Mutual Fund'],
+    ['kotak', 'Kotak Mutual Fund'], ['axis', 'Axis Mutual Fund'], ['aditya birla sun life', 'Aditya Birla Sun Life Mutual Fund'], ['dsp', 'DSP Mutual Fund'],
+    ['mirae', 'Mirae Asset Mutual Fund'], ['uti', 'UTI Mutual Fund'], ['tata', 'Tata Mutual Fund'], ['franklin', 'Franklin Templeton Mutual Fund'], ['hsbc', 'HSBC Mutual Fund'],
+    ['canara robeco', 'Canara Robeco Mutual Fund'], ['bandhan', 'Bandhan Mutual Fund'], ['quant', 'Quant Mutual Fund'], ['motilal oswal', 'Motilal Oswal Mutual Fund'],
+    ['invesco', 'Invesco Mutual Fund'], ['parag parikh|ppfas', 'PPFAS Mutual Fund'], ['cpse', 'Nippon India Mutual Fund'], ['bharat 22', 'ICICI Prudential Mutual Fund'], ['edelweiss', 'Edelweiss Mutual Fund'], ['sundaram', 'Sundaram Mutual Fund'],
+    ['mahindra manulife', 'Mahindra Manulife Mutual Fund'], ['baroda bnp', 'Baroda BNP Paribas Mutual Fund'], ['whiteoak', 'WhiteOak Capital Mutual Fund'],
+    ['360 one', '360 ONE Mutual Fund'], ['union', 'Union Mutual Fund'], ['lic mf|lic mutual', 'LIC Mutual Fund'], ['bajaj finserv', 'Bajaj Finserv Mutual Fund'],
+    ['helios', 'Helios Mutual Fund'], ['jm financial', 'JM Financial Mutual Fund'], ['pgim', 'PGIM India Mutual Fund'], ['groww', 'Groww Mutual Fund'], ['old bridge', 'Old Bridge Mutual Fund']]
+    .map(([p, n]) => [new RegExp('^(' + p + ')\\b'), n]);
+  function holderFamily(key, group) {
+    if (group !== 'dii' || !/\b(fund|mutual|mf|etf|trustee|scheme)\b/.test(key) || /insurance|pension|assurance/.test(key)) return '';
+    for (const [re, n] of AMC) if (re.test(key)) return n;
+    return '';
+  }
+  // {key: {name, g, pct}} for one quarter's named holders (several spellings of one holder add up)
+  function holderMap(q) {
+    const out = {};
+    Object.entries((q && q.h) || {}).forEach(([g, list]) => (list || []).forEach(([name, pct]) => {
+      const k = holderKey(name);
+      if (!k || !(pct > 0)) return;
+      const x = out[k] || (out[k] = { name: HOLDER_NAME[k] || name, g, pct: 0 });
+      x.pct += pct;
+      if (!HOLDER_NAME[k] && name.length < x.name.length) x.name = name;   // the plainest spelling
+    }));
+    return out;
+  }
+  /** Named holders who came onto the list, left it, added or trimmed between the company's two latest
+   *  quarters with names: { q, prevQ, items: [{ key, name, g, pct, prev, kind: 'new'|'exit'|'up'|'down' }] }.
+   *  Only holders of 1% or more are named (promoters all), so 'new' can mean crossing 1% and 'exit' dropping below it. */
+  function holderChanges(doc, opts) {
+    const Q = ((doc && doc.quarters) || []).filter(q => q && q.q).slice().sort((a, b) => (a.q < b.q ? 1 : -1));
+    if (!Q[0] || !Q[0].h || !Q[1] || !Q[1].h || Date.parse(Q[0].q) - Date.parse(Q[1].q) > 200 * 864e5) return null;
+    const cur = holderMap(Q[0]), prev = holderMap(Q[1]);
+    // opts.family: mutual-fund schemes as their fund house (filings often name the house's whole stake
+    // after a different scheme each quarter)
+    if (opts && opts.family) [cur, prev].forEach(m => Object.keys(m).forEach(k => {
+      const f = holderFamily(k, m[k].g);
+      if (!f) return;
+      const fk = 'amc ' + f.toLowerCase(), x = m[fk] || (m[fk] = { name: f, g: 'mf', pct: 0 });
+      x.pct += m[k].pct;
+      delete m[k];
+    }));
+    // names cut off at the filing's length limit match their full spelling
+    const keys = Object.keys(cur).concat(Object.keys(prev));
+    const full = k => { if (k.length < 40) return k; const l = keys.filter(x => x.length > k.length && x.startsWith(k)), top = l.reduce((a, x) => (x.length > a.length ? x : a), ''); return l.length && l.every(x => top.startsWith(x)) ? top : k; };
+    [cur, prev].forEach(m => Object.keys(m).forEach(k => { const f = full(k); if (f !== k) { if (m[f]) m[f].pct += m[k].pct; else m[f] = m[k]; delete m[k]; } }));
+    // a holder whose name was spelt longer or shorter this time ("Deutsche Bank" and "Deutsche Bank Trust
+    // Company Americas") is the same holder, not one leaving and another arriving
+    Object.keys(cur).filter(k => !prev[k]).forEach(k => {
+      const j = Object.keys(prev).filter(x => !cur[x] && prev[x].g === cur[k].g && (k.startsWith(x + ' ') || x.startsWith(k + ' ')));
+      if (j.length === 1) { prev[k] = prev[j[0]]; delete prev[j[0]]; }
+    });
+    // ... and so is one filed under a new spelling or category with the same stake ("Hameid" to "Hamied")
+    // (several at once when a family's trusts are all renamed with equal stakes)
+    const same = (a, b) => Math.abs(a - b) <= Math.max(0.005, a * 0.003);
+    Object.keys(cur).filter(k => !prev[k] && cur[k].pct >= 0.1).forEach(k => {
+      if (prev[k]) return;
+      const j = Object.keys(prev).filter(x => !cur[x] && same(cur[k].pct, prev[x].pct));
+      const peers = Object.keys(cur).filter(x => !prev[x] && same(cur[k].pct, cur[x].pct));
+      if (j.length && j.length === peers.length) { prev[k] = prev[j[0]]; delete prev[j[0]]; }
+    });
+    const items = [];
+    new Set(Object.keys(cur).concat(Object.keys(prev))).forEach(k => {
+      const a = cur[k], b = prev[k], pct = a ? Math.round(a.pct * 100) / 100 : 0, was = b ? Math.round(b.pct * 100) / 100 : 0;
+      const kind = !b ? 'new' : !a ? 'exit' : pct - was >= 0.01 ? 'up' : was - pct >= 0.01 ? 'down' : '';
+      if (kind) items.push({ key: k, name: (a || b).name, g: (a || b).g, pct, prev: was, kind });
+    });
+    items.sort((x, y) => Math.abs(y.pct - y.prev) - Math.abs(x.pct - x.prev));
+    return { q: Q[0].q, prevQ: Q[1].q, items };
+  }
+
   /* ---------- Quick read: a handful of plain-English takeaways across results, ownership, valuation, risk ----------
    * Returns [{ area, tone: 'pos' | 'neg' | 'neu', text }]. opts: { hpe: own median P/E, res, shp } */
   function quickRead(c, opts) {
@@ -625,5 +726,5 @@
     return head + ': ' + (good.length && bad.length ? list(good) + ', but ' + list(bad) : list(good.length ? good : bad)) + '.';
   }
 
-  window.Insights = { corporateActions, parseDay, isoDay, creditRatings, annualReportCheck, ratingRank, RATING_ACT, ratingText, quickRead, resultsWhy, computeScores, scoreOf, scoreBand, PILLARS, redFlags, guidance, whatChanged, redFlagsMd, guidanceMd, whatChangedMd, METRIC_LABEL, resultsVerdict, holdingStats, quarterLabel };
+  window.Insights = { corporateActions, parseDay, isoDay, creditRatings, annualReportCheck, ratingRank, RATING_ACT, ratingText, quickRead, resultsWhy, computeScores, scoreOf, scoreBand, PILLARS, redFlags, guidance, whatChanged, redFlagsMd, guidanceMd, whatChangedMd, METRIC_LABEL, resultsVerdict, holdingStats, quarterLabel, holderKey, holderSlug, holderFamily, holderMap, holderChanges };
 })();

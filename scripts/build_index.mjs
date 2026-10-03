@@ -27,7 +27,7 @@ const KEYS = Screener.RATIOS.map(r => r.key).concat(['change', 'changePct', 'qtr
 const round = v => (v == null || !Number.isFinite(v) ? null : Number(v.toPrecision(6)));
 
 const index = fs.existsSync(path.join(dir, 'index.json')) ? JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8')) : {};
-const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !['index.json', 'metrics.json', 'metrics.v2.json', 'calendar.json', 'activity.json', 'results.json', 'ratings.json', 'ipo.json', 'ipo_leads.json', 'indices.json', 'corporate_actions.json', 'live.json', 'tickers.json'].includes(f));
+const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && !['index.json', 'metrics.json', 'metrics.v2.json', 'calendar.json', 'activity.json', 'results.json', 'ratings.json', 'ipo.json', 'ipo_leads.json', 'indices.json', 'corporate_actions.json', 'live.json', 'tickers.json', 'investors.json'].includes(f));
 const companies = [];
 let skipped = 0;
 const latestResults = [];
@@ -40,6 +40,7 @@ let deals = [];
 try { if (fs.existsSync(dealsFile)) deals = JSON.parse(fs.readFileSync(dealsFile, 'utf8')).deals || []; } catch (e) { deals = []; }
 const dealsBy = {};
 const salesBy = {};
+const shpBy = {};   // shareholding files, for the investor pages
 // an order value read from a filing PDF is dropped when it is implausible for the company's size
 // (usually an order-book total or another figure picked up by mistake)
 function plausibleOrder(amt, sales) {
@@ -114,6 +115,7 @@ for (const f of files) {
     // NSE shareholding pattern and quarterly results (scripts/fetch_nse_extra.py)
     const shp = readJSON(path.join(root, 'data', 'shp', c.symbol + '.json'));
     const hs = shp && Insights.holdingStats(shp);
+    if (shp) shpBy[c.symbol] = shp;
     if (hs) {
       Object.assign(c.metrics, { promoter: hs.promoter, fii: hs.fii, dii: hs.dii, pledged: hs.pledge, promoterChg1q: hs.promoterChg1q, fiiChg1q: hs.fiiChg1q,
         diiChg1q: hs.diiChg1q, fiiChg4q: hs.fiiChg4q, fiiUpQtrs: hs.fiiUpQtrs, holdersChg1q: hs.holdersChg1q });
@@ -302,3 +304,116 @@ if (fs.existsSync(filingsDir)) {
   console.log(`corporate_actions.json: ${items.length} record dates (${items.filter(x => x.k === 'div').length} dividends)`);
 }
 
+
+// ---------- investors: every named shareholder's portfolio, and who came onto, left, added to or trimmed ----------
+// the shareholder lists (the investor pages, "Who bought and who sold"). From each company's two latest
+// quarters with named holders (NSE shareholding patterns: holders of 1% or more, and all promoters).
+// investors.json: { updated, inv: [[slug, name, group, companies, value ₹ Cr, family 1|0]],
+//   chg: [[symbol, slug, kind (new | exit | up | down), %, previous %, quarter, value of the change ₹ Cr]] }
+// inv/<first letter>.json: {slug: [[symbol, %, previous % (null: no earlier quarter), quarter]]}
+{
+  const mcapOf = {};
+  companies.forEach(c => { mcapOf[c.s] = c.m.marketCap || 0; });
+  const per = {};   // symbol -> { q, prevQ, cur: {key: {name, g, pct}}, prev, items }
+  for (const [sym, doc] of Object.entries(shpBy)) {
+    const Q = (doc.quarters || []).filter(q => q && q.q).sort((a, b) => (a.q < b.q ? 1 : -1));
+    if (!Q[0] || !Q[0].h || Date.now() - Date.parse(Q[0].q) > 400 * 864e5) continue;
+    // scheme by scheme for the investor pages; fund houses as one for the list of changes
+    per[sym] = { q: Q[0].q, cur: Insights.holderMap(Q[0]), ch: Insights.holderChanges(doc), chf: Insights.holderChanges(doc, { family: true }) };
+  }
+  // names cut off at the filing's length limit: the one full spelling they start
+  const allKeys = new Set();
+  Object.values(per).forEach(p => { Object.keys(p.cur).forEach(k => allKeys.add(k)); (p.ch ? p.ch.items : []).forEach(x => allKeys.add(x.key)); });
+  const sorted = [...allKeys].sort(), full = {};
+  sorted.forEach((k, i) => {
+    if (k.length < 40) return;
+    const l = [];
+    for (let j = i + 1; j < sorted.length && sorted[j].startsWith(k); j++) l.push(sorted[j]);
+    const top = l.reduce((a, x) => (x.length > a.length ? x : a), '');
+    if (l.length && l.every(x => top.startsWith(x))) full[k] = top;
+  });
+  const K = k => full[k] || k;
+  const inv = {};   // key -> { names: {spelling: n}, g, hold: {sym: [pct, prev, q]} }
+  const at = k => inv[k] || (inv[k] = { names: {}, g: {}, hold: {} });
+  for (const [sym, p] of Object.entries(per)) {
+    const prevOf = {};
+    if (p.ch) p.ch.items.forEach(x => { prevOf[K(x.key)] = x.prev; });
+    for (const [k0, x] of Object.entries(p.cur)) {
+      const k = K(k0), e = at(k), h = e.hold[sym];
+      e.names[x.name] = (e.names[x.name] || 0) + 1;
+      e.g[x.g] = (e.g[x.g] || 0) + 1;
+      // previous %: from the changes when it moved, else unchanged; none without an earlier quarter
+      const prev = !p.ch ? null : k in prevOf ? prevOf[k] : Math.round(x.pct * 100) / 100;
+      if (h) { h[0] += x.pct; if (h[1] != null && prev != null) h[1] += prev; } else e.hold[sym] = [x.pct, prev, p.q];
+    }
+    if (p.ch) p.ch.items.filter(x => x.kind === 'exit').forEach(x => {
+      const k = K(x.key), e = at(k);
+      e.names[x.name] = (e.names[x.name] || 0) + 1;
+      e.g[x.g] = (e.g[x.g] || 0) + 1;
+      if (!e.hold[sym]) e.hold[sym] = [0, x.prev, p.q];
+    });
+  }
+  // the name shown: the commonest spelling, preferring one not in capitals, else capitals made readable
+  const KEEP = /^(lic|sbi|hdfc|icici|uti|dsp|hsbc|etf|llp|pcc|nps|idfc|idbi|bnp|ii|iii|iv|lp|plc|ag|sa|nv|bv|gic|ifc|huf|kfin|ubs|jp|bnpp|msci|ftse|nifty50|mf|fpi|a\/c|uk|usa|us|bse|nse|psu|cpse|esop|esps|aif|iepf)$/i;
+  const readable = s => s.toLowerCase().replace(/[a-z0-9/&.'-]+/g, w => KEEP.test(w.replace(/[.']/g, '')) || !/[aeiou]/.test(w) ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1))
+    .replace(/\b(Of|And|The|For|In|On|To)\b/g, (w, _, i) => (i ? w.toLowerCase() : w));
+  const nameOf = e => {
+    const l = Object.entries(e.names).sort((a, b) => b[1] - a[1] || a[0].length - b[0].length).map(x => x[0]);
+    const mixed = l.find(n => n !== n.toUpperCase());
+    return (mixed || readable(l[0])).replace(/[A-Za-z]+/g, w => (w.length <= 5 && KEEP.test(w) ? w.toUpperCase() : w)).replace(/\s+/g, ' ').trim();
+  };
+  const slugOf = Insights.holderSlug;
+  const groupOf = e => Object.entries(e.g).sort((a, b) => b[1] - a[1])[0][0];
+  // mutual fund houses: every scheme of the house together ("SBI Mutual Fund, all schemes")
+  const fam = {};
+  for (const [k, e] of Object.entries(inv)) {
+    const f = Insights.holderFamily(k, groupOf(e));
+    if (!f) continue;
+    const x = fam[f] || (fam[f] = { hold: {}, n: 0 });
+    x.n++;
+    for (const [sym, [pct, prev, q]] of Object.entries(e.hold)) {
+      const h = x.hold[sym];
+      if (h) { h[0] += pct; h[1] = h[1] == null || prev == null ? null : h[1] + prev; } else x.hold[sym] = [pct, prev, q];
+    }
+  }
+  const r2 = v => (v == null ? null : Math.round(v * 100) / 100);
+  const rows = [], hold = {}, slugOfKey = {};
+  const add = (slug, name, g, hl, isFam) => {
+    const list = Object.entries(hl).map(([sym, [pct, prev, q]]) => [sym, r2(pct), r2(prev), q])
+      .sort((a, b) => b[1] * (mcapOf[b[0]] || 0) - a[1] * (mcapOf[a[0]] || 0) || b[2] - a[2]);
+    const held = list.filter(x => x[1] > 0);
+    if (!held.length && !list.length) return;
+    const value = held.reduce((t, x) => t + x[1] / 100 * (mcapOf[x[0]] || 0), 0);
+    rows.push([slug, name, g, held.length, Math.round(value), isFam ? 1 : 0]);
+    hold[slug] = list;
+  };
+  const used = new Set();
+  for (const [k, e] of Object.entries(inv)) {
+    let slug = slugOf(k) || 'holder';
+    while (used.has(slug)) slug += '-x';
+    used.add(slug);
+    slugOfKey[k] = slug;
+    add(slug, nameOf(e), groupOf(e), e.hold, false);
+  }
+  const famSlug = {};
+  for (const [f, x] of Object.entries(fam)) { famSlug[f] = 'amc-' + slugOf(f.toLowerCase()); add(famSlug[f], f + ' (all schemes)', 'mf', x.hold, true); }
+  rows.sort((a, b) => b[4] - a[4] || b[3] - a[3]);
+  // changes market-wide, the biggest by value first
+  const chg = [];
+  for (const [sym, p] of Object.entries(per)) {
+    if (!p.chf) continue;
+    for (const x of p.chf.items) {
+      const slug = x.g === 'mf' ? famSlug[x.name] : slugOfKey[K(x.key)];
+      if (slug) chg.push([sym, slug, x.kind, x.pct, x.prev, p.q, Math.round(Math.abs(x.pct - x.prev) / 100 * (mcapOf[sym] || 0) * 10) / 10]);
+    }
+  }
+  chg.sort((a, b) => b[6] - a[6]);
+  fs.writeFileSync(path.join(dir, 'investors.json'), JSON.stringify({ updated: new Date().toISOString(), inv: rows, chg: chg.slice(0, 6000) }));
+  // each investor's holdings, in files by the first letter of the investor's page name (data/yahoo/inv/a.json)
+  const invDir = path.join(dir, 'inv'), shards = {};
+  fs.rmSync(invDir, { recursive: true, force: true });
+  fs.mkdirSync(invDir, { recursive: true });
+  for (const [slug, list] of Object.entries(hold)) (shards[slug[0]] = shards[slug[0]] || {})[slug] = list;
+  for (const [k, v] of Object.entries(shards)) fs.writeFileSync(path.join(invDir, k + '.json'), JSON.stringify(v));
+  console.log(`investors.json: ${rows.length} investors in ${Object.keys(per).length} companies, ${chg.length} changes, ${(fs.statSync(path.join(dir, 'investors.json')).size / 1e6).toFixed(2)} MB`);
+}

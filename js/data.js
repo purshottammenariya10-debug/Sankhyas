@@ -709,6 +709,20 @@
   }
   /** Credit rating actions across companies, newest first (scripts/build_index.mjs). Cached. */
   let _ratings = null;
+  /** Named shareholders (scripts/build_index.mjs): the investor list and the quarter's changes, and one investor's holdings. */
+  let _investors = null;
+  const _invShards = {};
+  function loadInvestors() {
+    if (mode === 'sample') return Promise.resolve(null);
+    if (!_investors) _investors = getJSON('data/yahoo/investors.json').catch(() => null);
+    return _investors;
+  }
+  function loadInvestorHoldings(slug) {
+    if (mode === 'sample' || !slug) return Promise.resolve(null);
+    const k = slug[0];
+    if (!_invShards[k]) _invShards[k] = getJSON('data/yahoo/inv/' + k + '.json').catch(() => ({}));
+    return _invShards[k].then(d => (d && d[slug]) || null);
+  }
   function loadRatings() {
     if (mode === 'sample') return Promise.resolve(null);
     if (!_ratings) _ratings = getJSON('data/yahoo/ratings.json').catch(() => null);
@@ -772,7 +786,7 @@
 
   window.Data = {
     TODAY, YEARS, QUARTERS: QUARTERS.map(q => q.label), SH_QUARTERS,
-    init, getCompany: getAny, loadCompany, loadFilings, loadCalendar, loadActivity, loadShareholding, loadResults, loadResultsList, loadRatings, loadIPO, loadIPONote, latestFilings, listCompanies, search, median, cagr,
+    init, getCompany: getAny, loadCompany, loadFilings, loadCalendar, loadActivity, loadShareholding, loadResults, loadResultsList, loadRatings, loadInvestors, loadInvestorHoldings, loadIPO, loadIPONote, latestFilings, listCompanies, search, median, cagr,
     mode: () => mode,
     liveInfo: () => ({
       count: mode === 'summary' ? Object.keys(summaries).length : Object.keys(live).length,

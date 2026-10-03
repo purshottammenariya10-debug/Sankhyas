@@ -212,7 +212,87 @@ const dividendsUrl = origin + 'dividends/';
 }
 function today0() { return new Date().toISOString().slice(0, 10); }
 
-const urls = [origin].concat(screenPages, [dividendsUrl], companies.filter(c => c.s && c.n).map(c => urlOf(c.s)));
+// ---------- investors (investors/, investor/<slug>/) and who bought and who sold (holders/) ----------
+// "LIC portfolio", "Rekha Jhunjhunwala holdings", "Government of Singapore stocks": each larger investor's
+// holdings as filed in the latest shareholding patterns (scripts/build_index.mjs)
+const investorPages = [];
+{
+  const d = readJSON(path.join(yahoo, 'investors.json'));
+  if (d && d.inv && d.inv.length) {
+    const nameOf = {};
+    companies.forEach(c => { nameOf[c.s] = c.n; });
+    const TYPE = { mf: 'Mutual fund house', fii: 'Foreign investor', dii: 'Indian institution', public: 'Individual / other', promoter: 'Promoter group', gov: 'Government' };
+    const invUrl = slug => origin + 'investor/' + slug + '/';
+    const ql = q => new Date(q + 'T00:00:00').toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+    const chg = (now, was) => (was == null ? '-' : !(was > 0) ? 'New' : inr(now - was, 2));
+    // investors outside promoter groups with three or more companies, and every mutual fund house
+    const picked = d.inv.filter(r => r[5] || (r[2] !== 'promoter' && r[3] >= 3)).slice(0, 800);
+    const shards = {};
+    const holdOf = slug => { const k = slug[0]; if (!(k in shards)) shards[k] = readJSON(path.join(yahoo, 'inv', k + '.json')) || {}; return shards[k][slug] || null; };
+    for (const r of picked) {
+      const [slug, name, g, n, value] = r;
+      const hold = holdOf(slug);
+      if (!hold) continue;
+      const held = hold.filter(h => h[1] > 0);
+      const qn = {};
+      held.forEach(h => { qn[h[3]] = (qn[h[3]] || 0) + 1; });
+      const q = Object.keys(qn).sort((a, b) => qn[b] - qn[a] || (a < b ? 1 : -1))[0];   // the quarter most of its companies are at
+      const url = invUrl(slug);
+      const title = `${name} portfolio: ${n} stocks${q ? ' (' + ql(q) + ')' : ''} | Sankhyas`;
+      const desc = `${name} holds ${n} listed Indian companies worth about ₹ ${inr(value)} Cr: ` + held.slice(0, 4).map(h => (nameOf[h[0]] || h[0]).replace(/ (Limited|Ltd\.?)$/i, '') + ' ' + inr(h[1], 2) + '%').join(', ') + '. Stakes and changes from shareholding patterns.';
+      const ld = { '@context': 'https://schema.org', '@graph': [
+        { '@type': 'ItemList', name: name + ' portfolio', numberOfItems: held.length, itemListElement: held.slice(0, 10).map((h, i) => ({ '@type': 'ListItem', position: i + 1, name: nameOf[h[0]] || h[0], url: urlOf(h[0]) })) },
+        { '@type': 'BreadcrumbList', itemListElement: [
+          { '@type': 'ListItem', position: 1, name: 'Sankhyas', item: origin },
+          { '@type': 'ListItem', position: 2, name: 'Investors', item: origin + 'investors/' },
+          { '@type': 'ListItem', position: 3, name, item: url }] }] };
+      const bodyHtml = `<div class="container page seo-page"><nav class="sub" aria-label="Breadcrumb"><a href="${origin}">Sankhyas</a> › <a href="${origin}investors/">Investors</a> › ${esc(name)}</nav>
+<h1>${esc(name)}: portfolio and holdings</h1><p>${esc(TYPE[g] || 'Investor')} · ${held.length} companies · about ₹ ${inr(value)} Cr at today's prices. Stakes as filed in the companies' shareholding patterns${q ? ' for ' + ql(q) : ''}, with the change from the quarter before.</p>
+<p><a class="btn btn-primary" href="${origin}#/investor/${esc(slug)}">Open the full portfolio</a></p>
+<section class="card"><div class="table-wrap"><table class="data"><thead><tr><th class="l">#</th><th class="l">Company</th><th>Stake %</th><th>Change pts</th><th class="l">Quarter</th></tr></thead><tbody>` +
+        held.slice(0, 100).map((h, i) => `<tr><td class="l">${i + 1}</td><td class="l"><a href="${esc(urlOf(h[0]))}">${esc(nameOf[h[0]] || h[0])}</a></td><td>${inr(h[1], 2)}</td><td>${chg(h[1], h[2])}</td><td class="l">${ql(h[3])}</td></tr>`).join('') +
+        `</tbody></table></div></section><p class="table-note">Shareholding patterns name every promoter group holder, and other holders only at 1% or more. For information only, not investment advice.</p></div>`;
+      staticPage(path.join('investor', slug), 2, 'investor/' + slug, pageHead(title, desc, url, ld), bodyHtml);
+      investorPages.push(url);
+    }
+    // all investors
+    {
+      const url = origin + 'investors/';
+      const list = d.inv.filter(r => r[2] !== 'promoter').slice(0, 300);
+      const bodyHtml = `<div class="container page seo-page"><nav class="sub" aria-label="Breadcrumb"><a href="${origin}">Sankhyas</a> › Investors</nav>
+<h1>Investor portfolios: who owns what in Indian stocks</h1><p>LIC, mutual fund houses, foreign funds such as the Government of Singapore and Vanguard, and well-known individual investors: the listed companies each one holds, from the latest shareholding patterns. Updated ${esc(todayText)}.</p>
+<p><a class="btn btn-primary" href="${origin}#/investors">Search all investors</a> <a class="btn" href="${origin}holders/">Who bought and who sold</a></p>
+<section class="card"><div class="table-wrap"><table class="data"><thead><tr><th class="l">#</th><th class="l">Investor</th><th class="l">Type</th><th>Companies</th><th>Value ₹ Cr</th></tr></thead><tbody>` +
+        list.map((r, i) => `<tr><td class="l">${i + 1}</td><td class="l">${investorPages.indexOf(invUrl(r[0])) >= 0 ? `<a href="${esc(invUrl(r[0]))}">${esc(r[1])}</a>` : esc(r[1])}</td><td class="l">${TYPE[r[2]] || ''}</td><td>${r[3]}</td><td>${inr(r[4])}</td></tr>`).join('') +
+        '</tbody></table></div></section></div>';
+      staticPage('investors', 1, 'investors', pageHead(`Investor portfolios: LIC, mutual funds, FIIs and big investors (${monthYear}) | Sankhyas`, 'What LIC, SBI Mutual Fund, the Government of Singapore, Vanguard, Rekha Jhunjhunwala and other big investors hold in Indian stocks, and how their stakes changed last quarter.', url), bodyHtml);
+      investorPages.push(url);
+    }
+    // who bought and who sold, the largest changes of the latest quarter
+    {
+      const url = origin + 'holders/';
+      const inv = {};
+      d.inv.forEach(r => { inv[r[0]] = r; });
+      const byQ = {};
+      d.chg.forEach(x => { byQ[x[5]] = (byQ[x[5]] || 0) + 1; });
+      const q = Object.keys(byQ).sort((a, b) => byQ[b] - byQ[a])[0];
+      const sec = (kind, h) => {
+        const l = d.chg.filter(x => x[5] === q && x[2] === kind && inv[x[1]]).slice(0, 30);
+        return `<section class="card"><h2>${h}</h2><div class="table-wrap"><table class="data"><thead><tr><th class="l">Company</th><th class="l">Investor</th><th>Previous %</th><th>Now %</th></tr></thead><tbody>` +
+          l.map(x => `<tr><td class="l"><a href="${esc(urlOf(x[0]))}">${esc(nameOf[x[0]] || x[0])}</a></td><td class="l">${investorPages.indexOf(invUrl(x[1])) >= 0 ? `<a href="${esc(invUrl(x[1]))}">${esc(inv[x[1]][1])}</a>` : esc(inv[x[1]][1])}</td><td>${inr(x[4], 2)}</td><td>${inr(x[3], 2)}</td></tr>`).join('') + '</tbody></table></div></section>';
+      };
+      const bodyHtml = `<div class="container page seo-page"><nav class="sub" aria-label="Breadcrumb"><a href="${origin}">Sankhyas</a> › Who bought and who sold</nav>
+<h1>Who bought and who sold: ${q ? ql(q) : 'last'} quarter</h1><p>Named shareholders who came onto a company's shareholder list, added to their stake, trimmed it or left the list, against the quarter before. Largest by value first. Updated ${esc(todayText)}.</p>
+<p><a class="btn btn-primary" href="${origin}#/holders">Open the full list</a></p>` +
+        (q ? sec('new', 'New on the list') + sec('up', 'Added') + sec('down', 'Trimmed') + sec('exit', 'Left the list') : '') +
+        `<p class="table-note">Shareholding patterns name every promoter group holder, and others only at 1% or more, so "new" can mean crossing 1% and "left the list" falling below it. Not investment advice.</p></div>`;
+      staticPage('holders', 1, 'holders', pageHead(`Who bought and who sold: shareholding changes${q ? ' ' + ql(q) : ''} | Sankhyas`, 'Which mutual funds, FIIs, LIC and big investors entered, raised, cut or exited Indian stocks last quarter, from shareholding patterns.', url), bodyHtml);
+      investorPages.push(url);
+    }
+  }
+}
+
+const urls = [origin].concat(screenPages, [dividendsUrl], investorPages, companies.filter(c => c.s && c.n).map(c => urlOf(c.s)));
 // sitemaps hold at most 50,000 URLs each
 fs.writeFileSync(path.join(site, 'sitemap.xml'), '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
   urls.map(u => `<url><loc>${esc(u)}</loc><lastmod>${today}</lastmod><changefreq>daily</changefreq></url>`).join('\n') + '\n</urlset>\n');
