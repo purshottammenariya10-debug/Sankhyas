@@ -292,6 +292,11 @@ def file_age(sym):
         return float("inf")
 
 
+def sme_stub(e):
+    """Yahoo's "SYMBOL-SM.NS" ticker for an NSE SME company ('' for other companies)."""
+    return e["symbol"] + "-SM.NS" if e.get("sme") and e["yahoo"] == e["symbol"] + ".NS" else ""
+
+
 def file_ticker(sym):
     """The Yahoo ticker a company's file was fetched under (None when there is no file)."""
     f = OUT / f"{sym}.json"
@@ -306,7 +311,10 @@ def file_ticker(sym):
 def update_prices(yf, entries, chunk=200):
     """Append the latest daily closes to existing company files in bulk (one request per chunk)."""
     have = {e["symbol"]: e for e in entries if (OUT / f"{e['symbol']}.json").exists()}
-    tickers = {e["yahoo"]: sym for sym, e in have.items()}
+    # the ticker each file was fetched under (an SME company's "-SM.NS" ticker when that is all Yahoo has)
+    tickers = {}
+    for sym, e in have.items():
+        tickers[sme_stub(e) if sme_stub(e) and file_ticker(sym) == sme_stub(e) else e["yahoo"]] = sym
     updated = 0
     names = list(tickers)
     for i in range(0, len(names), chunk):
@@ -378,9 +386,16 @@ def main(argv=None):
         priority = {s.strip().upper() for s in (ROOT / "scripts" / "symbols.txt").read_text().split() if s.strip()}
         ranked = sorted(entries, key=lambda e: (-file_age(e["symbol"]), e["symbol"] not in priority, e["symbol"]))
         todo = [e for e in ranked if file_age(e["symbol"]) > 20 * 3600][:args.max_full]
-        # companies fetched under another Yahoo ticker than the universe's now (SME companies were briefly
+        # SME companies fetched under another Yahoo ticker than the universe's now (they were briefly
         # fetched as "SYMBOL-SM.NS", which has a day of prices) are refreshed first
-        moved = [e for e in entries if file_ticker(e["symbol"]) not in (None, e["yahoo"])]
+        # (an SME company Yahoo has under its "-SM" ticker only is retried under SYMBOL.NS once a week)
+        moved = []
+        for e in entries:
+            if not e.get("sme"):
+                continue   # only SME tickers have moved
+            ft = file_ticker(e["symbol"])
+            if ft not in (None, e["yahoo"]) and not (ft == sme_stub(e) and file_age(e["symbol"]) < 7 * 86400):
+                moved.append(e)
         if moved:
             print(f"{len(moved)} companies changed Yahoo ticker; refreshing them first")
             ids = {e["symbol"] for e in moved}
@@ -411,7 +426,13 @@ def main(argv=None):
         sym = e["symbol"]
         for attempt in range(3):
             try:
-                doc = build_company(sym, yf.Ticker(e["yahoo"]), yahoo=e["yahoo"], meta=e)
+                try:
+                    doc = build_company(sym, yf.Ticker(e["yahoo"]), yahoo=e["yahoo"], meta=e)
+                except Exception:  # noqa: BLE001
+                    # SME companies Yahoo lists only as "SYMBOL-SM.NS" (a few days of prices so far)
+                    if not sme_stub(e):
+                        raise
+                    doc = build_company(sym, yf.Ticker(sme_stub(e)), yahoo=sme_stub(e), meta=e)
                 (OUT / f"{sym}.json").write_text(json.dumps(doc, separators=(",", ":")))
                 ok.append(sym)
                 print(f"[{i + 1}/{len(todo)}] {sym}: {len(doc['prices']['close'])} prices, "

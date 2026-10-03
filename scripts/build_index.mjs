@@ -74,7 +74,8 @@ const tickers = {};   // symbol -> Yahoo ticker, for the 30-minute price updates
 for (const f of files) {
   try {
     const j = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-    if (!j.prices || !j.prices.close || j.prices.close.length < 2) { skipped++; continue; }
+    // SME companies Yahoo has only just started listing may have a single day of prices so far
+    if (!j.prices || !j.prices.close || j.prices.close.length < (j.sme ? 1 : 2)) { skipped++; continue; }
     const c = Data._buildLive(j);
     // NSE's dummy test symbols and mutual-fund segregated portfolios are not companies
     if (/NSETEST$/.test(c.symbol) || /mutual fund|segregated portfolio/i.test(c.name || '')) { skipped++; continue; }
