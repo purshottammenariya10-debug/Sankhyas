@@ -16,6 +16,7 @@ Usage:
 import argparse
 import datetime as dt
 import json
+import re
 import math
 import sys
 import time
@@ -291,6 +292,17 @@ def file_age(sym):
         return float("inf")
 
 
+def file_ticker(sym):
+    """The Yahoo ticker a company's file was fetched under (None when there is no file)."""
+    f = OUT / f"{sym}.json"
+    if not f.exists():
+        return None
+    try:
+        return json.loads(f.read_text()).get("yahoo")
+    except ValueError:
+        return None
+
+
 def update_prices(yf, entries, chunk=200):
     """Append the latest daily closes to existing company files in bulk (one request per chunk)."""
     have = {e["symbol"]: e for e in entries if (OUT / f"{e['symbol']}.json").exists()}
@@ -366,6 +378,18 @@ def main(argv=None):
         priority = {s.strip().upper() for s in (ROOT / "scripts" / "symbols.txt").read_text().split() if s.strip()}
         ranked = sorted(entries, key=lambda e: (-file_age(e["symbol"]), e["symbol"] not in priority, e["symbol"]))
         todo = [e for e in ranked if file_age(e["symbol"]) > 20 * 3600][:args.max_full]
+        # companies fetched under another Yahoo ticker than the universe's now (SME companies were briefly
+        # fetched as "SYMBOL-SM.NS", which has a day of prices) are refreshed first
+        moved = [e for e in entries if file_ticker(e["symbol"]) not in (None, e["yahoo"])]
+        if moved:
+            print(f"{len(moved)} companies changed Yahoo ticker; refreshing them first")
+            ids = {e["symbol"] for e in moved}
+            todo = moved + [e for e in todo if e["symbol"] not in ids][:max(0, args.max_full - len(moved))]
+        # SME duplicates added from Yahoo's "SYMBOL-SM.NS" stubs: the company is kept under its NSE symbol
+        known = {e["symbol"] for e in universe}
+        for f in OUT.glob("*.json"):
+            if re.search(r"-(SM|ST)$", f.stem) and f.stem not in known:
+                f.unlink()
         # companies whose statements looked like another currency (flagged by fetch_history.py) go first
         refetch = ROOT / "data" / "history" / "_refetch.json"
         if refetch.exists():

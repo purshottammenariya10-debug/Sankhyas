@@ -158,10 +158,15 @@ def yahoo_listing(max_rows=20000):
     return list(out.values())
 
 
+SME_STUB = re.compile(r"-(SM|ST)\.NS$")
+
+
 def fix_sme_tickers(companies, listing):
     """Yahoo may list NSE SME stocks under a different ticker; match by name when SYMBOL.NS is unknown."""
     tickers = {y["ticker"] for y in listing}
-    by_name = {norm_name(y["name"]): y["ticker"] for y in listing if y["ticker"].endswith(".NS")}
+    # Yahoo's newer "SYMBOL-SM.NS" tickers carry a day or two of prices only; the full history stays
+    # under SYMBOL.NS (even when the screener no longer lists it), so those are never swapped in
+    by_name = {norm_name(y["name"]): y["ticker"] for y in listing if y["ticker"].endswith(".NS") and not SME_STUB.search(y["ticker"])}
     for c in companies:
         if c.get("sme") and c["yahoo"] not in tickers:
             t = by_name.get(norm_name(c["name"]))
@@ -177,8 +182,8 @@ def add_yahoo(companies, listing):
     added = 0
     for y in sorted(listing, key=lambda y: (not y["ticker"].endswith(".NS"), y["ticker"])):
         t, base = y["ticker"], y["ticker"][:-3]
-        if t in have_yahoo:
-            continue
+        if t in have_yahoo or SME_STUB.search(t):
+            continue   # "SYMBOL-SM.NS": an SME company already listed under its NSE symbol
         if t.endswith(".NS"):
             if base in have_sym:
                 continue
