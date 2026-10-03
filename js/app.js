@@ -322,12 +322,11 @@
   }
 
   /* ---------- company header: logo and exchange links ---------- */
-  // the company's logo from its website's icon, else its initials (also when the icon fails to load)
+  // the company's logo (saved from its website by scripts/fetch_logos.py), else its initials
   function companyLogo(c) {
     const initials = esc(String(c.name || c.symbol).replace(/^(the|shri|sri)\s+/i, '').split(/\s+/).filter(w => /^[A-Za-z0-9]/.test(w)).slice(0, 2).map(w => w[0]).join('').toUpperCase());
-    const site = c.website && String(c.website).replace(/^https?:\/\//, '').split('/')[0];
-    return '<span class="co-logo" aria-hidden="true"><span>' + initials + '</span>' + (site ? '<img src="https://www.google.com/s2/favicons?domain=' + encodeURIComponent(site) + '&sz=128" alt="" loading="lazy" ' +
-      'onload="if(this.naturalWidth<32)this.remove();else this.parentNode.classList.add(\'has-img\')" onerror="this.remove()">' : '') + '</span>';
+    return '<span class="co-logo' + (c.logo ? ' has-img' : '') + '" aria-hidden="true"><span>' + initials + '</span>' +
+      (c.logo ? '<img src="data/logos/' + encodeURIComponent(c.symbol) + '.png" alt="" onerror="this.parentNode.classList.remove(\'has-img\');this.remove()">' : '') + '</span>';
   }
   // BSE, NSE and F&O pages on the exchanges' websites
   function headerLinks(c) {

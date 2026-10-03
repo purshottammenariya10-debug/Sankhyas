@@ -122,6 +122,14 @@ jobs:
         timeout-minutes: 30
         run: python scripts/sme_financials.py --max "${{ github.event.schedule == '17 */2 * * *' && '40' || '100' }}" || python scripts/sme_financials.py --merge-only
 
+      # each company's logo from its website, saved once (data/logos/<SYMBOL>.png)
+      - name: Company logos
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          pip install -q pillow
+          python scripts/fetch_logos.py --max "${{ github.event.schedule == '17 */2 * * *' && '300' || '900' }}"
+
       - name: Build company index
         run: |
           if ls data/yahoo/*.json >/dev/null 2>&1; then node scripts/build_index.mjs; else echo "No Yahoo data yet; the site will use sample data"; fi
@@ -149,6 +157,7 @@ jobs:
           [ -d data/filings ] && cp -r data/filings _site/data/ || true
           [ -d data/shp ] && cp -r data/shp _site/data/ || true
           [ -d data/results ] && cp -r data/results _site/data/ || true
+          [ -d data/logos ] && mkdir -p _site/data/logos && cp data/logos/*.png _site/data/logos/ 2>/dev/null || true
           du -sh _site
 
       # Accounts and payments: public keys come from repository variables (Settings > Secrets and

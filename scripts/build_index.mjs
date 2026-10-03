@@ -133,7 +133,7 @@ for (const f of files) {
     const m = {};
     for (const k of KEYS) { const v = round(c.metrics[k]); if (v != null) m[k] = v; }
     companies.push(Object.assign({ s: c.symbol, n: c.name, sec: c.sector, ind: c.industry, bse: c.bseCode || undefined, ex: c.exchange === 'BSE' ? 'BSE' : undefined, isin: c.isin || undefined, q: c.lastQuarter || undefined,
-      fo: (universe[c.symbol] && universe[c.symbol].fo) || undefined, m },
+      fo: (universe[c.symbol] && universe[c.symbol].fo) || undefined, lg: fs.existsSync(path.join(root, 'data', 'logos', c.symbol + '.png')) ? 1 : undefined, m },
       listingInfo(c.symbol, j)));
   } catch (e) {
     skipped++;
@@ -162,13 +162,13 @@ console.log(`metrics.json: ${companies.length} companies (${skipped} skipped), $
 // phone): one row per company, metric values in the order of `keys`, sector/industry names stored
 // once in `dict`, and numbers kept to 2 decimals (whole numbers from 10,000 up). metrics.json stays
 // as it is for the data scripts. Row: [symbol, name (0 when it is the symbol), sector #, industry #,
-// [values], {bse, ex, isin, q, lst, lp, lpd, fo (F&O lot size)} when any are set].
+// [values], {bse, ex, isin, q, lst, lp, lpd, fo (F&O lot size), lg (has a logo)} when any are set].
 {
   const cv = v => (typeof v !== 'number' || !Number.isFinite(v) ? null : Math.abs(v) >= 1e4 ? Math.round(v) : Math.abs(v) < 0.1 ? Number(v.toPrecision(2)) : Math.round(v * 100) / 100);
   const keys = [...new Set(companies.flatMap(e => Object.keys(e.m)))];
   const dict = [], at = {};
   const ref = s => (!s ? -1 : s in at ? at[s] : (dict.push(s), (at[s] = dict.length - 1)));
-  const EXTRA = ['bse', 'ex', 'isin', 'q', 'lst', 'lp', 'lpd', 'fo'];
+  const EXTRA = ['bse', 'ex', 'isin', 'q', 'lst', 'lp', 'lpd', 'fo', 'lg'];
   const c = companies.map(e => {
     const vals = keys.map(k => cv(e.m[k]));
     while (vals.length && vals[vals.length - 1] === null) vals.pop();
