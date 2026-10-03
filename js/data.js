@@ -621,7 +621,7 @@
         const c = {
           symbol: e.s, name: e.n || e.s, sector: e.sec || 'Others', industry: e.ind || '', bseCode: e.bse || '', exchange: e.ex || 'NSE', sme: !!(e.m && e.m.sme), isin: e.isin || '',
           live: true, summary: true, lastQuarter: e.q || '', updated: idx.updated, metrics: e.m || {},
-          listed: e.lst || '', listPrice: e.lp != null ? e.lp : null, listPriceDate: e.lpd || ''
+          listed: e.lst || '', listPrice: e.lp != null ? e.lp : null, listPriceDate: e.lpd || '', foLot: e.fo || null
         };
         if (livePx && livePx.p[c.symbol] && applyLiveMetrics(c.metrics, livePx.p[c.symbol])) c.priceAt = livePx.t;
         summaries[c.symbol] = c;
@@ -666,6 +666,7 @@
       const full = buildLive(j);
       if (j.priceAt) full.priceAt = j.priceAt;
       full.metrics.industryPE = summaries[sym].metrics.industryPE;
+      full.foLot = summaries[sym].foLot;
       cache[sym + ':live'] = full;
     }
     return getAny(sym, standalone);

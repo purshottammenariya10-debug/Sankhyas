@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "data" / "universe.json"
 NSE_EQUITY_CSV = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
 NSE_SME_CSV = "https://nsearchives.nseindia.com/emerge/corporates/content/SME_EQUITY_L.csv"
+NSE_FO_CSV = "https://nsearchives.nseindia.com/content/fo/fo_mktlots.csv"   # stocks with futures & options, and lot sizes
 
 
 def parse_nse_csv(text):
@@ -55,10 +56,23 @@ def listing_date(s):
     return ""
 
 
-def fetch_nse_csv(url, label):
+def parse_fo_lots(text):
+    """{symbol: lot size of the nearest month} from NSE's F&O market lots file (index rows included)."""
+    out = {}
+    for line in text.splitlines()[1:]:
+        cells = [x.strip() for x in line.split(",")]
+        if len(cells) > 2 and re.fullmatch(r"[A-Z0-9&-]+", cells[1] or "") and cells[1] != "SYMBOL":
+            lot = next((int(x) for x in cells[2:] if x.isdigit()), None)
+            if lot:
+                out[cells[1]] = lot
+    return out
+
+
+def fetch_nse_csv(url, label, parse=None):
     """Download an NSE archive CSV directly, then through a primed NSE session."""
+    parse_nse_csv_ = parse or parse_nse_csv
     try:
-        rows = parse_nse_csv(fetch_text(url))
+        rows = parse_nse_csv_(fetch_text(url))
         print(f"{label}: {len(rows)} companies")
         return rows
     except Exception as e:  # noqa: BLE001
@@ -68,7 +82,7 @@ def fetch_nse_csv(url, label):
         print("NSE refused a session (its website often blocks cloud servers)", file=sys.stderr)
         return []
     try:
-        rows = parse_nse_csv(nse.get(url, expect_json=False).text)
+        rows = parse_nse_csv_(nse.get(url, expect_json=False).text)
         print(f"{label}: {len(rows)} companies")
         return rows
     except Exception as e:  # noqa: BLE001
@@ -255,6 +269,11 @@ def main(argv=None):
         builtin = [s.strip().upper() for s in (ROOT / "scripts" / "symbols.txt").read_text().split() if s.strip()]
         companies = [{"symbol": s, "name": s, "isin": "", "bse": "", "industry": "", "yahoo": s + ".NS"} for s in builtin]
         print(f"WARNING: NSE and BSE lists unavailable; using {len(companies)} built-in symbols", file=sys.stderr)
+    # futures & options: the lot size, on each F&O stock (the previous list when NSE refuses)
+    lots = fetch_nse_csv(NSE_FO_CSV, "NSE F&O lots", parse=parse_fo_lots) or {c["symbol"]: c["fo"] for c in prev if c.get("fo")}
+    for c in companies:
+        if c["yahoo"].endswith(".NS") and c["symbol"] in lots:
+            c["fo"] = lots[c["symbol"]]
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps({"companies": companies}, separators=(",", ":")))
     nse_n = sum(1 for c in companies if c["yahoo"].endswith(".NS"))

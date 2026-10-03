@@ -321,6 +321,22 @@
     };
   }
 
+  /* ---------- company header: logo and exchange links ---------- */
+  // the company's logo from its website's icon, else its initials (also when the icon fails to load)
+  function companyLogo(c) {
+    const initials = esc(String(c.name || c.symbol).replace(/^(the|shri|sri)\s+/i, '').split(/\s+/).filter(w => /^[A-Za-z0-9]/.test(w)).slice(0, 2).map(w => w[0]).join('').toUpperCase());
+    const site = c.website && String(c.website).replace(/^https?:\/\//, '').split('/')[0];
+    return '<span class="co-logo" aria-hidden="true"><span>' + initials + '</span>' + (site ? '<img src="https://www.google.com/s2/favicons?domain=' + encodeURIComponent(site) + '&sz=128" alt="" loading="lazy" ' +
+      'onload="if(this.naturalWidth<32)this.remove();else this.parentNode.classList.add(\'has-img\')" onerror="this.remove()">' : '') + '</span>';
+  }
+  // BSE, NSE and F&O pages on the exchanges' websites
+  function headerLinks(c) {
+    const X = exchangePages(c), link = (href, label, title) => '<a class="ex-link" href="' + esc(href) + '" target="_blank" rel="noopener noreferrer"' + (title ? ' title="' + esc(title) + '"' : '') + '>↗ ' + label + '</a>';
+    return (X.bse && c.bseCode ? link(X.bse.quote, 'BSE: ' + esc(c.bseCode)) : c.exchange === 'BSE' ? '<span>BSE: ' + esc(c.symbol) + '</span>' : '') +
+      (X.nse ? link(X.nse.quote, 'NSE: ' + esc(c.symbol)) : '') +
+      (X.nse && c.foLot ? link('https://www.nseindia.com/get-quotes/derivatives?symbol=' + encodeURIComponent(c.symbol), 'F&amp;O', 'Futures & options on NSE · lot size ' + c.foLot.toLocaleString('en-IN') + ' shares') : '');
+  }
+
   /* ---------- router ---------- */
   let cleanup = [];
   function onLeave(fn) { cleanup.push(fn); }
@@ -473,11 +489,10 @@
     app.innerHTML =
       '<div class="company-head" id="top"><div class="container">' +
       '<div class="company-title"><div>' +
-      '<h1>' + esc(c.name) + (c.sme ? ' <span class="sme-badge" title="Listed on the NSE Emerge SME platform">SME</span>' : '') + '</h1>' +
+      '<div class="co-name">' + companyLogo(c) + '<h1>' + esc(c.name) + (c.sme ? ' <span class="sme-badge" title="Listed on the NSE Emerge SME platform">SME</span>' : '') + '</h1></div>' +
       '<div class="company-links">' +
       (c.website ? '<a class="site-link" href="https://' + esc(c.website) + '" target="_blank" rel="noopener">🔗 ' + esc(c.website) + '</a>' : '') +
-      (c.exchange === 'BSE' ? '<span>BSE: ' + esc(c.bseCode || c.symbol) + '</span>'
-        : (c.bseCode ? '<span>BSE: ' + esc(c.bseCode) + '</span>' : '') + '<span>NSE: ' + esc(c.symbol) + '</span>') +
+      headerLinks(c) +
       '<a href="#/market/' + encodeURIComponent(c.sector) + '">' + esc(c.sector) + '</a><span>' + esc(c.industry) + '</span>' +
       '</div>' +
       '<div class="price-line"><span class="price">₹ ' + num(m.price, 0) + '</span><span class="chg ' + signCls(m.change) + '">' +
