@@ -39,8 +39,27 @@ Deno.serve(async (req) => {
   if (!trusted && Date.now() - last < 5 * 60e3) return json({ skipped: 'ran less than 5 minutes ago' });
   await db.from('dispatch_state').upsert({ key: 'last_run', value: { at: new Date().toISOString() }, updated_at: new Date().toISOString() });
 
+  // data health (scripts/health_check.py): tell the site's admins once when an update looks broken
+  let health = 'ok';
+  try {
+    const h = await getJSON('data/yahoo/health.json');
+    health = h.status;
+    if (h.status === 'alert' && state.health_seen !== h.at) {
+      const { data: adm } = await db.from('admins').select('user_id');
+      const ids = (adm || []).map((a: any) => a.user_id);
+      const { data: subs } = ids.length ? await db.from('push_subscriptions').select('id, user_id, endpoint, p256dh, auth').in('user_id', ids) : { data: [] };
+      const line = 'Sankhyas data check: ' + h.warnings[0] + (h.warnings.length > 1 ? ' (and ' + (h.warnings.length - 1) + ' more)' : '') + '. ' + SITE + '#/admin';
+      if (subs && subs.length) await sendNotifications(db, subs, await vapidKeys(db), [line]);
+      if (env('RESEND_API_KEY') && ids.length) {
+        const { data: ps } = await db.from('profiles').select('email').in('id', ids);
+        for (const p of ps || []) if (p.email) await sendEmail(p.email, h.warnings.concat([SITE + '#/admin'])).catch(() => {});
+      }
+      await db.from('dispatch_state').upsert({ key: 'health_seen', value: h.at, updated_at: new Date().toISOString() });
+    }
+  } catch (e) { console.error('health', (e as Error).message); }
+
   const { data: rules } = await db.from('alerts').select('id, user_id, kind, symbol, params, channels, created_at').eq('active', true);
-  if (!rules || !rules.length) return json({ rules: 0 });
+  if (!rules || !rules.length) return json({ rules: 0, health });
 
   const [activity, latest, metrics, resultsList, ratings] = await Promise.all([
     getJSON('data/yahoo/activity.json').catch(() => ({ orders: [], disclosures: [], deals: [] })),
@@ -227,7 +246,7 @@ Deno.serve(async (req) => {
   }
   // a price alert switches off once it has reached the user; an undelivered one stays on
   if (priceDone.length) await db.from('alerts').update({ active: false }).in('id', priceDone);
-  return json({ rules: rules.length, events: out.length, users: users.length, deliveries: sent, undelivered, channels: can });
+  return json({ rules: rules.length, events: out.length, users: users.length, deliveries: sent, undelivered, channels: can, health });
 });
 
 // up to five notifications per device a run (the rest summed up in one), each opening its link;

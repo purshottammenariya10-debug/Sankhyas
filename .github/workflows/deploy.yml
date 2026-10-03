@@ -10,8 +10,10 @@ name: Update data and deploy
 
 on:
   schedule:
-    # 11:30 UTC = 5:00 pm IST, after market close, Monday to Friday: full update (prices, financials, filings)
-    - cron: "30 11 * * 1-5"
+    # 11:41 UTC = 5:11 pm IST, after market close, Monday to Friday: full update (prices, financials, filings).
+    # (GitHub drops scheduled runs at busy times such as :00 and :30; if this one is dropped anyway, the
+    # next 2-hourly run does the full update instead: see "Run mode" below.)
+    - cron: "41 11 * * 1-5"
     # every 2 hours, every day: filings only (concall transcripts, presentations, recordings, results,
     # board meetings) and their AI summaries. NSE's feeds only hold the last day or so, so frequent
     # sweeps are what catch every document.
@@ -47,11 +49,47 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Restore data cache
+        id: cache
         uses: actions/cache/restore@v4
         with:
           path: data
           key: sankhyas-data-${{ github.run_id }}
           restore-keys: sankhyas-data-
+
+      # The cache is the working copy of everything collected over time. When GitHub has dropped it,
+      # start from the latest weekly backup (a release asset, see "Back up data"), else from the copy
+      # published on the live site, instead of from nothing.
+      - name: Restore data from backup when the cache is gone
+        if: steps.cache.outputs.cache-matched-key == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest=$(gh release view data-backup -R "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' 2>/dev/null | grep '^data-.*\.tar\.gz$' | sort | tail -1 || true)
+          if [ -n "$latest" ] && gh release download data-backup -R "$GITHUB_REPOSITORY" -p "$latest" -D /tmp; then
+            tar -xzf "/tmp/$latest" && echo "::warning::Data cache was gone: restored the backup $latest"
+          elif git fetch -q --depth=1 origin gh-pages; then
+            git archive FETCH_HEAD data | tar -x && echo "::warning::Data cache was gone and there is no backup: started from the live site's data"
+          else
+            echo "::warning::Data cache was gone and nothing to restore: starting from scratch"
+          fi
+          du -sh data 2>/dev/null || true
+
+      # Full update (company list, every price and statement from Yahoo, search-engine pings): the daily
+      # run and manual runs; and a 2-hourly run on a weekday evening when that day's full update has not
+      # run (its schedule was dropped), so a day is never left without new prices.
+      - name: Run mode
+        id: mode
+        run: |
+          full=false
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ github.event.schedule }}" = "41 11 * * 1-5" ]; then
+            full=true
+          elif [ "${{ github.event.schedule }}" = "17 */2 * * *" ] && [ "$(date -u +%u)" -le 5 ] && [ "$(date -u +%H)" -ge 12 ] \
+               && [ "$(cat data/last_full 2>/dev/null)" != "$(date -u +%F)" ]; then
+            full=true
+            echo "::warning::Today's full update had not run (last: $(cat data/last_full 2>/dev/null || echo never)); doing it now"
+          fi
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "Full update: $full"
 
       - uses: actions/setup-python@v5
         with:
@@ -65,12 +103,12 @@ jobs:
         run: pip install yfinance requests pypdf
 
       - name: Company list (NSE + BSE)
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 11 * * 1-5'
+        if: steps.mode.outputs.full == 'true'
         continue-on-error: true
         run: python scripts/fetch_universe.py
 
       - name: Yahoo Finance data
-        if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 11 * * 1-5'
+        if: steps.mode.outputs.full == 'true'
         continue-on-error: true
         run: python scripts/fetch_yahoo.py --universe --max-full "${{ github.event.inputs.max_full || '1200' }}" --delay 0.5
 
@@ -85,21 +123,21 @@ jobs:
         # NSE refuses GitHub's servers, so NSE history comes through the nse-proxy Edge Function
         # (Supabase, Mumbai). Every run backfills 3 years of filings (concalls, PPTs, annual
         # reports) for the next batch of companies until all NSE companies are covered.
-        run: python scripts/fetch_filings.py --max-backfill "${{ github.event.schedule == '17 */2 * * *' && '80' || github.event.inputs.max_backfill || '300' }}"
+        run: python scripts/fetch_filings.py --max-backfill "${{ steps.mode.outputs.full != 'true' && '80' || github.event.inputs.max_backfill || '300' }}"
 
       - name: Shareholding pattern and quarterly results (NSE)
         if: github.event_name != 'push'
         continue-on-error: true
         # quarterly shareholding (promoter / FII / DII / public / pledge) and results for the verdict
         # cards; companies that just filed results are refreshed first
-        run: python scripts/fetch_nse_extra.py --max-results "${{ github.event.schedule == '17 */2 * * *' && '150' || '400' }}" --max-shp "${{ github.event.schedule == '17 */2 * * *' && '120' || '300' }}" --max-shp-xbrl "${{ github.event.schedule == '17 */2 * * *' && '300' || '900' }}"
+        run: python scripts/fetch_nse_extra.py --max-results "${{ steps.mode.outputs.full != 'true' && '150' || '400' }}" --max-shp "${{ steps.mode.outputs.full != 'true' && '120' || '300' }}" --max-shp-xbrl "${{ steps.mode.outputs.full != 'true' && '300' || '900' }}"
 
       - name: IPOs and rights issues (NSE)
         run: python scripts/fetch_ipo.py || echo "IPO data not refreshed"
       - name: IPO research notes (red herring prospectus digests)
         continue-on-error: true
         timeout-minutes: 20
-        run: python scripts/ipo_notes.py --max "${{ github.event.schedule == '17 */2 * * *' && '4' || '10' }}" || echo "IPO notes not refreshed"
+        run: python scripts/ipo_notes.py --max "${{ steps.mode.outputs.full != 'true' && '4' || '10' }}" || echo "IPO notes not refreshed"
       - name: Bulk and block deals (NSE daily files)
         if: github.event_name != 'push'
         continue-on-error: true
@@ -108,19 +146,19 @@ jobs:
       - name: Concall summaries (free, rule-based)
         if: github.event_name != 'push'
         continue-on-error: true
-        run: python scripts/summarize_concalls.py --max "${{ github.event.schedule == '17 */2 * * *' && '100' || '250' }}" --max-ar "${{ github.event.schedule == '17 */2 * * *' && '25' || '80' }}"  --max-ratings "${{ github.event.schedule == '17 */2 * * *' && '200' || '500' }}"
+        run: python scripts/summarize_concalls.py --max "${{ steps.mode.outputs.full != 'true' && '100' || '250' }}" --max-ar "${{ steps.mode.outputs.full != 'true' && '25' || '80' }}"  --max-ratings "${{ steps.mode.outputs.full != 'true' && '200' || '500' }}"
 
       - name: Ten-year financial history (NSE annual results, merged before Yahoo's four years)
         continue-on-error: true
         timeout-minutes: 25
-        run: python scripts/fetch_history.py --max "${{ github.event.schedule == '17 */2 * * *' && '25' || '60' }}" || python scripts/fetch_history.py --merge-only || echo "history not merged"
+        run: python scripts/fetch_history.py --max "${{ steps.mode.outputs.full != 'true' && '25' || '60' }}" || python scripts/fetch_history.py --merge-only || echo "history not merged"
 
       # NSE Emerge (SME) companies file every half year, under NSE's 'sme' index: their results, full-year
       # statements (P&L, balance sheet, cash flow) come from those filings when Yahoo has none
       - name: SME financials (half-yearly results)
         continue-on-error: true
         timeout-minutes: 30
-        run: python scripts/sme_financials.py --max "${{ github.event.schedule == '17 */2 * * *' && '40' || '100' }}" || python scripts/sme_financials.py --merge-only
+        run: python scripts/sme_financials.py --max "${{ steps.mode.outputs.full != 'true' && '40' || '100' }}" || python scripts/sme_financials.py --merge-only
 
       # each company's logo from its website, saved once (data/logos/<SYMBOL>.png)
       # 13 quarters and the annual statements, consolidated and standalone, from each company's results
@@ -129,18 +167,25 @@ jobs:
       - name: Quarterly and annual results from NSE filings
         continue-on-error: true
         timeout-minutes: 45
-        run: python scripts/nse_financials.py --max "${{ github.event.schedule == '17 */2 * * *' && '120' || '400' }}" --files "${{ github.event.schedule == '17 */2 * * *' && '1500' || '5000' }}" --minutes "${{ github.event.schedule == '17 */2 * * *' && '15' || '35' }}" || python scripts/nse_financials.py --merge-only
+        run: python scripts/nse_financials.py --max "${{ steps.mode.outputs.full != 'true' && '120' || '400' }}" --files "${{ steps.mode.outputs.full != 'true' && '1500' || '5000' }}" --minutes "${{ steps.mode.outputs.full != 'true' && '15' || '35' }}" || python scripts/nse_financials.py --merge-only
 
       - name: Company logos
         continue-on-error: true
         timeout-minutes: 15
         run: |
           pip install -q pillow
-          python scripts/fetch_logos.py --max "${{ github.event.schedule == '17 */2 * * *' && '300' || '900' }}"
+          python scripts/fetch_logos.py --max "${{ steps.mode.outputs.full != 'true' && '300' || '900' }}"
 
       - name: Build company index
         run: |
           if ls data/yahoo/*.json >/dev/null 2>&1; then node scripts/build_index.mjs; else echo "No Yahoo data yet; the site will use sample data"; fi
+
+      # counts against the run before; warnings reach the admins' phones (dispatch-alerts)
+      - name: Data health check
+        continue-on-error: true
+        run: |
+          python scripts/health_check.py
+          [ "${{ steps.mode.outputs.full }}" = "true" ] && date -u +%F > data/last_full || true
 
       - name: Save data cache
         if: always()
@@ -148,6 +193,29 @@ jobs:
         with:
           path: data
           key: sankhyas-data-${{ github.run_id }}
+
+      # Weekly backup of everything collected (a release asset that GitHub does not expire, unlike the
+      # cache): on a full update when the newest backup is 6 days old or more; the two latest are kept.
+      - name: Back up data (weekly)
+        if: steps.mode.outputs.full == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          R="$GITHUB_REPOSITORY"
+          gh release view data-backup -R "$R" >/dev/null 2>&1 || gh release create data-backup -R "$R" --prerelease --title "Data backup" \
+            --notes "Weekly copy of the data the site collects (data/), restored automatically when the Actions cache is gone. Not a software release." >/dev/null
+          latest=$(gh release view data-backup -R "$R" --json assets -q '.assets[].name' | grep '^data-.*\.tar\.gz$' | sort | tail -1 || true)
+          if [ -n "$latest" ] && [ $(( ( $(date -u +%s) - $(date -u -d "$(echo "$latest" | sed -E 's/data-([0-9-]+)\.tar\.gz/\1/')" +%s) ) / 86400 )) -lt 6 ]; then
+            echo "Latest backup $latest is recent; skipped"; exit 0
+          fi
+          f="data-$(date -u +%F).tar.gz"
+          tar -czf "/tmp/$f" data
+          size=$(stat -c %s "/tmp/$f"); echo "Backup $f: $((size / 1048576)) MB"
+          if [ "$size" -gt 2000000000 ]; then echo "::warning::Backup over 2 GB; not uploaded"; exit 0; fi
+          gh release upload data-backup "/tmp/$f" -R "$R" --clobber
+          gh release view data-backup -R "$R" --json assets -q '.assets[].name' | grep '^data-.*\.tar\.gz$' | sort | head -n -2 | \
+            while read old; do gh release delete-asset data-backup "$old" -R "$R" -y; done
 
       - name: Assemble site
         run: |
@@ -249,7 +317,7 @@ jobs:
 
       # Tell Bing, Yandex and other IndexNow search engines about every page once a day (custom domain only)
       - name: Submit pages to IndexNow
-        if: github.event.schedule == '30 11 * * 1-5' || github.event_name == 'workflow_dispatch'
+        if: steps.mode.outputs.full == 'true'
         continue-on-error: true
         run: |
           if [ ! -f _site/CNAME ] || [ ! -f indexnow.json ]; then echo "Custom domain not on yet; skipped."; exit 0; fi

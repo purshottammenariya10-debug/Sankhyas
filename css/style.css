@@ -1125,3 +1125,7 @@ h3 .sub { font-weight: 400; margin-left: 6px; }
 }
 a.doc-link { color: var(--ink-3); display: inline-flex; padding: 2px; }
 a.doc-link:hover { color: var(--primary); }
+.health-card { margin-bottom: 16px; }
+.health-card.health-alert { border-color: var(--red); background: var(--red-bg); }
+.health-card .stats-row { margin: 8px 0 0; }
+.health-warn { margin: 6px 0 4px; padding-left: 20px; color: var(--red); font-weight: 500; }

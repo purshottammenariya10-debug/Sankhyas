@@ -3743,6 +3743,27 @@
 
   /* ---------- Owners' dashboard (#/admin): visitors, sign-ups, Pro, what people look at ---------- */
   let adminChart = [];
+  // data health after each update (scripts/health_check.py): counts against the run before, and warnings
+  function adminHealth(el, when) {
+    if (!el) return;
+    fetch('data/yahoo/health.json', { cache: 'no-cache' }).then(r => (r.ok ? r.json() : null)).then(h => {
+      if (!h || !el.isConnected) return;
+      const L = { companies: 'Companies on the site', with_sales: 'With sales figures', smes: 'SME companies', nse_results: 'NSE results (13 quarters)', holder_names: 'Named shareholders',
+        investors: 'Investors', logos: 'Logos', results_list: 'Latest results list', fo: 'F&O stocks', price_day: 'Prices as of', filing_day: 'Latest filing' };
+      const prev = (h.history || []).length > 1 ? h.history[h.history.length - 2].metrics : {};
+      const cell = k => {
+        const v = h.metrics[k], p = prev[k], d = typeof v === 'number' && typeof p === 'number' ? v - p : null;
+        return '<div class="stat"><div class="sub">' + L[k] + '</div><b>' + (typeof v === 'number' ? num(v, 0) : esc(v || '-')) + '</b>' +
+          (d ? '<div class="sub ' + (d > 0 ? 'up' : 'down') + '">' + (d > 0 ? '+' : '−') + num(Math.abs(d), 0) + ' since last run</div>' : '') + '</div>';
+      };
+      const alert = h.status === 'alert';
+      el.innerHTML = '<div class="ins-card health-card ' + (alert ? 'health-alert' : 'health-ok') + '"><div class="ins-head"><h3>' + (alert ? '⚠️ Data needs attention' : '✅ Data is healthy') +
+        ' <span class="sub">checked ' + when(h.at) + '</span></h3></div>' +
+        (alert ? '<ul class="health-warn">' + h.warnings.map(w => '<li>' + esc(w) + '</li>').join('') + '</ul>' : '') +
+        '<div class="stats-row">' + Object.keys(L).filter(k => k in h.metrics).map(cell).join('') + '</div>' +
+        '<p class="table-note">Checked after every data update; a count falling 15% or more from the run before, or prices or filings going stale, raises a warning and a phone notification to the site\'s admins.</p></div>';
+    }).catch(() => {});
+  }
   function pageAdmin(parts, params) {
     setTitle('Dashboard');
     const days = [7, 30, 90].indexOf(+params.days) >= 0 ? +params.days : 30;
@@ -3763,7 +3784,7 @@
         : '<p class="muted">Nothing recorded yet.</p>') + '</div>';
       const when = t => (t ? new Date(t).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '-');
       const pageName = k => ({ '#/': 'Home', '#/company': 'Company pages', '#/ipo': 'IPOs', '#/screens': 'Screens', '#/screen': 'Screen results', '#/watchlist': 'Watchlist', '#/results': 'Results', '#/feed': 'Feed', '#/ai': 'Ask AI', '#/premium': 'Pro plans', '#/login': 'Log in', '#/register': 'Sign up' }[k] || k);
-      const body =
+      const body = '<div id="adm-health"></div>' +
         '<div class="stats-row">' + tile('Visitors', n(s.visitors), 'today ' + n(s.today && s.today.visitors)) + tile('Page views', n(s.views), 'today ' + n(s.today && s.today.views)) +
           tile('Visits (sessions)', n(s.sessions), s.visitors ? num(s.views / Math.max(1, s.sessions), 1) + ' pages a visit' : '') +
           tile('Sign-ups', n(u.total), '+' + n(u.new) + ' in ' + days + ' days') + tile('Active users', n(u.active), 'logged in within ' + days + ' days') +
@@ -3780,6 +3801,7 @@
         list('Latest sign-ups', s.recent_users || [], [['Email', r => esc(r.email || '-')], ['Joined', r => when(r.created)], ['Last login', r => when(r.last)], ['Email confirmed', r => (r.confirmed ? 'Yes' : '<span class="down">No</span>')], ['Plan', r => esc(r.plan)]]) +
         '<p class="table-note">Visitors are counted by an anonymous id kept in each browser (no IP address, no cookies); browsers that ask not to be tracked are not counted. Days are in IST. Updated ' + when(s.generated) + '.</p>';
       app.innerHTML = shell(body);
+      adminHealth($('#adm-health'), when);
       adminChart.forEach(ch => { try { ch.destroy(); } catch (e) { /* ignore */ } });
       adminChart = [];
       if (window.Chart) {
