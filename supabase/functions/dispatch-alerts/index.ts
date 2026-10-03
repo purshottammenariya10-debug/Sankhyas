@@ -1,7 +1,8 @@
 // Sends Sankhyas alerts. Called after every data refresh (the deploy workflow POSTs here).
 // Reads the public site data (activity, latest filings, metrics), works out which alert rules have
 // a new event, records each event once in public.alert_log and delivers it by email (Resend),
-// Telegram (bot) and WhatsApp (Meta Cloud API template). Channels without credentials are skipped.
+// Telegram (bot), WhatsApp (Meta Cloud API template) and phone / browser notifications (Web Push,
+// to every device the user turned them on for). Channels without credentials are skipped.
 //
 // Secrets: SITE_URL (default: the GitHub Pages site), RESEND_API_KEY, ALERTS_FROM,
 // TELEGRAM_BOT_TOKEN, WHATSAPP_TOKEN, WHATSAPP_PHONE_ID, WHATSAPP_TEMPLATE, DISPATCH_SECRET.
@@ -9,6 +10,7 @@
 // the x-dispatch-secret header, and every event is sent at most once.
 import { createClient } from 'npm:@supabase/supabase-js@2.117.2';
 import { evaluateScreen, loadScreener } from './screener.ts';
+import { sendPush, vapidKeys, type Keys } from '../_shared/webpush.ts';
 
 type Rule = { id: number; user_id: string; kind: string; symbol: string | null; params: Record<string, any>; channels: string[]; created_at: string };
 type Ev = { key: string; text: string; sym: string };
@@ -171,30 +173,41 @@ Deno.serve(async (req) => {
   const priceDone: number[] = [];
   if (users.length) {
     const { data: profs } = await db.from('profiles').select('id, email, full_name, email_alerts, telegram_chat_id, whatsapp_number, whatsapp_opt_in').in('id', users);
+    // devices with notifications on: every alert also goes there
+    const { data: subRows } = await db.from('push_subscriptions').select('id, user_id, endpoint, p256dh, auth').in('user_id', users);
+    const subsOf: Record<string, any[]> = {};
+    (subRows || []).forEach((r: any) => (subsOf[r.user_id] = subsOf[r.user_id] || []).push(r));
+    let keys: Keys | null = null;
+    if ((subRows || []).length) {
+      try { keys = await vapidKeys(db); } catch (e) { console.error('push keys', (e as Error).message); }
+    }
     for (const p of profs || []) {
       const msgs = byUser[p.id];
       const ready: Record<string, boolean> = {
         email: can.email && !!p.email && p.email_alerts !== false,
         telegram: can.telegram && !!p.telegram_chat_id,
         whatsapp: can.whatsapp && !!p.whatsapp_opt_in && !!p.whatsapp_number,
+        push: !!keys && !!(subsOf[p.id] || []).length,
       };
       // each alert goes on the channels it asked for that work; when none of them does, it falls back to
       // email, then Telegram, so an alert is never silently lost
       const why: Record<number, string[]> = {}, route: Record<number, string[]> = {};
       for (const m of msgs) {
         const asked = [...m.channels], ok = asked.filter(c => ready[c]);
-        why[m.id] = asked.filter(c => !ready[c]).map(c => c === 'whatsapp' ? (can.whatsapp ? 'WhatsApp number not saved' : 'WhatsApp sending is not switched on yet')
+        why[m.id] = asked.filter(c => !ready[c] && c !== 'push').map(c => c === 'whatsapp' ? (can.whatsapp ? 'WhatsApp number not saved' : 'WhatsApp sending is not switched on yet')
           : c === 'telegram' ? (can.telegram ? 'Telegram not connected' : 'Telegram is not switched on yet') : (can.email ? 'email alerts are off' : 'email sending is not switched on yet'));
         route[m.id] = ok.length ? ok : ready.email ? ['email'] : ready.telegram ? ['telegram'] : [];
+        if (ready.push && !route[m.id].includes('push')) route[m.id].push('push');
       }
       const done: Record<number, string[]> = {};
       const pick = (ch: string) => msgs.filter(m => route[m.id].includes(ch));
-      for (const ch of ['email', 'telegram', 'whatsapp']) {
+      for (const ch of ['email', 'telegram', 'whatsapp', 'push']) {
         const list = pick(ch);
         if (!list.length) continue;
         try {
           if (ch === 'email') await sendEmail(p.email, list.map(m => m.text));
           else if (ch === 'telegram') await sendTelegram(p.telegram_chat_id, list.map(m => m.text));
+          else if (ch === 'push') { if (!(await sendNotifications(db, subsOf[p.id], keys!, list.map(m => m.text)))) throw new Error('no device took it'); }
           else for (const m of list.slice(0, 5)) await sendWhatsApp(p.whatsapp_number, m.text);
           list.forEach(m => (done[m.id] = (done[m.id] || []).concat(ch)));
           sent++;
@@ -216,6 +229,32 @@ Deno.serve(async (req) => {
   if (priceDone.length) await db.from('alerts').update({ active: false }).in('id', priceDone);
   return json({ rules: rules.length, events: out.length, users: users.length, deliveries: sent, undelivered, channels: can });
 });
+
+// up to five notifications per device a run (the rest summed up in one), each opening its link;
+// devices the push service no longer knows are forgotten. Returns how many devices took them.
+// deno-lint-ignore no-explicit-any
+async function sendNotifications(db: any, subs: any[], keys: Keys, lines: string[]) {
+  const msgs = lines.slice(0, 5).map(t => {
+    const url = (t.match(/https?:\/\/\S+/) || [SITE + '#/alerts'])[0];
+    const text = t.replace(/\s*https?:\/\/\S+/g, '').trim();
+    const i = text.indexOf(': ');
+    return { title: i > 0 && i < 60 ? text.slice(0, i) : 'Sankhyas alert', body: (i > 0 && i < 60 ? text.slice(i + 2) : text).slice(0, 220), url, tag: 'a' + Math.abs(hash(t)) };
+  });
+  if (lines.length > 5) msgs.push({ title: 'Sankhyas alerts', body: (lines.length - 5) + ' more alerts. Tap to see them all.', url: SITE + '#/alerts', tag: 'more' });
+  let ok = 0;
+  for (const sub of subs) {
+    let took = false;
+    for (const m of msgs) {
+      const st = await sendPush(sub, m, keys);
+      if (st === 404 || st === 410) { await db.from('push_subscriptions').delete().eq('id', sub.id); break; }
+      if (st >= 200 && st < 300) took = true;
+      else console.error('push', st, new URL(sub.endpoint).host);
+    }
+    if (took) { ok++; await db.from('push_subscriptions').update({ last_ok: new Date().toISOString() }).eq('id', sub.id); }
+  }
+  return ok;
+}
+const hash = (s: string) => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; };
 
 const escHtml = (s: string) => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
 const linkify = (s: string) => escHtml(s).replace(/(https?:\/\/[^\s]+)/g, '<a href="$1">$1</a>');

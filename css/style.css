@@ -1123,3 +1123,5 @@ h3 .sub { font-weight: 400; margin-left: 6px; }
   .ins-teaser li { grid-template-columns: 24px 1fr; }
   .ins-teaser li .muted { grid-column: 2; }
 }
+a.doc-link { color: var(--ink-3); display: inline-flex; padding: 2px; }
+a.doc-link:hover { color: var(--primary); }

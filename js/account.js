@@ -254,6 +254,51 @@
         return error ? { error: friendly(error) } : {};
       }
     },
+    /* Phone and browser notifications for alerts (Web Push). Android and desktop browsers support them;
+       an iPhone does from the app added to the home screen (iOS 16.4+). The device is saved to the
+       account (public.push_subscriptions); supabase/functions/dispatch-alerts sends to it. */
+    push: {
+      supported() { return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window; },
+      async current() {
+        if (!this.supported()) return null;
+        const reg = await navigator.serviceWorker.getRegistration('./');
+        return reg ? reg.pushManager.getSubscription() : null;
+      },
+      async enable() {
+        if (!client || !state.user) return { error: 'Please log in first.' };
+        if (!this.supported()) return { error: 'This browser cannot show notifications.' };
+        const perm = await Notification.requestPermission();
+        if (perm !== 'granted') return { error: perm === 'denied' ? 'Notifications are blocked for this site. Allow them in your browser settings, then try again.' : 'Notifications were not allowed.' };
+        try {
+          const reg = await navigator.serviceWorker.register('sw.js', { scope: './' }).then(() => navigator.serviceWorker.ready);
+          const r = await fetch(cfg.supabaseUrl.replace(/\/$/, '') + '/functions/v1/push-key', { headers: { apikey: cfg.supabaseAnonKey, Authorization: 'Bearer ' + cfg.supabaseAnonKey } });
+          const { publicKey } = await r.json();
+          if (!publicKey) return { error: 'Notifications are not available right now.' };
+          const raw = atob(publicKey.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((publicKey.length + 3) % 4));
+          const key = Uint8Array.from(raw, ch => ch.charCodeAt(0));
+          let sub = await reg.pushManager.getSubscription();
+          if (sub && sub.options && sub.options.applicationServerKey && new Uint8Array(sub.options.applicationServerKey).join() !== key.join()) { await sub.unsubscribe(); sub = null; }
+          if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+          const j = sub.toJSON();
+          const { error } = await client.from('push_subscriptions').upsert({ user_id: state.user.id, endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, ua: navigator.userAgent.slice(0, 200) }, { onConflict: 'endpoint' });
+          return error ? { error: friendly(error) } : {};
+        } catch (e) {
+          return { error: 'Could not turn notifications on: ' + (e && e.message ? e.message : e) };
+        }
+      },
+      async disable() {
+        const sub = await this.current();
+        if (!sub) return {};
+        if (client && state.user) await client.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
+        await sub.unsubscribe().catch(() => {});
+        return {};
+      },
+      async devices() {
+        if (!client || !state.user) return 0;
+        const { count } = await client.from('push_subscriptions').select('id', { count: 'exact', head: true });
+        return count || 0;
+      }
+    },
     /* Visit counting for the owners' dashboard: one row per page, an anonymous visitor id kept in
        this browser (no IP address, no cookie). Skipped when the browser asks not to be tracked. */
     trackView(path, symbol) {

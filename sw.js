@@ -5,7 +5,7 @@
  * code keep their last copy; data files (prices, results, filings) keep the most recent 250.
  * Other sites (fonts, sign-in, payments) are never touched.
  */
-const VERSION = 'v2';
+const VERSION = 'v3';
 const SHELL = 'sankhyas-shell-' + VERSION;
 const DATA = 'sankhyas-data-' + VERSION;
 const DATA_MAX = 250;
@@ -52,4 +52,25 @@ self.addEventListener('fetch', e => {
       throw err;
     }
   })());
+});
+
+// ---------- phone and browser notifications (alerts sent by supabase/functions/dispatch-alerts) ----------
+self.addEventListener('push', e => {
+  let m = {};
+  try { m = e.data ? e.data.json() : {}; } catch (err) { m = { body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(m.title || 'Sankhyas alert', {
+    body: m.body || '', tag: m.tag || undefined, icon: 'assets/logo-192.png', badge: 'assets/favicon-96.png',
+    data: { url: m.url || './#/alerts' }
+  }));
+});
+
+// tapping a notification opens its page: in a Sankhyas tab already open, else a new one
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const url = new URL((e.notification.data && e.notification.data.url) || './#/alerts', self.registration.scope).href;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    const tab = list.find(c => c.url.startsWith(self.registration.scope));
+    if (tab) return tab.navigate(url).then(c => (c || tab).focus()).catch(() => tab.focus());
+    return self.clients.openWindow(url);
+  }));
 });

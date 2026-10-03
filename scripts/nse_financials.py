@@ -24,6 +24,7 @@ import argparse
 import concurrent.futures as cf
 import datetime as dt
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -32,7 +33,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from exchange import NSE_HOME, nse_session  # noqa: E402
-from sme_financials import ANNUAL_KEYS, HALF_KEYS, HEADERS, KEEP_YEARS, has_values, iso, label, load, parse_xbrl, table  # noqa: E402
+from sme_financials import ANNUAL_KEYS, CF, FACT, HALF_KEYS, HEADERS, KEEP_YEARS, cr, has_values, iso, label, load, num, parse_xbrl, table  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 FIN = ROOT / "data" / "fin"
@@ -41,6 +42,69 @@ FILINGS = ROOT / "data" / "filings"
 KEEP_Q = 13          # quarters shown, like Screener
 VERSION = 1
 RECHECK_DAYS = 30    # companies with nothing new filed are listed again after this
+
+
+# ---------- banks (NSE's banking format: interest earned and paid, provisions, NPA, deposits and advances) ----------
+BANK_PL = {
+    "sales": ["InterestEarned"],
+    "interest": ["InterestExpended"],
+    "opex": ["OperatingExpenses"],
+    "prov": ["ProvisionsOtherThanTaxAndContingencies"],
+    "otherIncome": ["OtherIncome"],
+    "exceptional": ["ExceptionalItems"],
+    "pbt": ["ProfitLossFromOrdinaryActivitiesBeforeTax"],
+    "taxAmt": ["TaxExpense"],
+    "np": ["ProfitLossForThePeriod"],
+    "npOwners": ["ProfitLossAfterTaxesMinorityInterestAndShareOfProfitLossOfAssociates"],
+    "eps": ["BasicEarningsPerShareAfterExtraordinaryItems", "BasicEarningsPerShareBeforeExtraordinaryItems"],
+}
+BANK_PCT = {"gnpa": "PercentageOfGrossNpa", "nnpa": "PercentageOfNpa", "cet1": "CET1Ratio", "roa": "ReturnOnAssets"}
+BANK_BS = {
+    "equity": ["Capital"], "reserves": ["ReservesAndSurplus"], "deposits": ["Deposits"], "borrowings": ["Borrowings"],
+    "otherLiab": ["OtherLiabilitiesAndProvisions"], "total": ["CapitalAndLiabilities", "Assets"],
+    "cashRbi": ["CashAndBalancesWithReserveBankOfIndia"], "bankBal": ["BalancesWithBanksAndMoneyAtCallAndShortNotice"],
+    "investments": ["Investments"], "advances": ["Advances"], "fixedAssets": ["FixedAssets"], "otherAssets": ["OtherAssets"],
+}
+
+
+def parse_bank(text):
+    """{'quarters' | 'years': {end: row}} from one banking-format results file (Rs crore; ratios in %)."""
+    facts = {}
+    for _, name, ctx, val in FACT.findall(text):
+        facts.setdefault((name, ctx), val.strip())
+    get = lambda names, ctx: next((num(facts[(n, ctx)]) for n in names if (n, ctx) in facts and num(facts[(n, ctx)]) is not None), None)
+    spans = {}
+    for (name, ctx), v in facts.items():
+        if name in ("DateOfStartOfReportingPeriod", "DateOfEndOfReportingPeriod"):
+            spans.setdefault(ctx, {})["s" if "Start" in name else "e"] = v
+    out = {"quarters": {}, "years": {}}
+    for ctx, se in spans.items():
+        try:
+            s, e = dt.date.fromisoformat(se["s"]), dt.date.fromisoformat(se["e"])
+        except (KeyError, ValueError):
+            continue
+        days = (e - s).days
+        kind = "quarters" if 80 <= days <= 100 else "years" if 330 <= days <= 400 else None
+        raw = {k: get(v, ctx) for k, v in BANK_PL.items()}
+        if not kind or raw["sales"] is None or raw["np"] is None:
+            continue
+        row = {k: (raw[k] if k == "eps" else cr(raw[k])) for k in raw}
+        pu, fv = get(["PaidUpValueOfEquityShareCapital"], ctx), get(["FaceValueOfEquityShareCapital"], ctx)
+        if pu and fv:
+            row["sharesOut"] = round(pu / fv / 1e7, 4)
+        for k, tag in BANK_PCT.items():
+            v = get([tag], ctx)
+            if v:
+                row[k] = round(v * 100 if abs(v) < 1 else v, 2)
+        if kind == "years":
+            for k, names in CF.items():
+                row[k] = cr(get(names, ctx))
+        out[kind][e.isoformat()] = row
+    if out["years"] and any(k[1] == "OneI" for k in facts):
+        y = out["years"][max(out["years"])]
+        for k, names in BANK_BS.items():
+            y[k] = cr(get(names, "OneI"))
+    return out
 
 
 def listings(nse, sym):
@@ -58,7 +122,7 @@ def listings(nse, sym):
         end, url = iso(r.get("toDate") or ""), r.get("xbrl") or ""
         if end and url.endswith(".xml"):
             out.append((end, (r.get("consolidated") or "").lower().startswith("consolidated"), r.get("broadCastDate") or r.get("filingDate") or "", url,
-                        (r.get("bank") or "N").upper() == "Y" or "BANKING" in url.upper() or "INSURANCE" in url.upper()))
+                        "BANKING" in url.upper() or "INSURANCE" in url.upper()))
     return out
 
 
@@ -80,14 +144,19 @@ def fetch(nse, sym, doc, budget):
     """Read the needed filings not read before (newest first, at most `budget`). Returns files read,
     or -1 for a bank or insurer."""
     rows = listings(nse, sym)
-    if any(r[4] for r in rows):
-        doc["skip"] = "financial"
+    bank = any("BANKING" in r[3].upper() for r in rows)
+    if any("INSURANCE" in r[3].upper() for r in rows):
+        doc["skip"] = "insurance"
         return -1
+    if bank != bool(doc.get("bank")):
+        doc.pop("c", None), doc.pop("s", None), doc.pop("src", None)   # format changed: read again
+    doc["bank"] = bank
     seen = set(doc.get("src") or [])
     todo = sorted((r for r in needed(rows) if r[3] not in seen), key=lambda r: r[0], reverse=True)[:budget]
 
     def get(r):
-        return r, parse_xbrl(requests.get(r[3], headers=HEADERS, timeout=60).text)
+        text = requests.get(r[3], headers=HEADERS, timeout=60).text
+        return r, parse_bank(text) if bank else parse_xbrl(text)
 
     got = 0
     with cf.ThreadPoolExecutor(6) as ex:
@@ -150,6 +219,28 @@ def quarters_table(store):
     return t if len(t["periods"]) >= 4 else None
 
 
+def results_pdfs(sym):
+    """The company's results filings on the exchange: [(date, pdf url)], from its announcements
+    (scripts/fetch_filings.py), media and press releases left out."""
+    f = load(FILINGS / f"{sym}.json") or {}
+    out = []
+    for a in f.get("announcements") or []:
+        if a.get("k") == "results" and a.get("u") and a.get("d") and not re.search(r"media release|press release|presentation", a.get("t") or "", re.I):
+            out.append((a["d"][:10], a["u"]))
+    return sorted(out)
+
+
+def docs_for(periods, pdfs):
+    """For each period ('Jun 2026'), the first results filing within 80 days after it ended (or None)."""
+    out = []
+    for p in periods:
+        d = dt.datetime.strptime(p, "%b %Y").date()
+        end = (d.replace(day=28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)
+        lo, hi = end.isoformat(), (end + dt.timedelta(days=80)).isoformat()
+        out.append(next((u for when, u in pdfs if lo < when <= hi), None))
+    return out if any(out) else None
+
+
 def merge(sym, doc):
     """Fill the company's Yahoo file from the NSE figures. No network. Returns True when changed."""
     yp = YAHOO / f"{sym}.json"
@@ -157,6 +248,8 @@ def merge(sym, doc):
     if not ydoc or doc.get("skip"):
         return False
     c, s = doc.get("c") or {}, doc.get("s") or {}
+    if doc.get("bank"):
+        return merge_bank(sym, ydoc, yp, c, s)
     main, cons = (c, True) if (c.get("q") or c.get("y")) else (s, False)
     if not (main.get("q") or main.get("y")):
         return False
@@ -201,11 +294,51 @@ def merge(sym, doc):
             ydoc["standalone"] = st
     else:
         ydoc.pop("standalone", None)
+    # links to the results filings (the "Raw PDF" row)
+    pdfs = results_pdfs(sym)
+    for t in [ydoc.get("quarterly"), ydoc.get("annual")] + list((ydoc.get("standalone") or {}).values()):
+        if t and t.get("periods"):
+            dl = docs_for(t["periods"], pdfs)
+            if dl:
+                t["docs"] = dl
+            else:
+                t.pop("docs", None)
     after = json.dumps([ydoc.get("quarterly"), ydoc.get("annual"), ydoc.get("standalone")], sort_keys=True)
     if after != before:
         yp.write_text(json.dumps(ydoc, separators=(",", ":")))
         return True
     return False
+
+
+def merge_bank(sym, ydoc, yp, c, s):
+    """Banks: their own tables (ydoc["bank"]), shown in place of Yahoo's quarterly, profit and loss and
+    balance sheet; Yahoo's statements stay for the ratios and screens."""
+    pdfs = results_pdfs(sym)
+    out = {}
+    for b, store in (("c", c), ("s", s)):
+        q = adjusted({e: store["q"][e] for e in sorted(store.get("q") or {})[-KEEP_Q:]})
+        y = adjusted({e: store["y"][e] for e in sorted(store.get("y") or {})[-KEEP_YEARS:]})
+        if b == "c":
+            # NPA ratios are filed in the standalone results only
+            for e, r in q.items():
+                for k in BANK_PCT:
+                    if r.get(k) is None and (s.get("q") or {}).get(e, {}).get(k) is not None:
+                        r[k] = s["q"][e][k]
+            for e, r in y.items():
+                for k in BANK_PCT:
+                    if r.get(k) is None and (s.get("y") or {}).get(e, {}).get(k) is not None:
+                        r[k] = s["y"][e][k]
+        if len(q) >= 2 or y:
+            qe, ye = sorted(q), sorted(y)
+            out[b] = {"q": [dict(q[e], qe=e) for e in qe], "y": [dict(y[e], ye=e) for e in ye],
+                      "qDocs": docs_for([label(e) for e in qe], pdfs), "yDocs": docs_for([label(e) for e in ye], pdfs)}
+    if not out:
+        return False
+    if ydoc.get("bank") == out:
+        return False
+    ydoc["bank"] = out
+    yp.write_text(json.dumps(ydoc, separators=(",", ":")))
+    return True
 
 
 def main(argv=None):

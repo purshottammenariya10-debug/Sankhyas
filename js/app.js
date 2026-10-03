@@ -509,8 +509,8 @@
       ' <span class="sub-nav-price">₹ ' + num(m.price, m.price < 100 ? 2 : 0) + ' <span class="' + signCls(m.change) + '">' + (m.change >= 0 ? '▲' : '▼') + num(Math.abs(m.changePct), 2) + '%</span></span></span>' +
       COMPANY_SECTIONS.map(s => '<a href="" data-target="' + s[0] + '">' + esc(s[1]) + '</a>').join('') + '</div></div>' +
       '<div class="container page">' +
-      summarySection(c) + aiSection(c) + insightsSection(c) + chartSection(c) + analysisSection(c) + peersSection(c) + quartersSection(c) +
-      plSection(c) + bsSection(c) + cfSection(c) + ratiosSection(c) + shareholdingSection(c) + documentsSection(c) + notesSection(c) +
+      summarySection(c) + aiSection(c) + insightsSection(c) + chartSection(c) + analysisSection(c) + peersSection(c) + ((c.bankFin && bankQuartersSection(c)) || quartersSection(c)) +
+      ((c.bankFin && bankPlSection(c)) || plSection(c)) + ((c.bankFin && bankBsSection(c)) || bsSection(c)) + cfSection(c) + ratiosSection(c) + shareholdingSection(c) + documentsSection(c) + notesSection(c) +
       '</div>';
 
     // actions
@@ -602,7 +602,7 @@
         c._res = r;
         refreshInsights(c);
         if (c._chartRefresh) c._chartRefresh();
-        const bq = r.quarters[0].bank && bankQuartersSection(c), old = $('#quarters');
+        const bq = !c.bankFin && r.quarters[0].bank && bankQuartersSection(c), old = $('#quarters');
         if (bq && old) { old.outerHTML = bq; bindStatements($('#quarters')); }
       });
       Data.loadShareholding(sym).then(sh => {
@@ -2192,15 +2192,17 @@
   }
 
   /* statement tables */
+  const DOC_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>';
   function statementTable(headers, rows, opts) {
     opts = opts || {};
     const hl = opts.highlightLast ? headers.length - 1 : -1;
     if (!headers.length) return '<div class="info-box">No data available for this section.</div>';
     let h = '<div class="table-wrap"><table class="data"><thead><tr><th></th>' + headers.map((x, i) => '<th' + (i === hl ? ' class="highlight"' : '') + '>' + esc(x) + '</th>').join('') + '</tr></thead><tbody>';
     // small companies (most SME ones): amounts under ₹ 100 Cr get two decimals, so ₹ 0.66 Cr does not read as 1
-    const small = rows.every(r => r.type === 'pct' || r.dec || r.values.every(v => v == null || Math.abs(v) < 100));
+    const small = rows.every(r => r.type === 'pct' || r.type === 'link' || r.dec || r.values.every(v => v == null || Math.abs(v) < 100));
     rows.forEach(r => {
-      const fmt = v => (r.type === 'pct' ? pct(v, r.dec || 0) : num(v, r.dec != null ? r.dec : small ? 2 : 0));
+      const fmt = v => (r.type === 'link' ? (v ? '<a class="doc-link" href="' + esc(v) + '" target="_blank" rel="noopener noreferrer" title="Results filing (PDF)" aria-label="Results filing (PDF)">' + DOC_ICON + '</a>' : '')
+        : r.type === 'pct' ? pct(v, r.dec || 0) : num(v, r.dec != null ? r.dec : small ? 2 : 0));
       const label = r.expand ? '<button class="expand" data-expand="' + r.expand + '">' + esc(r.label) + '</button>' : esc(r.label);
       h += '<tr class="' + (r.strong ? 'strong ' : '') + (r.sub ? 'sub-row hidden ' : '') + '"' + (r.sub ? ' data-sub="' + r.sub + '"' : '') + '><td>' + label + '</td>' +
         r.values.map((v, i) => '<td' + (i === hl ? ' class="highlight"' : '') + '>' + fmt(v) + '</td>').join('') + '</tr>';
@@ -2238,14 +2240,21 @@
       { label: 'Tax %', values: q.tax, type: 'pct' },
       { label: 'Net Profit', values: q.np, strong: true },
       { label: 'EPS in Rs', values: q.eps, dec: 2 }
-    ], { highlightLast: true }) + '<p class="table-note">' + (c.half ? 'SME companies listed on NSE Emerge report every six months: Sep is April–September, Mar is October–March. ' : '') + 'Raw PDF and detailed result filings are available under Documents.</p></section>';
+    ].concat(c.qDocs && c.qDocs.length === c.quarters.length ? [{ label: 'Raw PDF', values: c.qDocs, type: 'link' }] : []), { highlightLast: true }) +
+      '<p class="table-note">' + (c.half ? 'SME companies listed on NSE Emerge report every six months: Sep is April–September, Mar is October–March. ' : '') +
+      (c.qDocs ? 'Raw PDF opens the results as filed with the exchange. ' : 'Raw PDF and detailed result filings are available under Documents.') + '</p></section>';
   }
 
   // banks report differently: interest earned and paid, operating expenses and provisions, financing
   // profit, and asset quality (gross / net NPA) from the standalone results
+  // a bank's rows from its NSE filings (scripts/nse_financials.py), in the shape of the results file's
+  const bankRows = l => l.map(r => ({ qe: r.qe || r.ye, sales: r.sales, interest: r.interest, opex: r.opex, prov: r.prov, other_income: r.otherIncome, dep: null, pbt: r.pbt,
+    tax: r.taxAmt, np: r.np, np_owners: r.npOwners, eps: r.eps, gnpa: r.gnpa, nnpa: r.nnpa, cet1: r.cet1, bank: true }));
   function bankQuartersSection(c) {
-    const qs = ((c._res && c._res.quarters) || []).filter(q => q.bank).slice().sort((a, b) => (a.qe < b.qe ? -1 : 1));
+    const B = c.bankFin && c.bankFin[c.bankBasis];
+    const qs = B ? bankRows(B.q) : ((c._res && c._res.quarters) || []).filter(q => q.bank).slice().sort((a, b) => (a.qe < b.qe ? -1 : 1));
     if (qs.length < 2) return null;
+    if (B) qs.forEach(q => { q.cons = c.bankBasis === 'c'; });
     const lbl = q => new Date(q.qe + 'T00:00:00').toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
     const col = f => qs.map(f);
     const exp = q => (q.opex != null || q.prov != null ? (q.opex || 0) + (q.prov || 0) : null);
@@ -2259,15 +2268,16 @@
       { label: 'Financing Profit', values: col(fin), strong: true },
       { label: 'Financing Margin %', values: col(q => (fin(q) != null && q.sales ? fin(q) / q.sales * 100 : null)), type: 'pct' },
       { label: 'Other Income', values: col(q => q.other_income) },
-      { label: 'Depreciation', values: col(q => q.dep || 0) },
+    ].concat(B ? [] : [{ label: 'Depreciation', values: col(q => q.dep || 0) }]).concat([
       { label: 'Profit before tax', values: col(q => q.pbt), strong: true },
       { label: 'Tax %', values: col(q => (q.tax != null && q.pbt ? q.tax / q.pbt * 100 : null)), type: 'pct' },
       { label: 'Net Profit', values: col(q => (q.np_owners != null ? q.np_owners : q.np)), strong: true },
       { label: 'EPS in Rs', values: col(q => q.eps), dec: 2 },
       { label: 'Gross NPA %', values: col(q => q.gnpa), type: 'pct', dec: 2 },
       { label: 'Net NPA %', values: col(q => q.nnpa), type: 'pct', dec: 2 }
-    ];
+    ]);
     if (qs.some(q => q.cet1 != null)) rows.push({ label: 'CET1 ratio %', values: col(q => q.cet1), type: 'pct', dec: 2 });
+    if (B && B.qDocs && B.qDocs.length === qs.length) rows.push({ label: 'Raw PDF', values: B.qDocs, type: 'link' });
     const cons = qs[qs.length - 1].cons;
     return sectionHead('quarters', 'Quarterly Results', (cons ? 'Consolidated' : 'Standalone') + ' Figures in Rs. Crores &middot; Source: results filed with NSE', c) +
       statementTable(qs.map(lbl), rows, { highlightLast: true }) +
@@ -2279,7 +2289,6 @@
     const p = c.pl, t = c.ttm, m = c.metrics;
     const heads = c.years.concat(['TTM']);
     const w = (arr, v) => arr.concat([v]);
-    const growthBox = (title, rows) => '<div class="growth-box"><h4>' + title + '</h4>' + rows.map(r => '<div><span>' + r[0] + ':</span><b>' + (r[1] == null ? '' : num(r[1], 0) + '%') + '</b></div>').join('') + '</div>';
     return sectionHead('profit-loss', 'Profit & Loss', figs(c), c) + statementTable(heads, [
       { label: 'Sales', values: w(p.sales, t.sales), strong: true },
       { label: 'Expenses', values: w(p.expenses, t.expenses), expand: p.material ? 'exp' : null }].concat(p.material ? [
@@ -2297,13 +2306,68 @@
       { label: 'Net Profit', values: w(p.np, t.np), strong: true },
       { label: 'EPS in Rs', values: w(p.eps, t.eps), dec: 2 },
       { label: 'Dividend Payout %', values: w(p.payout, null), type: 'pct' }
-    ]), { highlightLast: true }) +
-      '<div class="growth-boxes">' +
+    ]).concat(c.yDocs && c.yDocs.length === c.years.length ? [{ label: 'Raw PDF', values: w(c.yDocs, null), type: 'link' }] : []), { highlightLast: true }) +
+      growthBoxes(m) + '</section>';
+  }
+  function growthBoxes(m) {
+    const growthBox = (title, rows) => '<div class="growth-box"><h4>' + title + '</h4>' + rows.map(r => '<div><span>' + r[0] + ':</span><b>' + (r[1] == null ? '' : num(r[1], 0) + '%') + '</b></div>').join('') + '</div>';
+    return '<div class="growth-boxes">' +
       growthBox('Compounded Sales Growth', [['10 Years', m.salesGrowth10], ['5 Years', m.salesGrowth5], ['3 Years', m.salesGrowth3], ['TTM', m.salesGrowthTTM]]) +
       growthBox('Compounded Profit Growth', [['10 Years', m.profitGrowth10], ['5 Years', m.profitGrowth5], ['3 Years', m.profitGrowth3], ['TTM', m.profitGrowthTTM]]) +
       growthBox('Stock Price CAGR', [['10 Years', m.ret10y], ['5 Years', m.ret5y], ['3 Years', m.ret3y], ['1 Year', m.ret1y]]) +
       growthBox('Return on Equity', [['10 Years', m.avgRoe10], ['5 Years', m.avgRoe5], ['3 Years', m.avgRoe3], ['Last Year', m.roe]]) +
-      '</div></section>';
+      '</div>';
+  }
+  // banks: the annual profit and loss and balance sheet from their NSE filings, in the banking layout
+  const bankFigs = c => (c.bankBasis === 'c' ? 'Consolidated' : 'Standalone') + ' Figures in Rs. Crores &middot; Source: results filed with NSE';
+  const yearLbl = e => new Date(e + 'T00:00:00').toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+  function bankPlSection(c) {
+    const B = c.bankFin && c.bankFin[c.bankBasis], ys = B ? B.y.filter(y => y.sales != null) : [];
+    if (ys.length < 2) return null;
+    const col = f => ys.map(f);
+    const exp = y => (y.opex != null || y.prov != null ? (y.opex || 0) + (y.prov || 0) : null);
+    const fin = y => (y.sales != null && y.interest != null && exp(y) != null ? y.sales - y.interest - exp(y) : null);
+    const np = y => (y.npOwners != null ? y.npOwners : y.np);
+    const rows = [
+      { label: 'Revenue', values: col(y => y.sales), strong: true },
+      { label: 'Interest', values: col(y => y.interest) },
+      { label: 'Expenses', values: col(exp), expand: 'bpexp' },
+      { label: 'Operating expenses', values: col(y => y.opex), sub: 'bpexp' },
+      { label: 'Provisions', values: col(y => y.prov), sub: 'bpexp' },
+      { label: 'Financing Profit', values: col(fin), strong: true },
+      { label: 'Financing Margin %', values: col(y => (fin(y) != null && y.sales ? fin(y) / y.sales * 100 : null)), type: 'pct' },
+      { label: 'Other Income', values: col(y => y.otherIncome) },
+      { label: 'Profit before tax', values: col(y => y.pbt), strong: true },
+      { label: 'Tax %', values: col(y => (y.taxAmt != null && y.pbt ? y.taxAmt / y.pbt * 100 : null)), type: 'pct' },
+      { label: 'Net Profit', values: col(np), strong: true },
+      { label: 'EPS in Rs', values: col(y => y.eps), dec: 2 },
+      { label: 'Dividend Payout %', values: col(y => (y.dividendsPaid && np(y) > 0 ? Math.abs(y.dividendsPaid) / np(y) * 100 : null)), type: 'pct' },
+      { label: 'Gross NPA %', values: col(y => y.gnpa), type: 'pct', dec: 2 },
+      { label: 'Net NPA %', values: col(y => y.nnpa), type: 'pct', dec: 2 }
+    ];
+    if (B.yDocs && B.yDocs.length === ys.length) rows.push({ label: 'Raw PDF', values: B.yDocs, type: 'link' });
+    return sectionHead('profit-loss', 'Profit & Loss', bankFigs(c), c) + statementTable(ys.map(y => yearLbl(y.ye)), rows, { highlightLast: true }) +
+      growthBoxes(c.metrics) + '<p class="table-note">Dividend payout is dividends paid in the year (from the cash flow statement) over net profit.</p></section>';
+  }
+  function bankBsSection(c) {
+    const B = c.bankFin && c.bankFin[c.bankBasis], ys = B ? B.y.filter(y => y.total != null) : [];
+    if (ys.length < 2) return null;
+    const col = f => ys.map(f);
+    const cash = y => (y.cashRbi != null || y.bankBal != null ? (y.cashRbi || 0) + (y.bankBal || 0) : null);
+    return sectionHead('balance-sheet', 'Balance Sheet', bankFigs(c), c, '<button class="btn btn-small" id="ca-btn">Corporate actions</button>') + statementTable(ys.map(y => yearLbl(y.ye)), [
+      { label: 'Equity Capital', values: col(y => y.equity) },
+      { label: 'Reserves', values: col(y => y.reserves) },
+      { label: 'Deposits', values: col(y => y.deposits) },
+      { label: 'Borrowing', values: col(y => y.borrowings) },
+      { label: 'Other Liabilities', values: col(y => y.otherLiab) },
+      { label: 'Total Liabilities', values: col(y => y.total), strong: true },
+      { label: 'Advances', values: col(y => y.advances) },
+      { label: 'Investments', values: col(y => y.investments) },
+      { label: 'Cash & bank balances', values: col(cash) },
+      { label: 'Fixed Assets', values: col(y => y.fixedAssets) },
+      { label: 'Other Assets', values: col(y => y.otherAssets) },
+      { label: 'Total Assets', values: col(y => y.total), strong: true }
+    ], { highlightLast: true }) + '</section>';
   }
 
   function bsSection(c) {
@@ -4408,7 +4472,7 @@
     const shell = body => { app.innerHTML = '<div class="container page"><div class="card" style="max-width:860px;margin:0 auto"><div class="section-head"><div><h1>Alerts ' + PRO_TAG + '</h1><p>Results, red-flag changes, insider buying, order wins and screen matches, sent to you by email, Telegram or WhatsApp.</p></div></div>' + body + '</div></div>'; };
     if (!Account.cloud) return shell('<div class="info-box">Alerts need Sankhyas accounts, which are not switched on for this site.</div>');
     if (!u) {
-      app.innerHTML = loginGate('Alerts', 'Login to get results, red-flag changes, insider buying and order wins for the companies you follow, by email, Telegram or WhatsApp.', '#/alerts');
+      app.innerHTML = loginGate('Alerts', 'Login to get results, red-flag changes, insider buying and order wins for the companies you follow, as phone notifications, by email, Telegram or WhatsApp.', '#/alerts');
       socialButtons($('#gate-social'), '#/alerts', 'Login');
       return;
     }
@@ -4418,6 +4482,7 @@
     const tgOn = !!prof.telegram_chat_id;
     shell(
       '<h3>Where to send alerts</h3><div class="channel-grid">' +
+      '<div class="channel channel-push"><div><b>🔔 Notifications on this device</b><div class="sub" id="push-state">Checking…</div></div><label class="switch"><input type="checkbox" id="ch-push" disabled><span></span></label></div>' +
       '<div class="channel"><div><b>✉ Email</b><div class="sub">' + esc(u.email) + '</div></div><label class="switch"><input type="checkbox" id="ch-email"' + (prof.email_alerts !== false ? ' checked' : '') + '><span></span></label></div>' +
       '<div class="channel"><div><b>✈ Telegram</b><div class="sub">' + (tgOn ? 'Connected' : cfg.telegramBot ? 'Not connected' : 'Coming soon') + '</div></div>' +
         (tgOn ? '<button class="btn btn-small" id="tg-unlink">Disconnect</button>' : cfg.telegramBot ? '<button class="btn btn-small btn-primary" id="tg-link">Connect</button>' : '') + '</div>' +
@@ -4444,6 +4509,31 @@
       '<p class="table-note">Alerts are checked after every data refresh: price alerts every 30 minutes in market hours, the rest about every 2 hours. Set a price alert straight from a company\'s chart with ✏ Draw → 🔔 Price alert. Screen alerts tell you about companies that newly match. Not investment advice.</p>'
     );
     const msg = (id, html) => { const el = $(id); if (el) el.innerHTML = html; };
+    // notifications on this phone or computer: every alert also comes here once it is on
+    const pushUi = async () => {
+      const el = $('#push-state'), cb = $('#ch-push');
+      if (!el) return;
+      const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (/macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+      const installed = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+      if (!Account.push.supported()) {
+        el.textContent = ios && !installed ? 'On iPhone: tap Share → Add to Home Screen, open Sankhyas from there, then turn this on.' : 'This browser cannot show notifications.';
+        return;
+      }
+      const sub = await Account.push.current();
+      const on = !!sub && Notification.permission === 'granted';
+      cb.disabled = false;
+      cb.checked = on;
+      el.textContent = on ? 'On. Every alert also pops up here, even with Sankhyas closed.' : Notification.permission === 'denied' ? 'Blocked in your browser settings for this site.' : 'Off. Turn on to get alerts as phone notifications.';
+    };
+    pushUi();
+    $('#ch-push').onchange = async e => {
+      const cb = e.target;
+      cb.disabled = true;
+      const r = cb.checked ? await Account.push.enable() : await Account.push.disable();
+      msg('#ch-msg', r.error ? errBox(r.error) : '');
+      if (!r.error) toast(cb.checked ? 'Notifications on for this device' : 'Notifications off for this device');
+      pushUi();
+    };
     $('#ch-email').onchange = async e => { const r = await Account.updateProfile({ email_alerts: e.target.checked }); msg('#ch-msg', r.error ? errBox(r.error) : ''); toast(e.target.checked ? 'Email alerts on' : 'Email alerts off'); };
     if ($('#tg-link')) $('#tg-link').onclick = async () => {
       const r = await Account.alerts.telegramLink();

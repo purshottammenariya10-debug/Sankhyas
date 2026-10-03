@@ -504,6 +504,8 @@
       standalone: false, live: true, updated: j.updated,
       years: a.periods, histN: a.histN || 0, quarters: qq.periods, shQuarters: ['Latest'],
       half: !!qq.half, finSrc: a.src || '', finStandalone: /^nse/.test(a.src || '') && !a.cons,
+      qDocs: qq.docs || null, yDocs: a.docs || null,
+      bankFin: j.bank || null, bankBasis: j.bank ? (j.bank.c ? 'c' : 's') : null,
       pl, bs, cf, ratios, q, sh, sharesOut,
       docs: { announcements: [], reports: [], ratings: [], concalls: [] },
       prices: px.close, volume: px.volume.map(v => v || 0), dates: px.dates.map(d => new Date(d + 'T00:00:00')),
@@ -652,9 +654,11 @@
   // a company's standalone statements (filed with NSE alongside the consolidated ones), as its own company view
   function standaloneOf(sym) {
     const j = raws[sym], st = j && j.standalone, full = cache[sym + ':live'];
-    if (!st || !st.annual || !st.quarterly || !full) return null;
+    const bank = j && j.bank && j.bank.c && j.bank.s;
+    if (!full || (!bank && (!st || !st.annual || !st.quarterly))) return null;
     if (!cache[sym + ':sa']) {
-      const c = buildLive(Object.assign({}, j, { annual: st.annual, quarterly: st.quarterly }));
+      const c = buildLive(bank ? j : Object.assign({}, j, { annual: st.annual, quarterly: st.quarterly }));
+      if (bank) c.bankBasis = 's';
       c.standalone = true;
       c.hasStandalone = true;
       ['priceAt', 'foLot', 'logo'].forEach(k => { if (full[k] != null) c[k] = full[k]; });
@@ -684,7 +688,7 @@
       full.metrics.industryPE = summaries[sym].metrics.industryPE;
       full.foLot = summaries[sym].foLot;
       full.logo = summaries[sym].logo;
-      full.hasStandalone = !!(j.standalone && j.standalone.annual && j.standalone.quarterly);
+      full.hasStandalone = !!(j.standalone && j.standalone.annual && j.standalone.quarterly) || !!(j.bank && j.bank.c && j.bank.s);
       raws[sym] = j;
       cache[sym + ':live'] = full;
     }
