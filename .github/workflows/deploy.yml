@@ -123,6 +123,14 @@ jobs:
         run: python scripts/sme_financials.py --max "${{ github.event.schedule == '17 */2 * * *' && '40' || '100' }}" || python scripts/sme_financials.py --merge-only
 
       # each company's logo from its website, saved once (data/logos/<SYMBOL>.png)
+      # 13 quarters and the annual statements, consolidated and standalone, from each company's results
+      # filings on NSE (XBRL since 2018), in place of Yahoo's tables; largest companies first, backfilled
+      # over several runs. Then merged into every company's file (also when no filings are read).
+      - name: Quarterly and annual results from NSE filings
+        continue-on-error: true
+        timeout-minutes: 45
+        run: python scripts/nse_financials.py --max "${{ github.event.schedule == '17 */2 * * *' && '120' || '400' }}" --files "${{ github.event.schedule == '17 */2 * * *' && '1500' || '5000' }}" --minutes "${{ github.event.schedule == '17 */2 * * *' && '15' || '35' }}" || python scripts/nse_financials.py --merge-only
+
       - name: Company logos
         continue-on-error: true
         timeout-minutes: 15

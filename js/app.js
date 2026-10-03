@@ -638,7 +638,7 @@
         return row ? '<li><span class="name">' + esc(row[0]) + '</span><span class="value">' + esc(row[1]) + '</span></li>' : '';
       }).join('') + '</ul>' +
       '<div class="flex" style="margin-top:12px"><button class="btn btn-small" id="edit-ratios">✎ Edit ratios</button>' +
-      '<span class="sub">Showing ' + (c.standalone ? 'standalone' : 'consolidated') + ' figures.' + (c.live ? '' : ' <a href="' + hrefOther + '" data-view>View ' + other + '</a>') + '</span></div>' +
+      '<span class="sub">Showing ' + (c.standalone || c.finStandalone ? 'standalone' : 'consolidated') + ' figures.' + (c.live && !c.hasStandalone ? '' : ' <a href="' + hrefOther + '" data-view>View ' + other + '</a>') + '</span></div>' +
       aboutPointsHtml(c) + '</div>' + aboutBlock(c) + '</div></section>';
   }
   /* ---------- About: a short description, facts, and key points built only from data we have ---------- */
@@ -2218,7 +2218,7 @@
     const alt = c.standalone ? 'Consolidated' : 'Standalone';
     return '<section class="section card" id="' + id + '"><div class="section-head"><div><h2>' + esc(title) + '</h2><p>' + desc + '</p></div>' +
       '<div class="head-actions">' + (extra || '') +
-      (c.live ? '' : '<a class="btn btn-small btn-plain" href="#/company/' + c.symbol + (c.standalone ? '' : '/standalone') + '" data-view>View ' + alt + '</a>') + '</div></div>';
+      (c.live && !c.hasStandalone ? '' : '<a class="btn btn-small btn-plain" href="#/company/' + c.symbol + (c.standalone ? '' : '/standalone') + '" data-view>View ' + alt + '</a>') + '</div></div>';
   }
   const figs = c => (c.standalone || c.finStandalone ? 'Standalone' : 'Consolidated') + ' Figures in Rs. Crores' +
     (c.live ? ' &middot; Source: ' + (c.finSrc === 'nse' ? 'results filed with NSE' : c.finSrc === 'nse+yahoo' ? 'results filed with NSE and Yahoo Finance' : c.histN ? 'NSE annual results (' + c.years[0] + '–' + c.years[c.histN - 1] + ') and Yahoo Finance' : 'Yahoo Finance') : '');

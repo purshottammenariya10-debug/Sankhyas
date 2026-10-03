@@ -531,6 +531,7 @@
    */
   let mode = 'sample';
   const summaries = {};
+  const raws = {};   // company files as loaded, for the standalone view
   async function getJSON(url) {
     const r = await fetch(url, { cache: 'no-cache' });
     if (!r.ok) throw new Error(url + ' ' + r.status);
@@ -648,8 +649,23 @@
     } catch (e) { liveMeta = null; mode = 'sample'; }
   }
 
+  // a company's standalone statements (filed with NSE alongside the consolidated ones), as its own company view
+  function standaloneOf(sym) {
+    const j = raws[sym], st = j && j.standalone, full = cache[sym + ':live'];
+    if (!st || !st.annual || !st.quarterly || !full) return null;
+    if (!cache[sym + ':sa']) {
+      const c = buildLive(Object.assign({}, j, { annual: st.annual, quarterly: st.quarterly }));
+      c.standalone = true;
+      c.hasStandalone = true;
+      ['priceAt', 'foLot', 'logo'].forEach(k => { if (full[k] != null) c[k] = full[k]; });
+      c.metrics.industryPE = full.metrics.industryPE;
+      cache[sym + ':sa'] = c;
+    }
+    return cache[sym + ':sa'];
+  }
   function getAny(sym, standalone) {
     sym = String(sym || '').toUpperCase();
+    if (standalone && standaloneOf(sym)) return standaloneOf(sym);
     if (cache[sym + ':live']) return cache[sym + ':live'];
     if (live[sym]) return (cache[sym + ':live'] = buildLive(live[sym]));
     if (summaries[sym]) return summaries[sym];
@@ -668,6 +684,8 @@
       full.metrics.industryPE = summaries[sym].metrics.industryPE;
       full.foLot = summaries[sym].foLot;
       full.logo = summaries[sym].logo;
+      full.hasStandalone = !!(j.standalone && j.standalone.annual && j.standalone.quarterly);
+      raws[sym] = j;
       cache[sym + ':live'] = full;
     }
     return getAny(sym, standalone);

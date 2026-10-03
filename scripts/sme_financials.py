@@ -112,7 +112,7 @@ def cr(v):
 
 
 def parse_xbrl(text):
-    """{'halves': {end: row}, 'years': {end: row}} from one results XBRL file (values in Rs crore)."""
+    """{'quarters' | 'halves' | 'years': {end: row}} from one results XBRL file (values in Rs crore)."""
     facts = {}
     for _, name, ctx, val in FACT.findall(text):
         facts.setdefault((name, ctx), val.strip())
@@ -124,14 +124,14 @@ def parse_xbrl(text):
             spans.setdefault(ctx, {})["s"] = v
         elif name == "DateOfEndOfReportingPeriod":
             spans.setdefault(ctx, {})["e"] = v
-    out = {"halves": {}, "years": {}}
+    out = {"quarters": {}, "halves": {}, "years": {}}
     for ctx, se in spans.items():
         try:
             s, e = dt.date.fromisoformat(se["s"]), dt.date.fromisoformat(se["e"])
         except (KeyError, ValueError):
             continue
         days = (e - s).days
-        kind = "halves" if 150 <= days <= 200 else "years" if 330 <= days <= 400 else None
+        kind = "quarters" if 80 <= days <= 100 else "halves" if 150 <= days <= 200 else "years" if 330 <= days <= 400 else None
         if not kind:
             continue
         raw = {k: get(v, ctx) for k, v in PL.items()}
