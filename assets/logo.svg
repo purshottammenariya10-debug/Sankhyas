@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Sankhyas">
+  <defs>
+    <linearGradient id="sk-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#16616a"/>
+      <stop offset=".55" stop-color="#103d48"/>
+      <stop offset="1" stop-color="#0c2130"/>
+    </linearGradient>
+    <linearGradient id="sk-shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".14"/>
+      <stop offset=".5" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="url(#sk-bg)"/>
+  <rect width="64" height="64" rx="15" fill="url(#sk-shine)"/>
+  <g fill="none" stroke="#fff" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M15 42.5 26.5 31l7.5 7.5L48.5 24"/>
+    <path d="M38.5 24h10v10"/>
+  </g>
+</svg>
