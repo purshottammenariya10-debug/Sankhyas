@@ -1100,3 +1100,26 @@ h3 .sub { font-weight: 400; margin-left: 6px; }
 .company-links a.ex-link { color: var(--link); }
 .company-links a.ex-link:hover { text-decoration: underline; }
 @media (max-width: 720px) { .co-logo { width: 34px; height: 34px; border-radius: 8px; font-size: 13px; } .co-name { gap: 10px; } }
+
+/* insights: strengths and risks, and the signed-out teaser */
+.sr-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+.sr-col { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; border-top: 3px solid var(--green); background: var(--card, var(--bg)); }
+.sr-col.sr-cons { border-top-color: var(--red); }
+.sr-col h3 { margin: 0 0 8px; font-size: 15px; }
+.sr-pros h3 { color: var(--green); } .sr-cons h3 { color: var(--red); }
+.sr-col ul { margin: 0; padding-left: 18px; }
+.sr-col li { margin: 5px 0; font-size: 14px; line-height: 1.45; }
+.sr-col p { margin: 0; font-size: 14px; }
+.sr-note { grid-column: 1 / -1; margin: -4px 0 0; font-size: 12px; color: var(--ink-3); }
+.ins-teaser { border: 1px dashed var(--line); border-radius: 10px; padding: 14px 16px; }
+.ins-teaser-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+.ins-teaser-head h3 { margin: 0; font-size: 15px; }
+.ins-teaser ul { list-style: none; margin: 0 0 10px; padding: 0; }
+.ins-teaser li { display: grid; grid-template-columns: 24px 170px 1fr; gap: 8px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.ins-teaser li:last-child { border-bottom: 0; }
+.ins-teaser .lock-cta { margin-top: 4px; }
+@media (max-width: 720px) {
+  .sr-panel { grid-template-columns: 1fr; }
+  .ins-teaser li { grid-template-columns: 24px 1fr; }
+  .ins-teaser li .muted { grid-column: 2; }
+}

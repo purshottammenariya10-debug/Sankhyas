@@ -630,6 +630,18 @@
       if (!bits.length) bits.push('Ownership steady: promoters ' + r1(h.promoter) + '%, FIIs ' + r1(h.fii) + '%, DIIs ' + r1(h.dii) + '%' + (ok(h.holdersChg1q) && Math.abs(h.holdersChg1q) >= 5 ? '; shareholder count ' + pc(h.holdersChg1q) + ' in a quarter' : ''));
       add('Ownership', tone, bits.slice(0, 2).join('; ') + '.');
     }
+    // 2b. named holders who came, went, added or trimmed (mutual fund schemes as their fund house)
+    const hc = o.shp && holderChanges(o.shp, { family: true });
+    if (hc && hc.items.length) {
+      const big = hc.items.filter(x => x.g !== 'promoter' && (x.kind === 'new' || x.kind === 'exit' || Math.abs(x.pct - x.prev) >= 0.1));
+      const names = k => big.filter(x => x.kind === k).slice(0, 2).map(x => x.name.replace(/\s+(Limited|Ltd\.?|Private|Pvt\.?)(\s|$).*/i, '$2').trim());
+      const bits = [[names('new'), 'came onto the list'], [names('up'), 'added'], [names('down'), 'trimmed'], [names('exit'), 'left the list']]
+        .filter(([l]) => l.length).map(([l, v]) => l.join(' and ') + ' ' + v);
+      if (bits.length) {
+        const ins = big.filter(x => x.kind === 'new' || x.kind === 'up').length, outs = big.filter(x => x.kind === 'exit' || x.kind === 'down').length;
+        add('Who bought & sold', ins > outs ? 'pos' : outs > ins ? 'neg' : 'neu', bits.slice(0, 3).join('; ') + ' (' + quarterLabel(hc.q) + ').');
+      }
+    }
 
     // 3. valuation
     if (ok(m.pe) && m.pe > 0) {
@@ -701,6 +713,86 @@
     }
     return out;
   }
+  /* ---------- Strengths and risks: short factual points from the numbers, like Screener's pros and cons ----------
+   * Returns { pros: [text], cons: [text] }, most telling first. opts: { shp, hpe } */
+  function strengthsRisks(c, opts) {
+    const o = opts || {}, m = c.metrics || {}, R = c.pl || {}, ra = c.ratios || {}, fin = isFinancial(c);
+    const pros = [], cons = [];
+    const L = (R.sales || []).length - 1;
+    const back = (arr, k) => (arr && L - k >= 0 && ok(arr[L - k]) ? arr[L - k] : null);
+    const lastN = (arr, k) => (arr || []).slice(Math.max(0, L - k + 1), L + 1).filter(ok);
+    const avg = l => (l.length ? l.reduce((a, b) => a + b, 0) / l.length : null);
+    const cr = v => '₹ ' + r0(v) + ' Cr';
+    // returns
+    if (ok(m.avgRoe3) && m.avgRoe3 >= 18) pros.push('Good return on equity track record: 3-year average ROE of ' + r1(m.avgRoe3) + '%');
+    else if (ok(m.avgRoe3) && m.avgRoe3 < 10 && m.avgRoe3 > -100) cons.push('Low return on equity of ' + r1(m.avgRoe3) + '% over the last 3 years');
+    if (!fin && ok(m.roce) && m.roce >= 22 && !(ok(m.avgRoe3) && m.avgRoe3 >= 18)) pros.push('High return on capital employed (ROCE) of ' + r1(m.roce) + '%');
+    // growth
+    if (ok(m.profitGrowth5) && m.profitGrowth5 >= 18) pros.push('Profit has grown ' + r1(m.profitGrowth5) + '% a year over the last 5 years');
+    else if (ok(m.profitGrowth5) && m.profitGrowth5 < 0) cons.push('Profit has fallen ' + r1(-m.profitGrowth5) + '% a year over the last 5 years');
+    if (ok(m.salesGrowth5) && m.salesGrowth5 >= 15) pros.push('Sales have grown ' + r1(m.salesGrowth5) + '% a year over the last 5 years');
+    else if (ok(m.salesGrowth5) && m.salesGrowth5 < 5) cons.push('Poor sales growth of ' + r1(m.salesGrowth5) + '% a year over the last 5 years');
+    if (ok(m.np) && m.np < 0) cons.push('Loss of ' + cr(-m.np) + ' over the last 12 months');
+    // balance sheet (not for lenders, whose borrowings are their business)
+    if (!fin) {
+      if (ok(m.de) && m.de <= 0.05 && ok(m.debt)) pros.push(m.debt > 0 ? 'Almost debt free: debt to equity of ' + r1(m.de) : 'Debt free');
+      else if (ok(m.de) && m.de >= 1.5) cons.push('High debt: debt to equity of ' + r1(m.de) + (ok(m.debt) ? ' (' + cr(m.debt) + ' borrowed)' : ''));
+      if (ok(m.interestCoverage) && m.interestCoverage < 2 && m.interestCoverage > -50 && !(ok(m.de) && m.de <= 0.05)) cons.push('Low interest cover: operating profit covers interest only ' + r1(m.interestCoverage) + ' times');
+      const d0 = back(ra.debtor, 3), d1 = back(ra.debtor, 0);
+      if (ok(d1) && d1 >= 120) cons.push('High debtor days of ' + r0(d1));
+      else if (ok(d0) && ok(d1) && d1 - d0 >= 20 && d1 >= d0 * 1.3) cons.push('Debtor days have risen from ' + r0(d0) + ' to ' + r0(d1) + ' days in 3 years');
+      const w0 = back(ra.wc, 3), w1 = back(ra.wc, 0);
+      if (ok(w0) && ok(w1) && w0 > 20 && w1 <= w0 * 0.7) pros.push('Working capital days have come down from ' + r0(w0) + ' to ' + r0(w1) + ' days in 3 years');
+      else if (ok(w0) && ok(w1) && w1 - w0 >= 25 && w1 >= Math.max(30, w0 * 1.3)) cons.push('Working capital days have risen from ' + r0(w0) + ' to ' + r0(w1) + ' days in 3 years');
+      // cash conversion over 5 years
+      const cfo = lastN((c.cf || {}).cfo, 5), np = lastN(R.np, 5);
+      if (cfo.length >= 4 && np.length >= 4) {
+        const sc = cfo.reduce((a, b) => a + b, 0), sn = np.reduce((a, b) => a + b, 0);
+        if (sn > 0 && sc / sn >= 1) pros.push('Strong cash conversion: operating cash flow of ' + r0(sc / sn * 100) + '% of profit over 5 years');
+        else if (sn > 0 && sc / sn < 0.5) cons.push('Weak cash conversion: operating cash flow only ' + r0(Math.max(0, sc / sn * 100)) + '% of profit over 5 years');
+      }
+      // margins
+      const o0 = back(R.opm, 3), o1 = back(R.opm, 0);
+      if (ok(o0) && ok(o1) && o1 - o0 >= 4) pros.push('Operating margin up from ' + r1(o0) + '% to ' + r1(o1) + '% in 3 years');
+      else if (ok(o0) && ok(o1) && o0 - o1 >= 4) cons.push('Operating margin down from ' + r1(o0) + '% to ' + r1(o1) + '% in 3 years');
+    }
+    // earnings quality
+    const oi = back(R.otherIncome, 0), pbt = back(R.pbt, 0);
+    if (!fin && ok(oi) && ok(pbt) && pbt > 0 && oi / pbt >= 0.3) cons.push('Earnings include other income of ' + cr(oi) + ' (' + r0(oi / pbt * 100) + '% of pre-tax profit)');
+    // tax is kept as a % of pre-tax profit (like Screener's Tax %); a year with none is usually missing data
+    const tx = lastN(R.tax, 3), pb3 = lastN(R.pbt, 3);
+    if (tx.length === 3 && pb3.length === 3 && pb3.every(v => v > 0) && tx.every(v => v > 0)) {
+      const rate = avg(tx);
+      if (rate < 15) cons.push('Tax rate seems low: ' + r1(rate) + '% of pre-tax profit on average over 3 years');
+    }
+    // dividends
+    const pay = lastN(R.payout, 3), np3 = lastN(R.np, 3);
+    if (np3.length === 3 && np3.every(v => v > 0)) {
+      const ap = avg(pay);
+      if (ok(ap) && ap >= 30) pros.push('Healthy dividend payout of ' + r0(ap) + '% of profit over 3 years');
+      else if (ok(ap) && ap > 0 && ap < 10) cons.push('Low dividend payout of ' + r1(ap) + '% of profit over 3 years');
+      else if (!(ap > 0) && m.dps === 0) cons.push('Not paying a dividend despite profits over the last 3 years');
+    }
+    // valuation
+    if (ok(m.pb) && m.pb > 0 && m.pb < 1 && ok(m.roe) && m.roe > 0) pros.push('Trading at ' + r1(m.pb) + ' times its book value');
+    else if (ok(m.pb) && m.pb >= 8) cons.push('Trading at ' + r1(m.pb) + ' times its book value');
+    if (ok(m.pe) && m.pe > 0 && ok(o.hpe) && o.hpe > 0) {
+      if (m.pe <= o.hpe * 0.8) pros.push('P/E of ' + r1(m.pe) + ' is ' + r0((1 - m.pe / o.hpe) * 100) + '% below its own 5-year median (' + r1(o.hpe) + ')');
+      else if (m.pe >= o.hpe * 1.4) cons.push('P/E of ' + r1(m.pe) + ' is ' + r0((m.pe / o.hpe - 1) * 100) + '% above its own 5-year median (' + r1(o.hpe) + ')');
+    }
+    // ownership (NSE shareholding pattern)
+    const Q = ((o.shp && o.shp.quarters) || []).filter(q => q && q.q && ok(q.promoter) && q.promoter <= 100).sort((a, b) => (a.q < b.q ? 1 : -1));
+    if (Q.length) {
+      const old = Q.find(q => Date.parse(Q[0].q) - Date.parse(q.q) >= 2.9 * 365 * 864e5) || (Q.length >= 8 ? Q[Q.length - 1] : null);
+      const d3 = old ? Q[0].promoter - old.promoter : null, d1 = Q[1] ? Q[0].promoter - Q[1].promoter : null;
+      if (ok(d1) && d1 >= 0.5) pros.push('Promoters raised their stake by ' + r1(d1) + ' pts last quarter, to ' + r1(Q[0].promoter) + '%');
+      if (ok(d3) && d3 <= -3 && Q[0].promoter > 0) cons.push('Promoter holding down ' + r1(-d3) + ' pts over ' + (old && Date.parse(Q[0].q) - Date.parse(old.q) >= 2.9 * 365 * 864e5 ? '3 years' : 'the last ' + Q.length + ' quarters') + ', to ' + r1(Q[0].promoter) + '%');
+      if (ok(Q[0].pledge) && Q[0].pledge >= 5) cons.push('Promoters have pledged ' + r1(Q[0].pledge) + '% of their holding');
+      if (ok(Q[0].promoter) && Q[0].promoter > 0 && Q[0].promoter < 25 && !fin) cons.push('Low promoter holding of ' + r1(Q[0].promoter) + '%');
+    }
+    return { pros: pros.slice(0, 6), cons: cons.slice(0, 6) };
+  }
+
   // one sentence on why the quarter got its verdict
   function resultsWhy(v) {
     if (!v) return '';
@@ -726,5 +818,5 @@
     return head + ': ' + (good.length && bad.length ? list(good) + ', but ' + list(bad) : list(good.length ? good : bad)) + '.';
   }
 
-  window.Insights = { corporateActions, parseDay, isoDay, creditRatings, annualReportCheck, ratingRank, RATING_ACT, ratingText, quickRead, resultsWhy, computeScores, scoreOf, scoreBand, PILLARS, redFlags, guidance, whatChanged, redFlagsMd, guidanceMd, whatChangedMd, METRIC_LABEL, resultsVerdict, holdingStats, quarterLabel, holderKey, holderSlug, holderFamily, holderMap, holderChanges };
+  window.Insights = { corporateActions, parseDay, isoDay, creditRatings, annualReportCheck, ratingRank, RATING_ACT, ratingText, quickRead, resultsWhy, computeScores, scoreOf, scoreBand, PILLARS, redFlags, guidance, whatChanged, redFlagsMd, guidanceMd, whatChangedMd, METRIC_LABEL, resultsVerdict, holdingStats, quarterLabel, holderKey, holderSlug, holderFamily, holderMap, holderChanges, strengthsRisks };
 })();

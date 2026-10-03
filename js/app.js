@@ -898,27 +898,40 @@
     const note = isGuest() ? 'The quick read, results and ownership are open to everyone; sign in free for the detailed cards.' : 'Free with your account.';
     let cards, empty = [];
     if (open) cards = riskCard(c) + arCheckCard(c) + ratingsCard(c) + changedCard(c, empty) + guidanceCard(c, empty) + ordersCard(c, empty) + dealsCard(c, empty);
-    else {
-      const r = Insights.redFlags(c), g = Insights.guidance(c), w = Insights.whatChanged(c);
-      const cls = r.band === 'High' ? 'risk-high' : r.band === 'Moderate' ? 'risk-mid' : 'risk-low';
-      cards = lockedCard('ins-risk', 'Red-flag scan', '<div class="risk-meter ' + cls + '"><div class="risk-score"><b>' + r.score + '</b><span>/100</span></div><div><div class="risk-band">' + r.band + ' risk</div>' +
-          '<div class="risk-bar"><span style="width:' + Math.max(3, r.score) + '%"></span></div></div></div><p class="muted">' + (r.flags.length ? r.flags.length + ' warning sign' + (r.flags.length > 1 ? 's' : '') + ' found. See each one and the filing behind it.' : 'No warning signs found. See every check that was run.') + '</p>') +
-        ratingsCard(c) + (Insights.annualReportCheck(c._filings) ? lockedCard('ins-ar', 'Annual report check', '<p class="muted">' + ((Insights.annualReportCheck(c._filings).flags || []).length ? (Insights.annualReportCheck(c._filings).flags || []).length + ' finding(s) from the auditor\'s report, CARO and the notes, each with its page number.' : 'Auditor\'s opinion, CARO remarks, contingent liabilities and pay, each with its page number.') + '</p>') : '') +
-        lockedCard('ins-changed', 'What changed', '<p class="muted">' + (w.results ? 'Results for ' + esc(w.results.quarter) + ' vs the previous quarter and a year ago' : 'Latest results vs the previous quarter') + (w.concall ? ', concall tone and guidance changes' : '') + (w.filings.length ? ', and ' + w.filings.length + ' important filing' + (w.filings.length > 1 ? 's' : '') : '') + '.</p>') +
-        lockedCard('ins-guide', 'Guidance tracker', '<p class="muted">' + (g.rows.length ? g.rows.length + ' management target' + (g.rows.length > 1 ? 's' : '') + ' tracked from ' + g.calls + ' concall' + (g.calls > 1 ? 's' : '') + '. See what was promised and what was delivered.' : 'Management\'s concall promises, scored against what was actually delivered.') + '</p>');
-      const act = c._activity;
-      if (act) {
-        const o = act.orders.filter(x => x.s === c.symbol), dl = act.deals.filter(x => x.s === c.symbol), ds = act.disclosures.filter(x => x.s === c.symbol);
-        cards += lockedCard('ins-orders', 'Order wins', '<p class="muted">' + (o.length ? o.length + ' order win' + (o.length > 1 ? 's' : '') + ' announced in the last year.' : 'No order wins announced in the last year.') + '</p>') +
-          lockedCard('ins-deals', 'Deals &amp; insider activity', '<p class="muted">' + (dl.length + ds.length ? dl.length + ' bulk/block deal' + (dl.length === 1 ? '' : 's') + ' and ' + ds.length + ' insider/promoter disclosure' + (ds.length === 1 ? '' : 's') + '.' : 'No bulk/block deals or insider disclosures recently.') + '</p>');
-      }
-    }
+    else cards = guestTeaser(c);
     const score = scoreCard(c, open), own = ownershipCard(c);
     const quiet = empty.length ? '<p class="ins-quiet"><b>Nothing to report:</b> ' + empty.map(esc).join(' · ') + '.</p>' : '';
     return '<section class="section card" id="insights"><div class="section-head"><div><h2>Sankhyas Insights</h2><p>A quick read of results, ownership, valuation and risks, generated from exchange filings and the financials. ' + note + '</p></div></div>' +
-      quickReadPanel(c) + resultsCard(c) + segmentCard(c, open) + score + '<div class="ins-grid">' + own + cards + '</div>' + quiet + '</section>';
+      strengthsPanel(c) + quickReadPanel(c) + resultsCard(c) + segmentCard(c, open) + score + '<div class="ins-grid">' + own + (open ? cards : ratingsCard(c) + cards) + '</div>' + quiet + '</section>';
   }
-  const QR_ICON = { 'Credit rating': '🏦', 'Annual report': '📘', Results: '📊', Ownership: '👥', Valuation: '🏷️', Quality: '⚙️', 'Red flags': '🚩', Management: '🎙️', Orders: '📦', Price: '📈' };
+  // Strengths and risks, like Screener's pros and cons: open to everyone
+  function strengthsPanel(c) {
+    let hpe = null;
+    try { hpe = window.AI && AI.historicPE ? AI.historicPE(c) : null; } catch (e) { hpe = null; }
+    const sr = Insights.strengthsRisks(c, { shp: c._shp, hpe });
+    if (!sr.pros.length && !sr.cons.length) return '';
+    const col = (cls, h, l, none) => '<div class="sr-col ' + cls + '"><h3>' + h + '</h3>' + (l.length ? '<ul>' + l.map(t => '<li>' + esc(t) + '</li>').join('') + '</ul>' : '<p class="muted">' + none + '</p>') + '</div>';
+    return '<div class="sr-panel">' + col('sr-pros', 'Strengths', sr.pros, 'None of the usual strengths stand out.') + col('sr-cons', 'Risks', sr.cons, 'None of the usual risks stand out.') +
+      '<p class="sr-note">Worked out from the reported financials and shareholding. Facts to research further, not investment advice.</p></div>';
+  }
+  // signed-out visitors: one compact list of what the detailed cards hold, and one sign-in button
+  function guestTeaser(c) {
+    const r = Insights.redFlags(c), g = Insights.guidance(c), w = Insights.whatChanged(c), arc = Insights.annualReportCheck(c._filings);
+    const rows = [['🚩', 'Red-flag scan', r.flags.length ? r.flags.length + ' warning sign' + (r.flags.length > 1 ? 's' : '') + ' · ' + r.band.toLowerCase() + ' risk' : 'No warning signs · every check listed']];
+    if (arc) rows.push(['📘', 'Annual report check', (arc.flags || []).length ? arc.flags.length + ' point' + (arc.flags.length > 1 ? 's' : '') + ' to note' : 'Nothing unusual found']);
+    rows.push(['🔍', 'What changed', w.results ? 'Results for ' + w.results.quarter + ' vs last quarter and a year ago' : 'Latest results vs the previous quarter']);
+    if (g.rows.length) rows.push(['🎙️', 'Guidance tracker', g.rows.length + ' management target' + (g.rows.length > 1 ? 's' : '') + ' from ' + g.calls + ' concall' + (g.calls > 1 ? 's' : '') + ', scored']);
+    const act = c._activity;
+    if (act) {
+      const o = act.orders.filter(x => x.s === c.symbol), dl = act.deals.filter(x => x.s === c.symbol), ds = act.disclosures.filter(x => x.s === c.symbol);
+      if (o.length) rows.push(['📦', 'Order wins', o.length + ' in the last year']);
+      if (dl.length + ds.length) rows.push(['💼', 'Deals & insider activity', [dl.length ? dl.length + ' bulk/block deal' + (dl.length > 1 ? 's' : '') : '', ds.length ? ds.length + ' insider/promoter disclosure' + (ds.length > 1 ? 's' : '') : ''].filter(Boolean).join(' and ')]);
+    }
+    return '<div class="ins-teaser"><div class="ins-teaser-head"><h3>🔒 Detailed cards</h3><span class="sub">Free with an account</span></div><ul>' +
+      rows.map(([i, t, d]) => '<li><span aria-hidden="true">' + i + '</span><b>' + esc(t) + '</b><span class="muted">' + esc(d) + '</span></li>').join('') + '</ul>' +
+      signinCta('Sign in free to open all ' + rows.length + ' cards', 'Free account, no card needed. One tap with Google.', 'open the detailed insights') + '</div>';
+  }
+  const QR_ICON = { 'Who bought & sold': '🔁', 'Credit rating': '🏦', 'Annual report': '📘', Results: '📊', Ownership: '👥', Valuation: '🏷️', Quality: '⚙️', 'Red flags': '🚩', Management: '🎙️', Orders: '📦', Price: '📈' };
   function quickReadPanel(c) {
     let hpe = null;
     try { hpe = window.AI && AI.historicPE ? AI.historicPE(c) : null; } catch (e) { hpe = null; }
